@@ -1,0 +1,234 @@
+{
+  "trace_id": "trace_support_triage_happy_path",
+  "workflow_name": "support-triage",
+  "group_id": "demo-support-triage",
+  "status": "passed",
+  "started_at": "2026-05-01T23:00:00Z",
+  "ended_at": "2026-05-01T23:00:04Z",
+  "metadata": {
+    "scenario": "duplicate_charge_refund",
+    "source": "sample"
+  },
+  "spans": [
+    {
+      "span_id": "span_supervisor",
+      "span_type": "agent",
+      "name": "Supervisor Agent",
+      "started_at": "2026-05-01T23:00:00Z",
+      "ended_at": "2026-05-01T23:00:04Z",
+      "input": {
+        "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?"
+      },
+      "output": {
+        "final_status": "resolved_with_refund_review"
+      },
+      "usage": {
+        "input_tokens": 180,
+        "output_tokens": 52
+      },
+      "estimated_cost": 0.0004,
+      "span_data": {
+        "agent_name": "Supervisor Agent",
+        "role": "orchestrator"
+      }
+    },
+    {
+      "span_id": "span_handoff_triage",
+      "parent_id": "span_supervisor",
+      "span_type": "handoff",
+      "name": "Supervisor -> Triage Agent",
+      "started_at": "2026-05-01T23:00:00.100Z",
+      "ended_at": "2026-05-01T23:00:00.200Z",
+      "input": {
+        "context_passed": ["customer_message"]
+      },
+      "output": {
+        "reason": "Classify customer intent before selecting tools."
+      },
+      "span_data": {
+        "from_agent": "Supervisor Agent",
+        "to_agent": "Triage Agent"
+      }
+    },
+    {
+      "span_id": "span_triage",
+      "parent_id": "span_supervisor",
+      "span_type": "agent",
+      "name": "Triage Agent",
+      "started_at": "2026-05-01T23:00:00.200Z",
+      "ended_at": "2026-05-01T23:00:00.900Z",
+      "output": {
+        "category": "billing",
+        "intent": "refund_request",
+        "priority": "high",
+        "sentiment": "frustrated"
+      },
+      "usage": {
+        "input_tokens": 220,
+        "output_tokens": 48
+      },
+      "estimated_cost": 0.0005,
+      "span_data": {
+        "agent_name": "Triage Agent"
+      }
+    },
+    {
+      "span_id": "span_lookup_customer",
+      "parent_id": "span_supervisor",
+      "span_type": "function_tool",
+      "name": "lookup_customer",
+      "started_at": "2026-05-01T23:00:00.950Z",
+      "ended_at": "2026-05-01T23:00:01.100Z",
+      "input": {
+        "email": "customer@example.com"
+      },
+      "output": {
+        "customer_id": "cus_123",
+        "plan": "Pro",
+        "status": "active",
+        "last_payment_status": "duplicate_charge_detected"
+      },
+      "span_data": {
+        "tool_protocol": "mcp",
+        "tool_server": "support-tools-mcp",
+        "tool_transport": "stdio"
+      }
+    },
+    {
+      "span_id": "span_handoff_policy",
+      "parent_id": "span_supervisor",
+      "span_type": "handoff",
+      "name": "Supervisor -> Policy Agent",
+      "started_at": "2026-05-01T23:00:01.150Z",
+      "ended_at": "2026-05-01T23:00:01.250Z",
+      "input": {
+        "context_passed": ["category", "plan", "payment_status"]
+      },
+      "output": {
+        "reason": "Refund policy evidence is required before action."
+      },
+      "span_data": {
+        "from_agent": "Supervisor Agent",
+        "to_agent": "Policy Agent"
+      }
+    },
+    {
+      "span_id": "span_policy",
+      "parent_id": "span_supervisor",
+      "span_type": "agent",
+      "name": "Policy Agent",
+      "started_at": "2026-05-01T23:00:01.250Z",
+      "ended_at": "2026-05-01T23:00:02.000Z",
+      "output": {
+        "policy_decision": "refund_review_allowed",
+        "evidence_ids": ["policy_refunds_001"]
+      },
+      "usage": {
+        "input_tokens": 450,
+        "output_tokens": 80
+      },
+      "estimated_cost": 0.001,
+      "span_data": {
+        "agent_name": "Policy Agent"
+      }
+    },
+    {
+      "span_id": "span_retrieve_policy",
+      "parent_id": "span_policy",
+      "span_type": "rag_retrieval",
+      "name": "retrieve_policy",
+      "started_at": "2026-05-01T23:00:01.300Z",
+      "ended_at": "2026-05-01T23:00:01.520Z",
+      "input": {
+        "query": "duplicate charge refund policy Pro plan"
+      },
+      "output": {
+        "chunks": [
+          {
+            "id": "policy_refunds_001",
+            "text": "Duplicate charges reported within 30 days are eligible for refund review.",
+            "score": 0.94
+          }
+        ]
+      },
+      "span_data": {
+        "retriever": "local_policy_docs"
+      }
+    },
+    {
+      "span_id": "span_action",
+      "parent_id": "span_supervisor",
+      "span_type": "agent",
+      "name": "Action Agent",
+      "started_at": "2026-05-01T23:00:02.050Z",
+      "ended_at": "2026-05-01T23:00:02.900Z",
+      "output": {
+        "action": "create_refund_review",
+        "requires_human": false
+      },
+      "usage": {
+        "input_tokens": 390,
+        "output_tokens": 64
+      },
+      "estimated_cost": 0.0008,
+      "span_data": {
+        "agent_name": "Action Agent"
+      }
+    },
+    {
+      "span_id": "span_create_action",
+      "parent_id": "span_action",
+      "span_type": "function_tool",
+      "name": "create_support_action",
+      "started_at": "2026-05-01T23:00:02.300Z",
+      "ended_at": "2026-05-01T23:00:02.450Z",
+      "input": {
+        "customer_id": "cus_123",
+        "action_type": "refund_review",
+        "reason": "duplicate_charge_detected"
+      },
+      "output": {
+        "action_id": "act_789",
+        "status": "created"
+      },
+      "span_data": {
+        "tool_protocol": "mcp",
+        "tool_server": "support-tools-mcp",
+        "tool_transport": "stdio"
+      }
+    },
+    {
+      "span_id": "span_validator",
+      "parent_id": "span_supervisor",
+      "span_type": "guardrail",
+      "name": "Validator Agent",
+      "started_at": "2026-05-01T23:00:03.000Z",
+      "ended_at": "2026-05-01T23:00:03.700Z",
+      "input": {
+        "draft_response": "I found a duplicate charge and created a refund review for your Pro subscription."
+      },
+      "output": {
+        "grounded": true,
+        "unsupported_claims": [],
+        "supported_claims": [
+          {
+            "claim": "duplicate charge found",
+            "evidence": "lookup_customer.last_payment_status"
+          },
+          {
+            "claim": "refund review created",
+            "evidence": "create_support_action.status"
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 310,
+        "output_tokens": 72
+      },
+      "estimated_cost": 0.0007,
+      "span_data": {
+        "agent_name": "Validator Agent"
+      }
+    }
+  ]
+}
