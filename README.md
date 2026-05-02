@@ -21,6 +21,20 @@ python3 -m agenttrace.cli show trace_support_triage_happy_path
 
 By default, AgentTrace stores local data in `.agenttrace/agenttrace.db`.
 
+## Local Environment
+
+Use a virtual environment before adding FastAPI, MCP, or frontend tooling:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+The current foundation uses only the Python standard library, so installation is
+optional for now. It becomes useful once runtime dependencies are added.
+
 ## Current Scope
 
 This repository is intentionally starting small. The first goal is a reliable
@@ -32,4 +46,19 @@ server demo, and eval harness.
 ```bash
 python3 -m unittest discover
 python3 -m compileall agenttrace tests
+```
+
+## Docker
+
+Build a local image:
+
+```bash
+docker build -t agenttrace .
+```
+
+Run CLI commands in the container:
+
+```bash
+docker run --rm agenttrace import examples/support_triage/sample_trace.json
+docker run --rm agenttrace show trace_support_triage_happy_path
 ```
