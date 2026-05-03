@@ -1,0 +1,8 @@
+services:
+  agenttrace:
+    build:
+      context: .
+    image: agenttrace:local
+    volumes:
+      - ./.agenttrace:/app/.agenttrace
+    working_dir: /app
