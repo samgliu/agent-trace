@@ -67,6 +67,26 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["items"][0]["trace_id"], trace.trace_id)
         self.assertEqual(payload["items"][0]["approval_pending_count"], 1)
+        self.assertEqual(payload["items"][0]["status"], "passed")
+        self.assertEqual(payload["items"][0]["grounding_status"], "recovered")
+
+    def test_list_traces_filters_by_workflow_status_and_date(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get(
+            "/traces?workflow_name=support-triage&status=passed&started_after=2026-05-01T00:00:00Z"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 2)
+
+    def test_list_workflows(self) -> None:
+        response = self.client.get("/workflows")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), ["support-triage"])
 
     def test_dashboard_summary(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
@@ -80,6 +100,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["approval_pending_count"], 1)
         self.assertEqual(payload["unsupported_claim_count"], 1)
         self.assertEqual(payload["workflow_counts"]["support-triage"], 2)
+        self.assertEqual(payload["status_counts"]["passed"], 2)
 
     def test_get_trace(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}")

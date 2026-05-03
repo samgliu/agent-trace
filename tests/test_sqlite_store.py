@@ -57,6 +57,25 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(result["total"], 1)
             self.assertEqual(result["items"][0]["trace_id"], intervention.trace_id)
             self.assertEqual(result["items"][0]["approval_pending_count"], 1)
+            self.assertEqual(result["items"][0]["status"], "passed")
+            self.assertEqual(result["items"][0]["grounding_status"], "recovered")
+
+    def test_list_trace_summaries_filters_by_workflow_status_and_date(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            happy_path = load_trace_file(Path("examples/support_triage/sample_trace.json"))
+            intervention = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+
+            store.save_trace(happy_path)
+            store.save_trace(intervention)
+            result = store.list_trace_summaries(
+                workflow_name="support-triage",
+                status="passed",
+                started_after="2026-05-01T00:00:00Z",
+            )
+
+            self.assertEqual(result["total"], 2)
 
     def test_approval_update_refreshes_trace_summary(self) -> None:
         with TemporaryDirectory() as temp_dir:

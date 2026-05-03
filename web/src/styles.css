@@ -163,6 +163,37 @@ small {
   cursor: pointer;
 }
 
+.paginationControls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.paginationControls button {
+  min-height: 32px;
+  color: #246b5b;
+  background: #ffffff;
+  border: 1px solid #c7e1d8;
+  border-radius: 5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.paginationControls button:disabled {
+  color: #7f8b92;
+  background: #f5f7f8;
+  border-color: #dce4e8;
+  cursor: not-allowed;
+}
+
+.paginationControls span {
+  color: #637179;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .runsCount {
   max-width: 100%;
   margin-bottom: 8px;
@@ -293,11 +324,62 @@ h2 {
   margin-bottom: 16px;
 }
 
+.dashboardSummary {
+  margin-bottom: 22px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #dce4e8;
+}
+
+.dashboardSummaryHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.dashboardSummaryHeader small {
+  display: block;
+  margin-bottom: 3px;
+  color: #637179;
+}
+
+.dashboardSummaryHeader h2 {
+  font-size: 24px;
+}
+
+.dashboardSummaryHeader span {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  color: #246b5b;
+  background: #e8f4f0;
+  border: 1px solid #c7e1d8;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .fleetSummary {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 16px;
+}
+
+.dashboardSummary .summaryFact {
+  background: #ffffff;
+  border-color: #dce4e8;
+}
+
+.dashboardSummary .summaryFact small {
+  color: #637179;
+}
+
+.dashboardSummary .summaryFact strong {
+  color: #172026;
+}
+
+.traceRecord {
+  padding-top: 2px;
 }
 
 .emptyState {

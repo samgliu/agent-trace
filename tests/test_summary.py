@@ -27,7 +27,7 @@ class TraceSummaryTest(unittest.TestCase):
         self.assertEqual(summary["approval_pending_count"], 1)
         self.assertEqual(summary["unsupported_claim_count"], 1)
         self.assertEqual(summary["workflow_counts"], {"support-triage": 2})
-        self.assertEqual(summary["status_counts"], {"passed": 1, "recovered": 1})
+        self.assertEqual(summary["status_counts"], {"passed": 2})
 
 
 if __name__ == "__main__":

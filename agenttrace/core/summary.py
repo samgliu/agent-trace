@@ -17,7 +17,7 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
         "trace_id": trace.trace_id,
         "workflow_name": trace.workflow_name,
         "group_id": trace.group_id,
-        "status": trace.status,
+        "status": execution_status(trace.status),
         "started_at": serialize_datetime(trace.started_at),
         "ended_at": serialize_datetime(trace.ended_at),
         "duration_ms": trace.duration_ms,
@@ -63,6 +63,12 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "input_tokens": sum(item["input_tokens"] for item in summaries),
         "output_tokens": sum(item["output_tokens"] for item in summaries),
     }
+
+
+def execution_status(status: str) -> str:
+    if status in {"grounded", "recovered"}:
+        return "passed"
+    return status
 
 
 def _approval_counts(trace: Trace) -> dict[str, int]:

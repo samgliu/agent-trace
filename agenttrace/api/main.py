@@ -46,6 +46,10 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def dashboard_summary() -> dict[str, Any]:
         return build_dashboard_summary(trace_store.all_trace_summaries())
 
+    @app.get("/workflows")
+    def list_workflows() -> list[str]:
+        return sorted(trace_store.workflow_names())
+
     @app.get("/traces")
     def list_traces(
         limit: int = Query(50, ge=1, le=200),
@@ -54,6 +58,8 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         workflow_name: str | None = None,
         approval_status: str | None = Query(None, pattern="^(pending|approved|rejected|none)$"),
         grounding_status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
     ) -> dict[str, Any]:
         return trace_store.list_trace_summaries(
             limit=limit,
@@ -62,6 +68,8 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             workflow_name=workflow_name,
             approval_status=approval_status,
             grounding_status=grounding_status,
+            started_after=started_after,
+            started_before=started_before,
         )
 
     @app.get("/traces/{trace_id}")

@@ -8,7 +8,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from agenttrace.core.summary import build_trace_summary
+from agenttrace.core.summary import build_trace_summary, execution_status
 from agenttrace.core.models import Span, Trace, parse_datetime, serialize_datetime
 
 
@@ -161,6 +161,8 @@ class SQLiteTraceStore:
         workflow_name: str | None = None,
         approval_status: str | None = None,
         grounding_status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
     ) -> dict[str, Any]:
         limit = min(max(limit, 1), 200)
         offset = max(offset, 0)
@@ -169,6 +171,8 @@ class SQLiteTraceStore:
             workflow_name=workflow_name,
             approval_status=approval_status,
             grounding_status=grounding_status,
+            started_after=started_after,
+            started_before=started_before,
         )
         with closing(self._connect()) as connection:
             total = connection.execute(
@@ -196,6 +200,17 @@ class SQLiteTraceStore:
         with closing(self._connect()) as connection:
             rows = connection.execute("SELECT * FROM trace_summaries").fetchall()
         return [_summary_from_row(row) for row in rows]
+
+    def workflow_names(self) -> list[str]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT workflow_name
+                FROM trace_summaries
+                ORDER BY workflow_name
+                """
+            ).fetchall()
+        return [row["workflow_name"] for row in rows]
 
     def get_trace(self, trace_id: str) -> Trace | None:
         with closing(self._connect()) as connection:
@@ -387,7 +402,7 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "trace_id": row["trace_id"],
         "workflow_name": row["workflow_name"],
         "group_id": row["group_id"],
-        "status": row["status"],
+        "status": execution_status(row["status"]),
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
         "duration_ms": row["duration_ms"],
@@ -410,12 +425,18 @@ def _summary_filters(
     workflow_name: str | None,
     approval_status: str | None,
     grounding_status: str | None,
+    started_after: str | None,
+    started_before: str | None,
 ) -> tuple[str, tuple[Any, ...]]:
     clauses: list[str] = []
     params: list[Any] = []
     if status:
-        clauses.append("status = ?")
-        params.append(status)
+        if status == "passed":
+            clauses.append("status IN (?, ?, ?)")
+            params.extend(["passed", "grounded", "recovered"])
+        else:
+            clauses.append("status = ?")
+            params.append(status)
     if workflow_name:
         clauses.append("workflow_name = ?")
         params.append(workflow_name)
@@ -431,6 +452,12 @@ def _summary_filters(
     if grounding_status:
         clauses.append("grounding_status = ?")
         params.append(grounding_status)
+    if started_after:
+        clauses.append("started_at >= ?")
+        params.append(started_after)
+    if started_before:
+        clauses.append("started_at <= ?")
+        params.append(started_before)
     if not clauses:
         return "", tuple(params)
     return "WHERE " + " AND ".join(clauses), tuple(params)

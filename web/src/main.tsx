@@ -122,8 +122,11 @@ type DashboardSummary = {
 
 type TraceFilters = {
   status: string;
+  workflowName: string;
   approvalStatus: string;
   groundingStatus: string;
+  timeRange: string;
+  offset: number;
 };
 
 type LoadState =
@@ -134,12 +137,14 @@ type LoadState =
       traces: TraceSummary[];
       traceTotal: number;
       dashboard: DashboardSummary;
+      workflows: string[];
     }
   | {
       status: "ready";
       traces: TraceSummary[];
       traceTotal: number;
       dashboard: DashboardSummary;
+      workflows: string[];
       selectedTrace: TraceDetail;
       metrics: Metrics;
       grounding: GroundingSummary;
@@ -149,7 +154,14 @@ function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
-  const [filters, setFilters] = useState<TraceFilters>({ status: "", approvalStatus: "", groundingStatus: "" });
+  const [filters, setFilters] = useState<TraceFilters>({
+    status: "",
+    workflowName: "",
+    approvalStatus: "",
+    groundingStatus: "",
+    timeRange: "",
+    offset: 0,
+  });
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -157,9 +169,10 @@ function App() {
 
     async function load() {
       try {
-        const [traceList, dashboard] = await Promise.all([
+        const [traceList, dashboard, workflows] = await Promise.all([
           fetchJson<TraceListResponse>(`/traces${filterQuery(filters)}`),
           fetchJson<DashboardSummary>("/dashboard/summary"),
+          fetchJson<string[]>("/workflows"),
         ]);
         const traces = traceList.items;
         const traceId = traces.some((trace) => trace.trace_id === selectedTraceId)
@@ -169,7 +182,7 @@ function App() {
           if (!cancelled) {
             setSelectedTraceId(null);
             setSelectedSpanId(null);
-            setState({ status: "empty", traces, traceTotal: traceList.total, dashboard });
+            setState({ status: "empty", traces, traceTotal: traceList.total, dashboard, workflows });
           }
           return;
         }
@@ -186,6 +199,7 @@ function App() {
             traces,
             traceTotal: traceList.total,
             dashboard,
+            workflows,
             selectedTrace,
             metrics,
             grounding,
@@ -229,13 +243,15 @@ function App() {
             traceTotal={state.traceTotal}
             selectedTraceId={null}
             filters={filters}
+            workflows={state.workflows}
             onFiltersChange={setFilters}
             onSelectTrace={setSelectedTraceId}
             onClearSelection={() => setSelectedSpanId(null)}
+            onPageChange={(offset) => setFilters({ ...filters, offset })}
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
-            <EmptyRunsState onClearFilters={() => setFilters({ status: "", approvalStatus: "", groundingStatus: "" })} />
+            <EmptyRunsState onClearFilters={() => setFilters(emptyFilters())} />
           </main>
         </div>
       </Shell>
@@ -250,30 +266,34 @@ function App() {
           traceTotal={state.traceTotal}
           selectedTraceId={state.selectedTrace.trace_id}
           filters={filters}
+          workflows={state.workflows}
           onFiltersChange={setFilters}
           onSelectTrace={setSelectedTraceId}
           onClearSelection={() => setSelectedSpanId(null)}
+          onPageChange={(offset) => setFilters({ ...filters, offset })}
         />
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
-          <TraceHeader trace={state.selectedTrace} />
-          <ExecutiveSummaryPanel trace={state.selectedTrace} metrics={state.metrics} grounding={state.grounding} />
-          <MetricGrid metrics={state.metrics} grounding={state.grounding} />
-          <section className="workspace">
-            <TraceTimeline
-              spans={state.selectedTrace.spans}
-              selectedSpanId={selectedSpanId}
-              onSelectSpan={setSelectedSpanId}
-            />
-            <AnalysisPanel
-              metrics={state.metrics}
-              grounding={state.grounding}
-              spans={state.selectedTrace.spans}
-              selectedSpanId={selectedSpanId}
-              onSelectSpan={setSelectedSpanId}
-              onApprovalAction={updateApproval}
-            />
+          <section className="traceRecord">
+            <TraceHeader trace={state.selectedTrace} executionStatus={executionStatus(state.selectedTrace.status)} />
+            <ExecutiveSummaryPanel trace={state.selectedTrace} metrics={state.metrics} grounding={state.grounding} />
+            <MetricGrid metrics={state.metrics} grounding={state.grounding} />
+            <section className="workspace">
+              <TraceTimeline
+                spans={state.selectedTrace.spans}
+                selectedSpanId={selectedSpanId}
+                onSelectSpan={setSelectedSpanId}
+              />
+              <AnalysisPanel
+                metrics={state.metrics}
+                grounding={state.grounding}
+                spans={state.selectedTrace.spans}
+                selectedSpanId={selectedSpanId}
+                onSelectSpan={setSelectedSpanId}
+                onApprovalAction={updateApproval}
+              />
+            </section>
           </section>
         </main>
       </div>
@@ -286,22 +306,30 @@ function RunsSidebar({
   traceTotal,
   selectedTraceId,
   filters,
+  workflows,
   onFiltersChange,
   onSelectTrace,
   onClearSelection,
+  onPageChange,
 }: {
   traces: TraceSummary[];
   traceTotal: number;
   selectedTraceId: string | null;
   filters: TraceFilters;
+  workflows: string[];
   onFiltersChange: (filters: TraceFilters) => void;
   onSelectTrace: (traceId: string) => void;
   onClearSelection: () => void;
+  onPageChange: (offset: number) => void;
 }) {
+  const hasPrevious = filters.offset > 0;
+  const nextOffset = filters.offset + 50;
+  const hasNext = nextOffset < traceTotal;
+
   return (
     <aside className="sidebar">
       <div className="sidebarHeader">Runs Inbox</div>
-      <TraceFiltersPanel filters={filters} onChange={onFiltersChange} />
+      <TraceFiltersPanel filters={filters} workflows={workflows} onChange={onFiltersChange} />
       <div className="runsCount">{traceTotal} matching runs</div>
       <div className="traceList">
         {traces.map((trace) => (
@@ -316,6 +344,17 @@ function RunsSidebar({
             <TraceBadges trace={trace} />
           </button>
         ))}
+      </div>
+      <div className="paginationControls">
+        <button disabled={!hasPrevious} onClick={() => onPageChange(Math.max(0, filters.offset - 50))}>
+          Previous
+        </button>
+        <span>
+          {traceTotal === 0 ? "0-0" : `${filters.offset + 1}-${Math.min(nextOffset, traceTotal)}`}
+        </span>
+        <button disabled={!hasNext} onClick={() => onPageChange(nextOffset)}>
+          Next
+        </button>
       </div>
     </aside>
   );
@@ -342,7 +381,7 @@ function Shell({ children, status, error }: { children?: React.ReactNode; status
   );
 }
 
-function TraceHeader({ trace }: { trace: TraceDetail }) {
+function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; executionStatus: string }) {
   return (
     <section className="traceHeader">
       <div>
@@ -350,7 +389,7 @@ function TraceHeader({ trace }: { trace: TraceDetail }) {
         <h2>{trace.workflow_name}</h2>
       </div>
       <div className="traceMeta">
-        <span>{trace.status}</span>
+        <span>Execution: {executionStatus}</span>
         <span>{formatDuration(trace.duration_ms)}</span>
       </div>
     </section>
@@ -374,29 +413,55 @@ function EmptyRunsState({ onClearFilters }: { onClearFilters: () => void }) {
 
 function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
   return (
-    <section className="fleetSummary">
-      <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
-      <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
-      <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
-      <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
-      <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
-      <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
+    <section className="dashboardSummary">
+      <div className="dashboardSummaryHeader">
+        <div>
+          <small>Operations dashboard</small>
+          <h2>Fleet health</h2>
+        </div>
+        <span>{summary.total_runs} total runs</span>
+      </div>
+      <div className="fleetSummary">
+        <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
+        <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
+        <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
+        <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
+        <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
+        <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
+      </div>
     </section>
   );
 }
 
 function TraceFiltersPanel({
   filters,
+  workflows,
   onChange,
 }: {
   filters: TraceFilters;
+  workflows: string[];
   onChange: (filters: TraceFilters) => void;
 }) {
+  function update(next: Partial<TraceFilters>) {
+    onChange({ ...filters, ...next, offset: 0 });
+  }
+
   return (
     <div className="traceFilters">
       <label>
+        <span>Workflow</span>
+        <select value={filters.workflowName} onChange={(event) => update({ workflowName: event.target.value })}>
+          <option value="">Any</option>
+          {workflows.map((workflow) => (
+            <option value={workflow} key={workflow}>
+              {workflow}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
         <span>Status</span>
-        <select value={filters.status} onChange={(event) => onChange({ ...filters, status: event.target.value })}>
+        <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
           <option value="">Any</option>
           <option value="passed">Passed</option>
           <option value="failed">Failed</option>
@@ -407,7 +472,7 @@ function TraceFiltersPanel({
         <span>Approval</span>
         <select
           value={filters.approvalStatus}
-          onChange={(event) => onChange({ ...filters, approvalStatus: event.target.value })}
+          onChange={(event) => update({ approvalStatus: event.target.value })}
         >
           <option value="">Any</option>
           <option value="pending">Needs approval</option>
@@ -420,7 +485,7 @@ function TraceFiltersPanel({
         <span>Grounding</span>
         <select
           value={filters.groundingStatus}
-          onChange={(event) => onChange({ ...filters, groundingStatus: event.target.value })}
+          onChange={(event) => update({ groundingStatus: event.target.value })}
         >
           <option value="">Any</option>
           <option value="grounded">Grounded</option>
@@ -428,7 +493,16 @@ function TraceFiltersPanel({
           <option value="failed">Failed</option>
         </select>
       </label>
-      <button type="button" onClick={() => onChange({ status: "", approvalStatus: "", groundingStatus: "" })}>
+      <label>
+        <span>Time range</span>
+        <select value={filters.timeRange} onChange={(event) => update({ timeRange: event.target.value })}>
+          <option value="">Any time</option>
+          <option value="15m">Last 15 minutes</option>
+          <option value="1h">Last hour</option>
+          <option value="24h">Last 24 hours</option>
+        </select>
+      </label>
+      <button type="button" onClick={() => onChange(emptyFilters())}>
         Clear
       </button>
     </div>
@@ -438,7 +512,7 @@ function TraceFiltersPanel({
 function TraceBadges({ trace }: { trace: TraceSummary }) {
   return (
     <div className="traceBadges">
-      <span className={`chip status ${statusTone(trace.status)}`}>Status: {trace.status}</span>
+      <span className={`chip status ${statusTone(trace.status)}`}>Status: {executionStatus(trace.status)}</span>
       {trace.grounding_status !== trace.status ? (
         <span className={`chip grounding ${groundingTone(trace.grounding_status)}`}>Grounding: {trace.grounding_status}</span>
       ) : null}
@@ -956,11 +1030,42 @@ async function fetchJson<T>(path: string): Promise<T> {
 function filterQuery(filters: TraceFilters): string {
   const params = new URLSearchParams();
   params.set("limit", "50");
+  params.set("offset", String(filters.offset));
+  if (filters.workflowName) params.set("workflow_name", filters.workflowName);
   if (filters.status) params.set("status", filters.status);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
+  const startedAfter = startedAfterForRange(filters.timeRange);
+  if (startedAfter) params.set("started_after", startedAfter);
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function emptyFilters(): TraceFilters {
+  return {
+    status: "",
+    workflowName: "",
+    approvalStatus: "",
+    groundingStatus: "",
+    timeRange: "",
+    offset: 0,
+  };
+}
+
+function executionStatus(status: string): string {
+  if (status === "grounded" || status === "recovered") return "passed";
+  return status;
+}
+
+function startedAfterForRange(value: string): string | null {
+  const minutesByRange: Record<string, number> = {
+    "15m": 15,
+    "1h": 60,
+    "24h": 1440,
+  };
+  const minutes = minutesByRange[value];
+  if (!minutes) return null;
+  return new Date(Date.now() - minutes * 60 * 1000).toISOString();
 }
 
 async function postJson<T>(path: string): Promise<T> {
