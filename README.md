@@ -77,3 +77,16 @@ docker compose run --rm agenttrace show trace_support_triage_happy_path
 
 The initial Compose setup has one `agenttrace` service. As the project grows,
 this will split into API, web, MCP, and database services.
+
+Start the API service:
+
+```bash
+docker compose up api
+```
+
+Then open:
+
+```text
+http://localhost:8000/docs
+http://localhost:8000/traces
+```
