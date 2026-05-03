@@ -29,7 +29,11 @@ class ImporterTest(unittest.TestCase):
         validator_span = next(span for span in trace.spans if span.name == "Validator Agent")
 
         self.assertEqual(trace.status, "recovered")
-        self.assertEqual(len(trace.spans), 8)
+        approval_span = next(span for span in trace.spans if span.name == "Human Approval Gate")
+
+        self.assertEqual(len(trace.spans), 9)
         self.assertEqual(validator_span.span_type, "guardrail")
         self.assertEqual(validator_span.output["grounded"], False)
         self.assertEqual(validator_span.output["unsupported_claims"][0]["claim"], "refund your last 3 months")
+        self.assertEqual(approval_span.span_type, "approval")
+        self.assertEqual(approval_span.span_data["approval_status"], "blocked")

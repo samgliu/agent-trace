@@ -151,6 +151,42 @@ class SQLiteTraceStore:
             spans=spans,
         )
 
+    def get_span(self, trace_id: str, span_id: str) -> Span | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT span_id, trace_id, parent_id, name, span_type, started_at, ended_at,
+                       input_json, output_json, error_json, span_data_json,
+                       input_tokens, output_tokens, estimated_cost
+                FROM spans
+                WHERE trace_id = ? AND span_id = ?
+                """,
+                (trace_id, span_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return _span_from_row(row)
+
+    def update_span_payload(
+        self,
+        trace_id: str,
+        span_id: str,
+        *,
+        output: dict[str, Any] | None,
+        span_data: dict[str, Any],
+    ) -> Span | None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE spans
+                SET output_json = ?, span_data_json = ?
+                WHERE trace_id = ? AND span_id = ?
+                """,
+                (_to_json(output), _to_json(span_data), trace_id, span_id),
+            )
+            connection.commit()
+        return self.get_span(trace_id, span_id)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row

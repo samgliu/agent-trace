@@ -13,6 +13,7 @@ KNOWN_SPAN_TYPES = {
     "guardrail",
     "handoff",
     "rag_retrieval",
+    "approval",
     "validation",
     "custom",
 }

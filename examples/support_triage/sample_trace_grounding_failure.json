@@ -176,11 +176,36 @@
       }
     },
     {
+      "span_id": "span_approval_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "approval",
+      "name": "Human Approval Gate",
+      "started_at": "2026-05-01T23:05:03.920Z",
+      "ended_at": "2026-05-01T23:05:04.000Z",
+      "input": {
+        "requested_action": "refund_last_3_months",
+        "risk_level": "high",
+        "amount": "three_month_subscription_credit"
+      },
+      "output": {
+        "approval_required": true,
+        "approval_status": "blocked",
+        "approved_by": null,
+        "reason": "Multi-month refunds require human approval before action execution."
+      },
+      "span_data": {
+        "approval_required": true,
+        "approval_status": "blocked",
+        "risk_level": "high",
+        "permission_scope": "billing.refund.multi_month"
+      }
+    },
+    {
       "span_id": "span_revision_failure",
       "parent_id": "span_supervisor_failure",
       "span_type": "validation",
       "name": "Safe Response Revision",
-      "started_at": "2026-05-01T23:05:04.000Z",
+      "started_at": "2026-05-01T23:05:04.050Z",
       "ended_at": "2026-05-01T23:05:04.600Z",
       "input": {
         "blocked_claims": ["refund your last 3 months"]

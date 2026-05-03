@@ -282,6 +282,11 @@ h3 {
   background: #f8e8f2;
 }
 
+.spanType.approval {
+  color: #9b2c2c;
+  background: #fff0ed;
+}
+
 .spanType.handoff {
   color: #315f99;
   background: #e9f1fb;
@@ -370,6 +375,61 @@ h3 {
   color: #9b2c2c;
   background: #fff0ed;
   border-bottom: 1px solid #f0c4ba;
+}
+
+.approvalNotice {
+  padding: 12px;
+  background: #fff8e8;
+  border-bottom: 1px solid #efd79c;
+}
+
+.approvalNotice strong {
+  display: block;
+  margin-bottom: 10px;
+  color: #7b4d12;
+}
+
+.approvalNotice dl {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.approvalNotice dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.approvalNotice dt {
+  color: #637179;
+}
+
+.approvalNotice dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.approvalActions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.approvalActions button {
+  padding: 7px 10px;
+  color: #7b4d12;
+  background: #ffffff;
+  border: 1px solid #d7b46b;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.approvalActions button:disabled {
+  color: #7f8b92;
+  background: #f5f7f8;
+  border-color: #dce4e8;
+  cursor: not-allowed;
 }
 
 .claimAlert strong {

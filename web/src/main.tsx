@@ -11,9 +11,11 @@ import {
   GitBranch,
   Network,
   ShieldCheck,
+  UserCheck,
   Wrench
 } from "lucide-react";
 import "./styles.css";
+import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 
@@ -73,6 +75,7 @@ function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +93,7 @@ function App() {
         ]);
         if (!cancelled) {
           setSelectedTraceId(traceId);
-          setSelectedSpanId((current) => current ?? selectedTrace.spans[0]?.span_id ?? null);
+          setSelectedSpanId(selectedTrace.spans[0]?.span_id ?? null);
           setState({ status: "ready", traces, selectedTrace, metrics });
         }
       } catch (error) {
@@ -104,7 +107,15 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTraceId]);
+  }, [selectedTraceId, refreshKey]);
+
+  async function updateApproval(spanId: string, action: ApprovalAction) {
+    if (state.status !== "ready") {
+      return;
+    }
+    await postJson(`/traces/${state.selectedTrace.trace_id}/approvals/${spanId}/${action}`);
+    setRefreshKey((value) => value + 1);
+  }
 
   if (state.status === "loading") {
     return <Shell status="Loading traces" />;
@@ -148,6 +159,7 @@ function App() {
               spans={state.selectedTrace.spans}
               selectedSpanId={selectedSpanId}
               onSelectSpan={setSelectedSpanId}
+              onApprovalAction={updateApproval}
             />
           </section>
         </main>
@@ -296,14 +308,17 @@ function AnalysisPanel({
   spans,
   selectedSpanId,
   onSelectSpan,
+  onApprovalAction,
 }: {
   metrics: Metrics;
   spans: Span[];
   selectedSpanId: string | null;
   onSelectSpan: (spanId: string) => void;
+  onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
   const mcpSpans = spans.filter((span) => span.span_data.tool_protocol === "mcp");
   const guardrails = spans.filter((span) => span.span_type === "guardrail" || span.span_type === "validation");
+  const approvals = spans.filter((span) => span.span_type === "approval");
   const handoffs = spans.filter((span) => span.span_type === "handoff");
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
@@ -317,6 +332,7 @@ function AnalysisPanel({
         <Insight icon={<ArrowRight size={16} />} label="Handoffs" value={`${handoffs.length} supervisor routes`} />
         <Insight icon={<Wrench size={16} />} label="MCP tools" value={`${mcpSpans.length} calls captured`} />
         <Insight icon={<ShieldCheck size={16} />} label="Guardrails" value={`${guardrails.length} validation span`} />
+        <Insight icon={<UserCheck size={16} />} label="Approvals" value={`${approvals.length} approval gate`} />
         <Insight icon={<CircleDollarSign size={16} />} label="Most expensive" value={metrics.most_expensive_span?.name ?? "-"} />
       </div>
       <div className="typeBreakdown">
@@ -340,13 +356,40 @@ function AnalysisPanel({
           ))}
         </div>
       ) : null}
-      {selectedSpan ? <SpanDetail span={selectedSpan} /> : null}
+      {guardrails.length > 0 ? (
+        <div className="quickLinks">
+          <small>Guardrails and validation</small>
+          {guardrails.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {approvals.length > 0 ? (
+        <div className="quickLinks">
+          <small>Approval gates</small>
+          {approvals.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {selectedSpan ? <SpanDetail span={selectedSpan} onApprovalAction={onApprovalAction} /> : null}
     </section>
   );
 }
 
-function SpanDetail({ span }: { span: Span }) {
+function SpanDetail({
+  span,
+  onApprovalAction,
+}: {
+  span: Span;
+  onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
+}) {
   const unsupportedClaims = extractUnsupportedClaims(span.output);
+  const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
 
   return (
     <div className="spanDetail">
@@ -370,10 +413,55 @@ function SpanDetail({ span }: { span: Span }) {
         </div>
       ) : null}
 
+      {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
+
       <JsonBlock label="Input" value={span.input} />
       <JsonBlock label="Output" value={span.output} />
       <JsonBlock label="Metadata" value={span.span_data} />
       {span.error ? <JsonBlock label="Error" value={span.error} /> : null}
+    </div>
+  );
+}
+
+function ApprovalNotice({
+  spanId,
+  status,
+  onApprovalAction,
+}: {
+  spanId: string;
+  status: ApprovalStatus;
+  onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
+}) {
+  const isApproved = status.approvalStatus === "approved";
+  const isRejected = status.approvalStatus === "rejected";
+
+  return (
+    <div className="approvalNotice">
+      <strong>Approval required</strong>
+      <dl>
+        <div>
+          <dt>Status</dt>
+          <dd>{status.approvalStatus}</dd>
+        </div>
+        <div>
+          <dt>Risk</dt>
+          <dd>{status.riskLevel ?? "-"}</dd>
+        </div>
+        <div>
+          <dt>Scope</dt>
+          <dd>{status.permissionScope ?? "-"}</dd>
+        </div>
+      </dl>
+      <div className="approvalActions">
+        <button disabled={isApproved} onClick={() => void onApprovalAction(spanId, "approve")}>
+          Approve
+        </button>
+        <button disabled={isRejected} onClick={() => void onApprovalAction(spanId, "reject")}>
+          Reject
+        </button>
+        <button onClick={() => void onApprovalAction(spanId, "revert")}>Revert</button>
+      </div>
+      <small>Demo approval state is stored on the approval span.</small>
     </div>
   );
 }
@@ -429,11 +517,24 @@ function spanIcon(spanType: string) {
   if (spanType === "function_tool") return <Wrench size={15} />;
   if (spanType === "guardrail") return <ShieldCheck size={15} />;
   if (spanType === "handoff") return <ArrowRight size={15} />;
+  if (spanType === "approval") return <UserCheck size={15} />;
   return <Activity size={15} />;
 }
 
+type ApprovalAction = "approve" | "reject" | "revert";
+
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function postJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+  });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status} ${response.statusText}`);
   }
