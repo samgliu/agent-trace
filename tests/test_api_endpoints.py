@@ -78,6 +78,18 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["input_tokens"], 1550)
         self.assertEqual(payload["estimated_cost"], 0.0034)
 
+    def test_get_grounding(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get(f"/traces/{trace.trace_id}/grounding")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "recovered")
+        self.assertEqual(payload["unsupported_claim_count"], 1)
+        self.assertEqual(payload["unsupported_claims"][0]["span_name"], "Validator Agent")
+
     def test_missing_trace_returns_404(self) -> None:
         response = self.client.get("/traces/missing-trace")
 

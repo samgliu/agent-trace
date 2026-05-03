@@ -178,6 +178,13 @@ h2 {
   color: #3e4a50;
 }
 
+.spanMeta .approvalBadge {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+  font-weight: 800;
+}
+
 .metricGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -203,6 +210,16 @@ h2 {
   color: #246b5b;
   background: #e8f4f0;
   border-radius: 6px;
+}
+
+.metric.warning {
+  border-color: #efd79c;
+  background: #fff8e8;
+}
+
+.metric.warning .metricIcon {
+  color: #7b4d12;
+  background: #fff0c4;
 }
 
 .metric strong,
@@ -259,6 +276,16 @@ h3 {
 .spanRow:hover,
 .spanRow.selected {
   background: #f1f8f5;
+}
+
+.spanRow.approvalPending {
+  background: #fff8e8;
+  border-left: 4px solid #b45309;
+}
+
+.spanRow.approvalPending:hover,
+.spanRow.approvalPending.selected {
+  background: #fff0c4;
 }
 
 .spanType {
@@ -413,16 +440,38 @@ h3 {
 .approvalActions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 10px;
 }
 
 .approvalActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
   padding: 7px 10px;
-  color: #7b4d12;
-  background: #ffffff;
-  border: 1px solid #d7b46b;
+  border: 1px solid transparent;
   border-radius: 5px;
+  font-weight: 800;
   cursor: pointer;
+}
+
+.approvalActions .approveButton {
+  color: #ffffff;
+  background: #1f6b4f;
+  border-color: #1f6b4f;
+}
+
+.approvalActions .rejectButton {
+  color: #ffffff;
+  background: #9b2c2c;
+  border-color: #9b2c2c;
+}
+
+.approvalActions .revertButton {
+  color: #315f99;
+  background: #ffffff;
+  border-color: #b7cbe2;
 }
 
 .approvalActions button:disabled {
@@ -430,6 +479,87 @@ h3 {
   background: #f5f7f8;
   border-color: #dce4e8;
   cursor: not-allowed;
+}
+
+.approvalQueue {
+  display: grid;
+  gap: 10px;
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 2px solid #d7b46b;
+  border-radius: 6px;
+  background: #fff8e8;
+}
+
+.approvalQueueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #7b4d12;
+}
+
+.approvalQueueHeader strong,
+.approvalQueueHeader small {
+  display: block;
+}
+
+.approvalQueueHeader small {
+  margin-top: 3px;
+}
+
+.approvalQueueItem {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #efd79c;
+  border-radius: 6px;
+}
+
+.approvalQueueItem.pending {
+  border-color: #b45309;
+  box-shadow: inset 4px 0 0 #b45309;
+}
+
+.approvalQueueTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  color: #172026;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.approvalQueueTitle span {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  color: #7b1d1d;
+  background: #fff0ed;
+  border: 1px solid #e9a7a0;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.approvalQueueMeta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.approvalQueueMeta span {
+  padding: 4px 7px;
+  color: #3e4a50;
+  background: #f5f7f8;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
 }
 
 .claimAlert strong {
@@ -484,6 +614,62 @@ h3 {
 
 .typeBreakdown {
   padding: 0 16px 16px;
+}
+
+.groundingPanel {
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+.groundingPanel.warning {
+  border-color: #efd79c;
+  background: #fff8e8;
+}
+
+.groundingHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.groundingHeader span {
+  padding: 4px 7px;
+  color: #7b4d12;
+  background: #fff0c4;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.groundingClaims {
+  display: grid;
+  gap: 8px;
+}
+
+.groundingClaims small {
+  font-weight: 700;
+}
+
+.groundingClaims button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 9px;
+  text-align: left;
+  color: #172026;
+  background: #ffffff;
+  border: 1px solid #efd79c;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.groundingClaims span,
+.groundingOk {
+  color: #637179;
+  font-size: 13px;
 }
 
 .typeBar {

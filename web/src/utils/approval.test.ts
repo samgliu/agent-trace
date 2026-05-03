@@ -12,8 +12,21 @@ describe("getApprovalStatus", () => {
       }),
     ).toEqual({
       approvalStatus: "blocked",
+      isPending: true,
+      isResolved: false,
       riskLevel: "high",
       permissionScope: "billing.refund.multi_month",
+    });
+  });
+
+  it("marks approved and rejected approvals as resolved", () => {
+    expect(getApprovalStatus("approval", { approval_status: "approved" })).toMatchObject({
+      isPending: false,
+      isResolved: true,
+    });
+    expect(getApprovalStatus("approval", { approval_status: "rejected" })).toMatchObject({
+      isPending: false,
+      isResolved: true,
     });
   });
 

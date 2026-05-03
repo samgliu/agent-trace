@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Trace
 from agenttrace.storage.sqlite import SQLiteTraceStore
@@ -58,6 +59,11 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def get_metrics(trace_id: str) -> dict[str, Any]:
         trace = _require_trace(trace_store, trace_id)
         return build_trace_metrics(trace)
+
+    @app.get("/traces/{trace_id}/grounding")
+    def get_grounding(trace_id: str) -> dict[str, Any]:
+        trace = _require_trace(trace_store, trace_id)
+        return build_grounding_summary(trace)
 
     @app.post("/traces/{trace_id}/approvals/{span_id}/approve")
     def approve_span(trace_id: str, span_id: str) -> dict[str, Any]:
