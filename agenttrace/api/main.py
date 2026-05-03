@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
 from agenttrace.core.metrics import build_trace_metrics
@@ -74,24 +75,24 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         )
 
     @app.post("/traces")
-    def ingest_trace(payload: dict[str, Any]) -> dict[str, Any]:
-        trace = normalize_trace(payload)
+    def ingest_trace(payload: TraceIngestRequest) -> dict[str, Any]:
+        trace = normalize_trace(payload.model_dump())
         trace_store.upsert_trace(trace)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
 
     @app.post("/traces/{trace_id}/spans")
-    def ingest_span(trace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def ingest_span(trace_id: str, payload: SpanIngestRequest) -> dict[str, Any]:
         _require_trace(trace_store, trace_id)
-        span = Span.from_dict({**payload, "trace_id": trace_id}, trace_id=trace_id)
+        span = Span.from_dict({**payload.model_dump(), "trace_id": trace_id}, trace_id=trace_id)
         return trace_store.upsert_span(span).to_dict()
 
     @app.patch("/traces/{trace_id}")
-    def update_trace(trace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def update_trace(trace_id: str, payload: TraceLifecycleUpdateRequest) -> dict[str, Any]:
         updated = trace_store.update_trace_lifecycle(
             trace_id,
-            status=payload.get("status"),
-            ended_at=payload.get("ended_at"),
+            status=payload.status,
+            ended_at=payload.ended_at,
         )
         if updated is None:
             raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")

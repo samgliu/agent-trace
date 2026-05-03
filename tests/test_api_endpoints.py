@@ -145,6 +145,11 @@ class ApiEndpointsTest(unittest.TestCase):
         summary = self.client.get("/traces?workflow_name=support-triage&status=passed").json()
         self.assertEqual(summary["total"], 2)
 
+    def test_ingest_trace_validates_required_trace_id(self) -> None:
+        response = self.client.post("/traces", json={"workflow_name": "support-triage"})
+
+        self.assertEqual(response.status_code, 422)
+
     def test_get_spans(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}/spans")
 
