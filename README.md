@@ -48,6 +48,10 @@ python3 -m unittest discover
 python3 -m compileall agenttrace tests
 ```
 
+The local Python environment can run core tests without web dependencies. The
+Docker image installs API dependencies and runs the full test suite during
+`docker compose build`.
+
 ## Docker
 
 Build a local image:

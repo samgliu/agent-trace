@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ class SQLiteTraceStore:
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS traces (
@@ -53,9 +54,10 @@ class SQLiteTraceStore:
                 )
                 """
             )
+            connection.commit()
 
     def save_trace(self, trace: Trace) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO traces (
@@ -87,9 +89,10 @@ class SQLiteTraceStore:
                 """,
                 [_span_row(span) for span in trace.spans],
             )
+            connection.commit()
 
     def list_traces(self) -> list[Trace]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT trace_id, workflow_name, group_id, status, metadata_json, started_at, ended_at
@@ -112,7 +115,7 @@ class SQLiteTraceStore:
         ]
 
     def get_trace(self, trace_id: str) -> Trace | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             trace_row = connection.execute(
                 """
                 SELECT trace_id, workflow_name, group_id, status, metadata_json, started_at, ended_at
@@ -136,6 +139,7 @@ class SQLiteTraceStore:
             ).fetchall()
 
         spans = [_span_from_row(row) for row in span_rows]
+        spans.sort(key=lambda span: span.started_at or parse_datetime("0001-01-01T00:00:00Z"))
         return Trace(
             trace_id=trace_row["trace_id"],
             workflow_name=trace_row["workflow_name"],
