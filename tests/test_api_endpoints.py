@@ -32,6 +32,18 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_cors_allows_local_dashboard(self) -> None:
+        response = self.client.options(
+            "/traces",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
+
     def test_list_traces(self) -> None:
         response = self.client.get("/traces")
 
@@ -71,3 +83,47 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "Trace not found: missing-trace")
+
+    def test_approve_approval_span(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.post(f"/traces/{trace.trace_id}/approvals/span_approval_failure/approve")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["span_data"]["approval_status"], "approved")
+        self.assertEqual(payload["output"]["approval_status"], "approved")
+        self.assertEqual(payload["span_data"]["approved_by"], "demo_user")
+        self.assertIsNotNone(payload["span_data"]["approved_at"])
+
+    def test_reject_approval_span(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.post(f"/traces/{trace.trace_id}/approvals/span_approval_failure/reject")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["span_data"]["approval_status"], "rejected")
+        self.assertEqual(payload["output"]["approval_status"], "rejected")
+
+    def test_revert_approval_span(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        self.client.post(f"/traces/{trace.trace_id}/approvals/span_approval_failure/approve")
+        response = self.client.post(f"/traces/{trace.trace_id}/approvals/span_approval_failure/revert")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["span_data"]["approval_status"], "blocked")
+        self.assertEqual(payload["output"]["approval_status"], "blocked")
+        self.assertIsNone(payload["span_data"]["approved_by"])
+        self.assertIsNone(payload["span_data"]["approved_at"])
+
+    def test_approval_action_rejects_non_approval_span(self) -> None:
+        response = self.client.post(f"/traces/{self.trace.trace_id}/approvals/span_triage/approve")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Span is not an approval gate: span_triage")

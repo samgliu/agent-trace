@@ -22,3 +22,18 @@ class ImporterTest(unittest.TestCase):
         self.assertEqual(lookup_span.span_type, "function_tool")
         self.assertEqual(lookup_span.span_data["tool_protocol"], "mcp")
         self.assertEqual(lookup_span.span_data["tool_server"], "support-tools-mcp")
+
+    def test_load_grounding_failure_trace(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+
+        validator_span = next(span for span in trace.spans if span.name == "Validator Agent")
+
+        self.assertEqual(trace.status, "recovered")
+        approval_span = next(span for span in trace.spans if span.name == "Human Approval Gate")
+
+        self.assertEqual(len(trace.spans), 9)
+        self.assertEqual(validator_span.span_type, "guardrail")
+        self.assertEqual(validator_span.output["grounded"], False)
+        self.assertEqual(validator_span.output["unsupported_claims"][0]["claim"], "refund your last 3 months")
+        self.assertEqual(approval_span.span_type, "approval")
+        self.assertEqual(approval_span.span_data["approval_status"], "blocked")

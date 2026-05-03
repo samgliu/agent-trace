@@ -94,3 +94,25 @@ Then open:
 http://localhost:8000/docs
 http://localhost:8000/traces
 ```
+
+Start the dashboard:
+
+```bash
+docker compose up api web
+```
+
+Then open:
+
+```text
+http://localhost:5173
+```
+
+For local frontend development without Docker:
+
+```bash
+cd web
+corepack pnpm install
+corepack pnpm test
+corepack pnpm build
+corepack pnpm dev
+```

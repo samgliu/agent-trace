@@ -1,6 +1,10 @@
 .agenttrace/
 .venv/
 venv/
+node_modules/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
 __pycache__/
 .pytest_cache/
 *.pyc
