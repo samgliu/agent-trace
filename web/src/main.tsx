@@ -165,6 +165,13 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      setRefreshKey((value) => value + 1);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function load() {
@@ -193,7 +200,11 @@ function App() {
         ]);
         if (!cancelled) {
           setSelectedTraceId(traceId);
-          setSelectedSpanId(selectedTrace.spans[0]?.span_id ?? null);
+          setSelectedSpanId((currentSpanId) =>
+            selectedTrace.spans.some((span) => span.span_id === currentSpanId)
+              ? currentSpanId
+              : selectedTrace.spans[0]?.span_id ?? null,
+          );
           setState({
             status: "ready",
             traces,

@@ -11,8 +11,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from agenttrace.core.grounding import build_grounding_summary
+from agenttrace.core.importer import normalize_trace
 from agenttrace.core.metrics import build_trace_metrics
-from agenttrace.core.models import Trace
+from agenttrace.core.models import Span, Trace
 from agenttrace.core.summary import build_dashboard_summary
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
@@ -32,7 +33,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             "http://127.0.0.1:5173",
         ],
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["*"],
     )
     trace_store = store or SQLiteTraceStore(_database_path())
@@ -71,6 +72,30 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             started_after=started_after,
             started_before=started_before,
         )
+
+    @app.post("/traces")
+    def ingest_trace(payload: dict[str, Any]) -> dict[str, Any]:
+        trace = normalize_trace(payload)
+        trace_store.upsert_trace(trace)
+        saved = _require_trace(trace_store, trace.trace_id)
+        return saved.to_dict()
+
+    @app.post("/traces/{trace_id}/spans")
+    def ingest_span(trace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_trace(trace_store, trace_id)
+        span = Span.from_dict({**payload, "trace_id": trace_id}, trace_id=trace_id)
+        return trace_store.upsert_span(span).to_dict()
+
+    @app.patch("/traces/{trace_id}")
+    def update_trace(trace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        updated = trace_store.update_trace_lifecycle(
+            trace_id,
+            status=payload.get("status"),
+            ended_at=payload.get("ended_at"),
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")
+        return updated.to_dict()
 
     @app.get("/traces/{trace_id}")
     def get_trace(trace_id: str) -> dict[str, Any]:

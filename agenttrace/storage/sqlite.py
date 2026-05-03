@@ -129,6 +129,93 @@ class SQLiteTraceStore:
             )
             connection.commit()
 
+    def upsert_trace(self, trace: Trace) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO traces (
+                    trace_id, workflow_name, group_id, status, metadata_json,
+                    started_at, ended_at, raw_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace.trace_id,
+                    trace.workflow_name,
+                    trace.group_id,
+                    trace.status,
+                    _to_json(trace.metadata),
+                    serialize_datetime(trace.started_at),
+                    serialize_datetime(trace.ended_at),
+                    _to_json(trace.to_dict()),
+                ),
+            )
+            connection.commit()
+        self._save_trace_summary(trace)
+
+    def upsert_span(self, span: Span) -> Span:
+        with closing(self._connect()) as connection:
+            existing_trace = connection.execute(
+                "SELECT trace_id FROM traces WHERE trace_id = ?",
+                (span.trace_id,),
+            ).fetchone()
+            if existing_trace is None:
+                raise ValueError(f"Trace not found: {span.trace_id}")
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO spans (
+                    span_id, trace_id, parent_id, name, span_type, started_at, ended_at,
+                    input_json, output_json, error_json, span_data_json,
+                    input_tokens, output_tokens, estimated_cost
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _span_row(span),
+            )
+            connection.commit()
+        trace = self.get_trace(span.trace_id)
+        if trace is not None:
+            self._save_trace_summary(trace)
+        saved = self.get_span(span.trace_id, span.span_id)
+        if saved is None:
+            raise ValueError(f"Span not saved: {span.span_id}")
+        return saved
+
+    def update_trace_lifecycle(
+        self,
+        trace_id: str,
+        *,
+        status: str | None = None,
+        ended_at: str | None = None,
+    ) -> Trace | None:
+        trace = self.get_trace(trace_id)
+        if trace is None:
+            return None
+        next_status = status or trace.status
+        next_ended_at = parse_datetime(ended_at) if ended_at is not None else trace.ended_at
+        updated = Trace(
+            trace_id=trace.trace_id,
+            workflow_name=trace.workflow_name,
+            group_id=trace.group_id,
+            status=next_status,
+            metadata=trace.metadata,
+            started_at=trace.started_at,
+            ended_at=next_ended_at,
+            spans=trace.spans,
+        )
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE traces
+                SET status = ?, ended_at = ?, raw_json = ?
+                WHERE trace_id = ?
+                """,
+                (updated.status, serialize_datetime(updated.ended_at), _to_json(updated.to_dict()), trace_id),
+            )
+            connection.commit()
+        self._save_trace_summary(updated)
+        return updated
+
     def list_traces(self) -> list[Trace]:
         with closing(self._connect()) as connection:
             rows = connection.execute(

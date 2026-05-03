@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 from agenttrace.core.importer import load_trace_file
 from agenttrace.storage.sqlite import SQLiteTraceStore
@@ -49,6 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include full timestamps and additional span details in the timeline.",
     )
 
+    live_parser = subparsers.add_parser("live-sample", help="Emit a live support-triage trace to the API.")
+    live_parser.add_argument(
+        "--api-url",
+        default="http://localhost:8000",
+        help="AgentTrace API base URL. Defaults to http://localhost:8000.",
+    )
+    live_parser.add_argument(
+        "--delay",
+        type=float,
+        default=1.0,
+        help="Delay between emitted spans in seconds.",
+    )
+
     return parser
 
 
@@ -90,8 +108,106 @@ def main(argv: list[str] | None = None) -> int:
             print(trace.format_timeline(verbose=args.verbose))
         return 0
 
+    if args.command == "live-sample":
+        emit_live_sample(api_url=args.api_url, delay=args.delay)
+        return 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def emit_live_sample(*, api_url: str, delay: float) -> None:
+    started_at = datetime.now(timezone.utc)
+    trace_id = "live_support_triage_" + started_at.strftime("%Y%m%d%H%M%S")
+    trace_payload = {
+        "trace_id": trace_id,
+        "workflow_name": "support-triage",
+        "status": "running",
+        "started_at": _timestamp(started_at),
+        "metadata": {"source": "agenttrace-live-sample"},
+        "spans": [],
+    }
+    spans = _live_sample_spans(trace_id, started_at)
+    with httpx.Client(base_url=api_url, timeout=10.0) as client:
+        response = client.post("/traces", json=trace_payload)
+        response.raise_for_status()
+        print(f"Started live trace {trace_id}")
+        for span in spans:
+            time.sleep(max(0, delay))
+            response = client.post(f"/traces/{trace_id}/spans", json=span)
+            response.raise_for_status()
+            print(f"Emitted span {span['span_id']}: {span['name']}")
+        response = client.patch(
+            f"/traces/{trace_id}",
+            json={"status": "passed", "ended_at": _timestamp(started_at + timedelta(seconds=7))},
+        )
+        response.raise_for_status()
+        print(f"Completed live trace {trace_id}")
+
+
+def _live_sample_spans(trace_id: str, started_at: datetime) -> list[dict[str, Any]]:
+    return [
+        {
+            "span_id": "span_live_supervisor",
+            "trace_id": trace_id,
+            "name": "Supervisor Agent",
+            "span_type": "agent",
+            "started_at": _timestamp(started_at),
+            "ended_at": _timestamp(started_at + timedelta(seconds=1)),
+            "input_tokens": 140,
+            "output_tokens": 32,
+            "estimated_cost": 0.0004,
+        },
+        {
+            "span_id": "span_live_triage",
+            "trace_id": trace_id,
+            "parent_id": "span_live_supervisor",
+            "name": "Triage Agent",
+            "span_type": "agent",
+            "started_at": _timestamp(started_at + timedelta(seconds=1)),
+            "ended_at": _timestamp(started_at + timedelta(seconds=2)),
+            "input_tokens": 220,
+            "output_tokens": 58,
+            "estimated_cost": 0.0006,
+        },
+        {
+            "span_id": "span_live_lookup_customer",
+            "trace_id": trace_id,
+            "parent_id": "span_live_triage",
+            "name": "lookup_customer",
+            "span_type": "function_tool",
+            "started_at": _timestamp(started_at + timedelta(seconds=2)),
+            "ended_at": _timestamp(started_at + timedelta(seconds=3)),
+            "span_data": {"tool_protocol": "mcp", "tool_server": "support-tools-mcp"},
+            "estimated_cost": 0.0,
+        },
+        {
+            "span_id": "span_live_policy",
+            "trace_id": trace_id,
+            "parent_id": "span_live_supervisor",
+            "name": "Policy Agent",
+            "span_type": "agent",
+            "started_at": _timestamp(started_at + timedelta(seconds=3)),
+            "ended_at": _timestamp(started_at + timedelta(seconds=4)),
+            "input_tokens": 360,
+            "output_tokens": 92,
+            "estimated_cost": 0.0011,
+        },
+        {
+            "span_id": "span_live_validator",
+            "trace_id": trace_id,
+            "parent_id": "span_live_supervisor",
+            "name": "Validator Agent",
+            "span_type": "validation",
+            "started_at": _timestamp(started_at + timedelta(seconds=5)),
+            "ended_at": _timestamp(started_at + timedelta(seconds=6)),
+            "output": {"grounded": True, "supported_claims": [{"claim": "support review request created"}]},
+        },
+    ]
+
+
+def _timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 if __name__ == "__main__":

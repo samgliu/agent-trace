@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from agenttrace.core.importer import load_trace_file
+from agenttrace.core.models import Span, Trace, parse_datetime
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 
@@ -94,3 +95,58 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             approved = store.list_trace_summaries(approval_status="approved")
             self.assertEqual(pending["total"], 0)
             self.assertEqual(approved["total"], 1)
+
+    def test_upsert_span_updates_running_trace_summary(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = Trace(
+                trace_id="live_trace",
+                workflow_name="support-triage",
+                status="running",
+                started_at=parse_datetime("2026-05-03T21:00:00Z"),
+            )
+
+            store.upsert_trace(trace)
+            saved_span = store.upsert_span(
+                Span(
+                    span_id="span_live_supervisor",
+                    trace_id=trace.trace_id,
+                    name="Supervisor Agent",
+                    span_type="agent",
+                    started_at=parse_datetime("2026-05-03T21:00:00Z"),
+                    ended_at=parse_datetime("2026-05-03T21:00:01Z"),
+                    input_tokens=10,
+                    output_tokens=5,
+                    estimated_cost=0.0001,
+                )
+            )
+
+            self.assertEqual(saved_span.span_id, "span_live_supervisor")
+            result = store.list_trace_summaries(status="running")
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["items"][0]["span_count"], 1)
+            self.assertEqual(result["items"][0]["input_tokens"], 10)
+
+    def test_update_trace_lifecycle_marks_running_trace_passed(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = Trace(
+                trace_id="live_trace",
+                workflow_name="support-triage",
+                status="running",
+                started_at=parse_datetime("2026-05-03T21:00:00Z"),
+            )
+
+            store.upsert_trace(trace)
+            updated = store.update_trace_lifecycle(
+                trace.trace_id,
+                status="passed",
+                ended_at="2026-05-03T21:00:04Z",
+            )
+
+            self.assertIsNotNone(updated)
+            assert updated is not None
+            self.assertEqual(updated.status, "passed")
+            self.assertEqual(updated.duration_ms, 4000)
