@@ -1,0 +1,202 @@
+{
+  "trace_id": "trace_support_triage_grounding_failure",
+  "workflow_name": "support-triage",
+  "group_id": "demo-support-triage",
+  "status": "recovered",
+  "started_at": "2026-05-01T23:05:00Z",
+  "ended_at": "2026-05-01T23:05:05Z",
+  "metadata": {
+    "scenario": "unsupported_three_month_refund",
+    "source": "sample"
+  },
+  "spans": [
+    {
+      "span_id": "span_supervisor_failure",
+      "span_type": "agent",
+      "name": "Supervisor Agent",
+      "started_at": "2026-05-01T23:05:00Z",
+      "ended_at": "2026-05-01T23:05:05Z",
+      "input": {
+        "message": "Can you cancel my plan and refund my last 3 months?"
+      },
+      "output": {
+        "final_status": "recovered_with_safe_escalation"
+      },
+      "usage": {
+        "input_tokens": 190,
+        "output_tokens": 60
+      },
+      "estimated_cost": 0.0005,
+      "span_data": {
+        "agent_name": "Supervisor Agent",
+        "role": "orchestrator"
+      }
+    },
+    {
+      "span_id": "span_triage_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "agent",
+      "name": "Triage Agent",
+      "started_at": "2026-05-01T23:05:00.250Z",
+      "ended_at": "2026-05-01T23:05:00.850Z",
+      "output": {
+        "category": "billing",
+        "intent": "refund_request",
+        "priority": "medium",
+        "sentiment": "neutral"
+      },
+      "usage": {
+        "input_tokens": 210,
+        "output_tokens": 46
+      },
+      "estimated_cost": 0.0005,
+      "span_data": {
+        "agent_name": "Triage Agent"
+      }
+    },
+    {
+      "span_id": "span_lookup_customer_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "function_tool",
+      "name": "lookup_customer",
+      "started_at": "2026-05-01T23:05:00.900Z",
+      "ended_at": "2026-05-01T23:05:01.050Z",
+      "input": {
+        "email": "customer@example.com"
+      },
+      "output": {
+        "customer_id": "cus_456",
+        "plan": "Pro",
+        "status": "active",
+        "last_payment_status": "successful"
+      },
+      "span_data": {
+        "tool_protocol": "mcp",
+        "tool_server": "support-tools-mcp",
+        "tool_transport": "stdio"
+      }
+    },
+    {
+      "span_id": "span_policy_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "agent",
+      "name": "Policy Agent",
+      "started_at": "2026-05-01T23:05:01.200Z",
+      "ended_at": "2026-05-01T23:05:02.100Z",
+      "output": {
+        "policy_decision": "automatic_refund_not_allowed",
+        "requires_human_approval": true,
+        "evidence_ids": ["policy_refunds_002"]
+      },
+      "usage": {
+        "input_tokens": 520,
+        "output_tokens": 94
+      },
+      "estimated_cost": 0.0012,
+      "span_data": {
+        "agent_name": "Policy Agent"
+      }
+    },
+    {
+      "span_id": "span_retrieve_policy_failure",
+      "parent_id": "span_policy_failure",
+      "span_type": "rag_retrieval",
+      "name": "retrieve_policy",
+      "started_at": "2026-05-01T23:05:01.300Z",
+      "ended_at": "2026-05-01T23:05:01.560Z",
+      "input": {
+        "query": "three month refund cancellation policy"
+      },
+      "output": {
+        "chunks": [
+          {
+            "id": "policy_refunds_002",
+            "text": "Automatic refunds are limited to duplicate charges reported within 30 days. Multi-month refunds require support escalation and approval.",
+            "score": 0.91
+          }
+        ]
+      },
+      "span_data": {
+        "retriever": "local_policy_docs"
+      }
+    },
+    {
+      "span_id": "span_action_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "agent",
+      "name": "Action Agent",
+      "started_at": "2026-05-01T23:05:02.200Z",
+      "ended_at": "2026-05-01T23:05:03.000Z",
+      "output": {
+        "draft_action": "promise_three_month_refund",
+        "risk_level": "high"
+      },
+      "usage": {
+        "input_tokens": 430,
+        "output_tokens": 70
+      },
+      "estimated_cost": 0.0009,
+      "span_data": {
+        "agent_name": "Action Agent"
+      }
+    },
+    {
+      "span_id": "span_validator_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "guardrail",
+      "name": "Validator Agent",
+      "started_at": "2026-05-01T23:05:03.100Z",
+      "ended_at": "2026-05-01T23:05:03.900Z",
+      "input": {
+        "draft_response": "Sure, I can refund your last 3 months and cancel your plan today."
+      },
+      "output": {
+        "grounded": false,
+        "unsupported_claims": [
+          {
+            "claim": "refund your last 3 months",
+            "reason": "Policy requires escalation and approval for multi-month refunds."
+          }
+        ],
+        "supported_claims": [
+          {
+            "claim": "cancel plan request received",
+            "evidence": "user.message"
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 360,
+        "output_tokens": 110
+      },
+      "estimated_cost": 0.0009,
+      "span_data": {
+        "agent_name": "Validator Agent",
+        "risk_level": "high"
+      }
+    },
+    {
+      "span_id": "span_revision_failure",
+      "parent_id": "span_supervisor_failure",
+      "span_type": "validation",
+      "name": "Safe Response Revision",
+      "started_at": "2026-05-01T23:05:04.000Z",
+      "ended_at": "2026-05-01T23:05:04.600Z",
+      "input": {
+        "blocked_claims": ["refund your last 3 months"]
+      },
+      "output": {
+        "final_response": "I can help submit this cancellation and refund request for support review. Our policy does not allow an automatic 3-month refund without approval.",
+        "grounded": true
+      },
+      "usage": {
+        "input_tokens": 260,
+        "output_tokens": 88
+      },
+      "estimated_cost": 0.0007,
+      "span_data": {
+        "revision_reason": "unsupported_claim_blocked"
+      }
+    }
+  ]
+}

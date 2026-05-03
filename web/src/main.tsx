@@ -14,6 +14,7 @@ import {
   Wrench
 } from "lucide-react";
 import "./styles.css";
+import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -33,6 +34,8 @@ type Span = {
   name: string;
   span_type: string;
   duration_ms: number | null;
+  input: unknown;
+  output: unknown;
   input_tokens: number | null;
   output_tokens: number | null;
   estimated_cost: number | null;
@@ -69,6 +72,7 @@ type LoadState =
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +90,7 @@ function App() {
         ]);
         if (!cancelled) {
           setSelectedTraceId(traceId);
+          setSelectedSpanId((current) => current ?? selectedTrace.spans[0]?.span_id ?? null);
           setState({ status: "ready", traces, selectedTrace, metrics });
         }
       } catch (error) {
@@ -120,6 +125,7 @@ function App() {
                 className={trace.trace_id === state.selectedTrace.trace_id ? "traceButton active" : "traceButton"}
                 key={trace.trace_id}
                 onClick={() => setSelectedTraceId(trace.trace_id)}
+                onDoubleClick={() => setSelectedSpanId(null)}
               >
                 <span>{trace.workflow_name}</span>
                 <small>{trace.status}</small>
@@ -132,8 +138,17 @@ function App() {
           <TraceHeader trace={state.selectedTrace} />
           <MetricGrid metrics={state.metrics} />
           <section className="workspace">
-            <TraceTimeline spans={state.selectedTrace.spans} />
-            <AnalysisPanel metrics={state.metrics} spans={state.selectedTrace.spans} />
+            <TraceTimeline
+              spans={state.selectedTrace.spans}
+              selectedSpanId={selectedSpanId}
+              onSelectSpan={setSelectedSpanId}
+            />
+            <AnalysisPanel
+              metrics={state.metrics}
+              spans={state.selectedTrace.spans}
+              selectedSpanId={selectedSpanId}
+              onSelectSpan={setSelectedSpanId}
+            />
           </section>
         </main>
       </div>
@@ -200,7 +215,15 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
   );
 }
 
-function TraceTimeline({ spans }: { spans: Span[] }) {
+function TraceTimeline({
+  spans,
+  selectedSpanId,
+  onSelectSpan,
+}: {
+  spans: Span[];
+  selectedSpanId: string | null;
+  onSelectSpan: (spanId: string) => void;
+}) {
   const rootSpans = useMemo(() => buildSpanTree(spans), [spans]);
 
   return (
@@ -211,18 +234,38 @@ function TraceTimeline({ spans }: { spans: Span[] }) {
       </div>
       <div className="timeline">
         {rootSpans.map((node) => (
-          <SpanRow key={node.span.span_id} node={node} depth={0} />
+          <SpanRow
+            key={node.span.span_id}
+            node={node}
+            depth={0}
+            selectedSpanId={selectedSpanId}
+            onSelectSpan={onSelectSpan}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function SpanRow({ node, depth }: { node: SpanNode; depth: number }) {
+function SpanRow({
+  node,
+  depth,
+  selectedSpanId,
+  onSelectSpan,
+}: {
+  node: SpanNode;
+  depth: number;
+  selectedSpanId: string | null;
+  onSelectSpan: (spanId: string) => void;
+}) {
   const span = node.span;
   return (
     <>
-      <div className="spanRow" style={{ paddingLeft: `${depth * 22 + 12}px` }}>
+      <button
+        className={span.span_id === selectedSpanId ? "spanRow selected" : "spanRow"}
+        style={{ paddingLeft: `${depth * 22 + 12}px` }}
+        onClick={() => onSelectSpan(span.span_id)}
+      >
         <span className={`spanType ${span.span_type}`}>{spanIcon(span.span_type)}</span>
         <div className="spanMain">
           <strong>{span.name}</strong>
@@ -234,18 +277,35 @@ function SpanRow({ node, depth }: { node: SpanNode; depth: number }) {
           {span.estimated_cost ? <span>{formatCost(span.estimated_cost)}</span> : null}
           {typeof span.span_data.tool_server === "string" ? <span>{span.span_data.tool_server}</span> : null}
         </div>
-      </div>
+      </button>
       {node.children.map((child) => (
-        <SpanRow key={child.span.span_id} node={child} depth={depth + 1} />
+        <SpanRow
+          key={child.span.span_id}
+          node={child}
+          depth={depth + 1}
+          selectedSpanId={selectedSpanId}
+          onSelectSpan={onSelectSpan}
+        />
       ))}
     </>
   );
 }
 
-function AnalysisPanel({ metrics, spans }: { metrics: Metrics; spans: Span[] }) {
+function AnalysisPanel({
+  metrics,
+  spans,
+  selectedSpanId,
+  onSelectSpan,
+}: {
+  metrics: Metrics;
+  spans: Span[];
+  selectedSpanId: string | null;
+  onSelectSpan: (spanId: string) => void;
+}) {
   const mcpSpans = spans.filter((span) => span.span_data.tool_protocol === "mcp");
   const guardrails = spans.filter((span) => span.span_type === "guardrail" || span.span_type === "validation");
   const handoffs = spans.filter((span) => span.span_type === "handoff");
+  const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
   return (
     <section className="panel analysisPanel">
@@ -270,7 +330,60 @@ function AnalysisPanel({ metrics, spans }: { metrics: Metrics; spans: Span[] }) 
           </div>
         ))}
       </div>
+      {mcpSpans.length > 0 ? (
+        <div className="quickLinks">
+          <small>MCP tool calls</small>
+          {mcpSpans.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {selectedSpan ? <SpanDetail span={selectedSpan} /> : null}
     </section>
+  );
+}
+
+function SpanDetail({ span }: { span: Span }) {
+  const unsupportedClaims = extractUnsupportedClaims(span.output);
+
+  return (
+    <div className="spanDetail">
+      <div className="spanDetailHeader">
+        <div>
+          <small>Selected span</small>
+          <strong>{span.name}</strong>
+        </div>
+        <span>{span.span_type}</span>
+      </div>
+
+      {unsupportedClaims.length > 0 ? (
+        <div className="claimAlert">
+          <strong>Unsupported claims</strong>
+          {unsupportedClaims.map((claim, index) => (
+            <p key={`${claim.claim}-${index}`}>
+              {claim.claim}
+              {claim.reason ? <span>{claim.reason}</span> : null}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
+      <JsonBlock label="Input" value={span.input} />
+      <JsonBlock label="Output" value={span.output} />
+      <JsonBlock label="Metadata" value={span.span_data} />
+      {span.error ? <JsonBlock label="Error" value={span.error} /> : null}
+    </div>
+  );
+}
+
+function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="jsonBlock">
+      <small>{label}</small>
+      <pre>{value === null || value === undefined ? "-" : JSON.stringify(value, null, 2)}</pre>
+    </div>
   );
 }
 

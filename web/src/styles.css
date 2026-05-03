@@ -247,6 +247,18 @@ h3 {
   padding-right: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid #edf1f3;
+  width: 100%;
+  background: transparent;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spanRow:hover,
+.spanRow.selected {
+  background: #f1f8f5;
 }
 
 .spanType {
@@ -300,6 +312,109 @@ h3 {
   display: grid;
   gap: 10px;
   padding: 16px;
+}
+
+.quickLinks {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 16px 16px;
+}
+
+.quickLinks small {
+  flex-basis: 100%;
+  font-weight: 700;
+}
+
+.quickLinks button {
+  padding: 6px 8px;
+  color: #246b5b;
+  background: #e8f4f0;
+  border: 1px solid #c7e1d8;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.spanDetail {
+  margin: 0 16px 16px;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.spanDetailHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  background: #f8fafb;
+  border-bottom: 1px solid #dce4e8;
+}
+
+.spanDetailHeader strong {
+  display: block;
+  margin-top: 3px;
+}
+
+.spanDetailHeader span {
+  align-self: flex-start;
+  padding: 5px 8px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.claimAlert {
+  padding: 12px;
+  color: #9b2c2c;
+  background: #fff0ed;
+  border-bottom: 1px solid #f0c4ba;
+}
+
+.claimAlert strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.claimAlert p {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.claimAlert span {
+  color: #6e4a43;
+}
+
+.jsonBlock {
+  padding: 12px;
+  border-bottom: 1px solid #edf1f3;
+}
+
+.jsonBlock:last-child {
+  border-bottom: 0;
+}
+
+.jsonBlock small {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.jsonBlock pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  color: #172026;
+  background: #f5f7f8;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .insight {
