@@ -20,3 +20,14 @@ services:
     volumes:
       - ./.agenttrace:/app/.agenttrace
     working_dir: /app
+
+  web:
+    build:
+      context: ./web
+    image: agenttrace-web:local
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api

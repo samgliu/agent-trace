@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Trace
@@ -20,6 +21,16 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         title="AgentTrace API",
         version="0.1.0",
         description="Trace analysis API for multi-agent AI workflows.",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+        allow_credentials=False,
+        allow_methods=["GET"],
+        allow_headers=["*"],
     )
     trace_store = store or SQLiteTraceStore(_database_path())
     trace_store.initialize()
