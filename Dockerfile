@@ -7,7 +7,8 @@ COPY agenttrace ./agenttrace
 COPY examples ./examples
 COPY tests ./tests
 
+RUN python -m pip install --no-cache-dir -e .
 RUN python -m unittest discover
 
-ENTRYPOINT ["python", "-m", "agenttrace.cli"]
+ENTRYPOINT ["agenttrace"]
 CMD ["--help"]

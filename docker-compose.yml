@@ -1,0 +1,22 @@
+services:
+  agenttrace:
+    build:
+      context: .
+    image: agenttrace:local
+    volumes:
+      - ./.agenttrace:/app/.agenttrace
+    working_dir: /app
+
+  api:
+    build:
+      context: .
+    image: agenttrace:local
+    entrypoint: ["python", "-m", "uvicorn"]
+    command: ["agenttrace.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      AGENTTRACE_DB: /app/.agenttrace/agenttrace.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./.agenttrace:/app/.agenttrace
+    working_dir: /app

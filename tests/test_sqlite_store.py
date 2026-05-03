@@ -21,7 +21,15 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(saved.trace_id, trace.trace_id)
             self.assertEqual(saved.workflow_name, "support-triage")
             self.assertEqual(len(saved.spans), len(trace.spans))
-            self.assertGreaterEqual(saved.format_timeline().count("Supervisor Agent"), 1)
+            timeline = saved.format_timeline()
+            self.assertGreaterEqual(timeline.count("Supervisor Agent"), 1)
+            self.assertIn("Estimated cost: $0.0034", timeline)
+            self.assertIn("Tokens: input=1550, output=316", timeline)
+            self.assertIn("mcp:support-tools-mcp", timeline)
+            self.assertNotIn("at 2026-05-01T23:00:00.000Z", timeline)
+
+            verbose_timeline = saved.format_timeline(verbose=True)
+            self.assertIn("at 2026-05-01T23:00:00.000Z", verbose_timeline)
 
     def test_list_traces(self) -> None:
         with TemporaryDirectory() as temp_dir:

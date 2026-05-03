@@ -39,6 +39,14 @@ def duration_ms(started_at: datetime | None, ended_at: datetime | None) -> int |
     return int((ended_at - started_at).total_seconds() * 1000)
 
 
+def format_timestamp(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
 @dataclass(frozen=True)
 class Span:
     span_id: str
@@ -147,7 +155,7 @@ class Trace:
             "spans": [span.to_dict() for span in self.spans],
         }
 
-    def format_timeline(self) -> str:
+    def format_timeline(self, *, verbose: bool = False) -> str:
         children_by_parent: dict[str | None, list[Span]] = {}
         for span in self.spans:
             children_by_parent.setdefault(span.parent_id, []).append(span)
@@ -155,20 +163,32 @@ class Trace:
         for spans in children_by_parent.values():
             spans.sort(key=lambda span: span.started_at or datetime.min.replace(tzinfo=timezone.utc))
 
+        total_input_tokens = sum(span.input_tokens or 0 for span in self.spans)
+        total_output_tokens = sum(span.output_tokens or 0 for span in self.spans)
+        total_cost = sum(span.estimated_cost or 0 for span in self.spans)
+
         lines = [
             f"Trace: {self.trace_id}",
             f"Workflow: {self.workflow_name}",
             f"Status: {self.status}",
         ]
+        if self.started_at is not None:
+            lines.append(f"Started: {serialize_datetime(self.started_at)}")
+        if self.ended_at is not None:
+            lines.append(f"Ended: {serialize_datetime(self.ended_at)}")
         if self.duration_ms is not None:
             lines.append(f"Duration: {self.duration_ms}ms")
+        if total_input_tokens or total_output_tokens:
+            lines.append(f"Tokens: input={total_input_tokens}, output={total_output_tokens}")
+        if total_cost:
+            lines.append(f"Estimated cost: ${total_cost:.4f}")
         lines.append("")
 
         def append_span(span: Span, depth: int) -> None:
             indent = "  " * depth
-            duration = f" {span.duration_ms}ms" if span.duration_ms is not None else ""
+            details = _format_span_details(span, verbose=verbose)
             error = " ERROR" if span.error else ""
-            lines.append(f"{indent}- [{span.span_type}] {span.name}{duration}{error}")
+            lines.append(f"{indent}- [{span.span_type}] {span.name}{details}{error}")
             for child in children_by_parent.get(span.span_id, []):
                 append_span(child, depth + 1)
 
@@ -177,3 +197,36 @@ class Trace:
             append_span(span, 0)
 
         return "\n".join(lines)
+
+
+def _format_span_details(span: Span, *, verbose: bool) -> str:
+    parts: list[str] = []
+    if verbose and span.started_at is not None:
+        parts.append(f"at {format_timestamp(span.started_at)}")
+    if span.duration_ms is not None:
+        parts.append(f"{span.duration_ms}ms")
+    if span.input_tokens is not None or span.output_tokens is not None:
+        parts.append(f"tokens {span.input_tokens or 0}/{span.output_tokens or 0}")
+    if span.estimated_cost is not None:
+        parts.append(f"${span.estimated_cost:.4f}")
+
+    from_agent = span.span_data.get("from_agent")
+    to_agent = span.span_data.get("to_agent")
+    if from_agent and to_agent:
+        parts.append(f"{from_agent} -> {to_agent}")
+
+    tool_protocol = span.span_data.get("tool_protocol")
+    tool_server = span.span_data.get("tool_server")
+    if tool_protocol:
+        tool_detail = str(tool_protocol)
+        if tool_server:
+            tool_detail = f"{tool_detail}:{tool_server}"
+        parts.append(tool_detail)
+
+    retriever = span.span_data.get("retriever")
+    if retriever:
+        parts.append(f"retriever={retriever}")
+
+    if not parts:
+        return ""
+    return " (" + ", ".join(parts) + ")"

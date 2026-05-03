@@ -48,6 +48,10 @@ python3 -m unittest discover
 python3 -m compileall agenttrace tests
 ```
 
+The local Python environment can run core tests without web dependencies. The
+Docker image installs API dependencies and runs the full test suite during
+`docker compose build`.
+
 ## Docker
 
 Build a local image:
@@ -61,4 +65,32 @@ Run CLI commands in the container:
 ```bash
 docker run --rm agenttrace import examples/support_triage/sample_trace.json
 docker run --rm agenttrace show trace_support_triage_happy_path
+```
+
+## Docker Compose
+
+Use Compose for the local project workflow. It keeps AgentTrace state in the
+repo-local `.agenttrace/` directory so imported traces persist across runs.
+
+```bash
+docker compose build
+docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
+docker compose run --rm agenttrace list
+docker compose run --rm agenttrace show trace_support_triage_happy_path
+```
+
+The initial Compose setup has one `agenttrace` service. As the project grows,
+this will split into API, web, MCP, and database services.
+
+Start the API service:
+
+```bash
+docker compose up api
+```
+
+Then open:
+
+```text
+http://localhost:8000/docs
+http://localhost:8000/traces
 ```
