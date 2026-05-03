@@ -7,11 +7,15 @@ from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
+from agenttrace.core.grounding import build_grounding_summary
+from agenttrace.core.importer import normalize_trace
 from agenttrace.core.metrics import build_trace_metrics
-from agenttrace.core.models import Trace
+from agenttrace.core.models import Span, Trace
+from agenttrace.core.summary import build_dashboard_summary
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -30,7 +34,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             "http://127.0.0.1:5173",
         ],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["*"],
     )
     trace_store = store or SQLiteTraceStore(_database_path())
@@ -40,9 +44,59 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/dashboard/summary")
+    def dashboard_summary() -> dict[str, Any]:
+        return build_dashboard_summary(trace_store.all_trace_summaries())
+
+    @app.get("/workflows")
+    def list_workflows() -> list[str]:
+        return sorted(trace_store.workflow_names())
+
     @app.get("/traces")
-    def list_traces() -> list[dict[str, Any]]:
-        return [trace.to_dict() for trace in trace_store.list_traces()]
+    def list_traces(
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        status: str | None = None,
+        workflow_name: str | None = None,
+        approval_status: str | None = Query(None, pattern="^(pending|approved|rejected|none)$"),
+        grounding_status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
+    ) -> dict[str, Any]:
+        return trace_store.list_trace_summaries(
+            limit=limit,
+            offset=offset,
+            status=status,
+            workflow_name=workflow_name,
+            approval_status=approval_status,
+            grounding_status=grounding_status,
+            started_after=started_after,
+            started_before=started_before,
+        )
+
+    @app.post("/traces")
+    def ingest_trace(payload: TraceIngestRequest) -> dict[str, Any]:
+        trace = normalize_trace(payload.model_dump())
+        trace_store.upsert_trace(trace)
+        saved = _require_trace(trace_store, trace.trace_id)
+        return saved.to_dict()
+
+    @app.post("/traces/{trace_id}/spans")
+    def ingest_span(trace_id: str, payload: SpanIngestRequest) -> dict[str, Any]:
+        _require_trace(trace_store, trace_id)
+        span = Span.from_dict({**payload.model_dump(), "trace_id": trace_id}, trace_id=trace_id)
+        return trace_store.upsert_span(span).to_dict()
+
+    @app.patch("/traces/{trace_id}")
+    def update_trace(trace_id: str, payload: TraceLifecycleUpdateRequest) -> dict[str, Any]:
+        updated = trace_store.update_trace_lifecycle(
+            trace_id,
+            status=payload.status,
+            ended_at=payload.ended_at,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")
+        return updated.to_dict()
 
     @app.get("/traces/{trace_id}")
     def get_trace(trace_id: str) -> dict[str, Any]:
@@ -58,6 +112,11 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def get_metrics(trace_id: str) -> dict[str, Any]:
         trace = _require_trace(trace_store, trace_id)
         return build_trace_metrics(trace)
+
+    @app.get("/traces/{trace_id}/grounding")
+    def get_grounding(trace_id: str) -> dict[str, Any]:
+        trace = _require_trace(trace_store, trace_id)
+        return build_grounding_summary(trace)
 
     @app.post("/traces/{trace_id}/approvals/{span_id}/approve")
     def approve_span(trace_id: str, span_id: str) -> dict[str, Any]:

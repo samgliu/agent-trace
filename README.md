@@ -1,113 +1,149 @@
 # AgentTrace
 
-AgentTrace is an OpenAI Agents-compatible trace analysis tool for debugging,
-evaluating, and optimizing multi-agent AI workflows.
+AgentTrace is an OpenAI Agents-compatible trace operations dashboard for
+debugging, evaluating, and monitoring multi-agent AI workflows.
 
-The first milestone focuses on the trace foundation:
+It currently supports:
 
-- import OpenAI-style trace JSON
-- normalize traces and spans
-- store runs in SQLite
-- inspect trace timelines from the CLI
-- support multi-agent spans, handoffs, tool calls, guardrails, and custom spans
+- importing OpenAI-style trace JSON
+- ingesting live traces and spans through the API
+- polling live trace updates from the dashboard
+- SQLite-backed trace summaries for filtering and fleet metrics
+- approval gates with approve, reject, and revert actions
+- grounding summaries for grounded, recovered, and failed responses
+- multi-agent spans, handoffs, MCP tool calls, guardrails, and validation spans
 
 ## Quick Start
 
 ```bash
-python3 -m agenttrace.cli import examples/support_triage/sample_trace.json
-python3 -m agenttrace.cli list
-python3 -m agenttrace.cli show trace_support_triage_happy_path
+docker compose build
+docker compose up -d api web
+docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
+docker compose run --rm agenttrace import examples/support_triage/sample_trace_grounding_failure.json
 ```
 
-By default, AgentTrace stores local data in `.agenttrace/agenttrace.db`.
+Open:
 
-## Local Environment
+```text
+http://localhost:5173
+http://localhost:8000/docs
+```
 
-Use a virtual environment before adding FastAPI, MCP, or frontend tooling:
+AgentTrace stores local demo data in `.agenttrace/agenttrace.db`.
+
+## Live Demo
+
+Start the API and dashboard:
+
+```bash
+docker compose up -d api web
+```
+
+Emit a live support-triage trace into the API:
+
+```bash
+docker compose run --rm agenttrace live-sample --api-url http://api:8000 --delay 1
+```
+
+The dashboard polls every 5 seconds, so the live run appears and grows as spans
+arrive. Use a smaller delay for a faster demo:
+
+```bash
+docker compose run --rm agenttrace live-sample --api-url http://api:8000 --delay 0.1
+```
+
+## CLI
+
+Import and inspect sample traces:
+
+```bash
+docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
+docker compose run --rm agenttrace list
+docker compose run --rm agenttrace show trace_support_triage_happy_path
+docker compose run --rm agenttrace show trace_support_triage_happy_path --verbose
+```
+
+For local Python development:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
+python -m agenttrace.cli import examples/support_triage/sample_trace.json
 ```
 
-The current foundation uses only the Python standard library, so installation is
-optional for now. It becomes useful once runtime dependencies are added.
+## API
 
-## Current Scope
-
-This repository is intentionally starting small. The first goal is a reliable
-trace model and CLI before adding the FastAPI backend, React dashboard, MCP
-server demo, and eval harness.
-
-## Verification
-
-```bash
-python3 -m unittest discover
-python3 -m compileall agenttrace tests
-```
-
-The local Python environment can run core tests without web dependencies. The
-Docker image installs API dependencies and runs the full test suite during
-`docker compose build`.
-
-## Docker
-
-Build a local image:
-
-```bash
-docker build -t agenttrace .
-```
-
-Run CLI commands in the container:
-
-```bash
-docker run --rm agenttrace import examples/support_triage/sample_trace.json
-docker run --rm agenttrace show trace_support_triage_happy_path
-```
-
-## Docker Compose
-
-Use Compose for the local project workflow. It keeps AgentTrace state in the
-repo-local `.agenttrace/` directory so imported traces persist across runs.
-
-```bash
-docker compose build
-docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
-docker compose run --rm agenttrace list
-docker compose run --rm agenttrace show trace_support_triage_happy_path
-```
-
-The initial Compose setup has one `agenttrace` service. As the project grows,
-this will split into API, web, MCP, and database services.
-
-Start the API service:
-
-```bash
-docker compose up api
-```
-
-Then open:
+The API is documented at:
 
 ```text
 http://localhost:8000/docs
-http://localhost:8000/traces
 ```
 
-Start the dashboard:
-
-```bash
-docker compose up api web
-```
-
-Then open:
+Core endpoints:
 
 ```text
-http://localhost:5173
+GET    /health
+GET    /dashboard/summary
+GET    /workflows
+GET    /traces
+POST   /traces
+GET    /traces/{trace_id}
+PATCH  /traces/{trace_id}
+POST   /traces/{trace_id}/spans
+GET    /traces/{trace_id}/metrics
+GET    /traces/{trace_id}/grounding
+POST   /traces/{trace_id}/approvals/{span_id}/approve
+POST   /traces/{trace_id}/approvals/{span_id}/reject
+POST   /traces/{trace_id}/approvals/{span_id}/revert
 ```
 
-For local frontend development without Docker:
+Trace list filters:
+
+```text
+GET /traces?limit=50&offset=0
+GET /traces?status=passed
+GET /traces?workflow_name=support-triage
+GET /traces?approval_status=pending
+GET /traces?grounding_status=recovered
+GET /traces?started_after=2026-05-01T00:00:00Z
+```
+
+Minimal live ingestion example:
+
+```bash
+curl -X POST http://localhost:8000/traces \
+  -H 'content-type: application/json' \
+  -d '{
+    "trace_id": "live_trace_example",
+    "workflow_name": "support-triage",
+    "status": "running",
+    "started_at": "2026-05-03T21:00:00Z",
+    "spans": []
+  }'
+
+curl -X POST http://localhost:8000/traces/live_trace_example/spans \
+  -H 'content-type: application/json' \
+  -d '{
+    "span_id": "span_supervisor",
+    "name": "Supervisor Agent",
+    "span_type": "agent",
+    "started_at": "2026-05-03T21:00:00Z",
+    "ended_at": "2026-05-03T21:00:01Z"
+  }'
+
+curl -X PATCH http://localhost:8000/traces/live_trace_example \
+  -H 'content-type: application/json' \
+  -d '{
+    "status": "passed",
+    "ended_at": "2026-05-03T21:00:04Z"
+  }'
+```
+
+## Frontend
+
+For local frontend development:
 
 ```bash
 cd web
@@ -116,3 +152,21 @@ corepack pnpm test
 corepack pnpm build
 corepack pnpm dev
 ```
+
+## Verification
+
+Local checks:
+
+```bash
+python3 -m unittest discover
+cd web
+corepack pnpm test
+corepack pnpm build
+```
+
+Docker build runs the Python and frontend checks inside images:
+
+```bash
+docker compose build
+```
+

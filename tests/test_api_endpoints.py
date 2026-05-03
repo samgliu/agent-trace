@@ -49,9 +49,58 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(len(payload), 1)
-        self.assertEqual(payload[0]["trace_id"], self.trace.trace_id)
-        self.assertEqual(payload[0]["spans"], [])
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["limit"], 50)
+        self.assertEqual(payload["offset"], 0)
+        self.assertEqual(payload["items"][0]["trace_id"], self.trace.trace_id)
+        self.assertEqual(payload["items"][0]["span_count"], 10)
+        self.assertEqual(payload["items"][0]["approval_pending_count"], 0)
+
+    def test_list_traces_filters_by_pending_approval(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get("/traces?approval_status=pending")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], trace.trace_id)
+        self.assertEqual(payload["items"][0]["approval_pending_count"], 1)
+        self.assertEqual(payload["items"][0]["status"], "passed")
+        self.assertEqual(payload["items"][0]["grounding_status"], "recovered")
+
+    def test_list_traces_filters_by_workflow_status_and_date(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get(
+            "/traces?workflow_name=support-triage&status=passed&started_after=2026-05-01T00:00:00Z"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 2)
+
+    def test_list_workflows(self) -> None:
+        response = self.client.get("/workflows")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), ["support-triage"])
+
+    def test_dashboard_summary(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get("/dashboard/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total_runs"], 2)
+        self.assertEqual(payload["approval_pending_count"], 1)
+        self.assertEqual(payload["unsupported_claim_count"], 1)
+        self.assertEqual(payload["workflow_counts"]["support-triage"], 2)
+        self.assertEqual(payload["status_counts"]["passed"], 2)
 
     def test_get_trace(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}")
@@ -60,6 +109,46 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["trace_id"], self.trace.trace_id)
         self.assertEqual(len(payload["spans"]), 10)
+
+    def test_ingest_trace_span_and_lifecycle(self) -> None:
+        trace_payload = {
+            "trace_id": "live_trace_api",
+            "workflow_name": "support-triage",
+            "status": "running",
+            "started_at": "2026-05-03T21:00:00Z",
+            "spans": [],
+        }
+
+        trace_response = self.client.post("/traces", json=trace_payload)
+        span_response = self.client.post(
+            "/traces/live_trace_api/spans",
+            json={
+                "span_id": "span_live_supervisor",
+                "name": "Supervisor Agent",
+                "span_type": "agent",
+                "started_at": "2026-05-03T21:00:00Z",
+                "ended_at": "2026-05-03T21:00:01Z",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "estimated_cost": 0.0001,
+            },
+        )
+        lifecycle_response = self.client.patch(
+            "/traces/live_trace_api",
+            json={"status": "passed", "ended_at": "2026-05-03T21:00:04Z"},
+        )
+
+        self.assertEqual(trace_response.status_code, 200)
+        self.assertEqual(span_response.status_code, 200)
+        self.assertEqual(lifecycle_response.status_code, 200)
+        self.assertEqual(lifecycle_response.json()["status"], "passed")
+        summary = self.client.get("/traces?workflow_name=support-triage&status=passed").json()
+        self.assertEqual(summary["total"], 2)
+
+    def test_ingest_trace_validates_required_trace_id(self) -> None:
+        response = self.client.post("/traces", json={"workflow_name": "support-triage"})
+
+        self.assertEqual(response.status_code, 422)
 
     def test_get_spans(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}/spans")
@@ -77,6 +166,18 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["span_count"], 10)
         self.assertEqual(payload["input_tokens"], 1550)
         self.assertEqual(payload["estimated_cost"], 0.0034)
+
+    def test_get_grounding(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get(f"/traces/{trace.trace_id}/grounding")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "recovered")
+        self.assertEqual(payload["unsupported_claim_count"], 1)
+        self.assertEqual(payload["unsupported_claims"][0]["span_name"], "Validator Agent")
 
     def test_missing_trace_returns_404(self) -> None:
         response = self.client.get("/traces/missing-trace")
