@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print spans as JSON instead of a text timeline.",
     )
+    show_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include full timestamps and additional span details in the timeline.",
+    )
 
     return parser
 
@@ -82,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(trace.to_dict(), indent=2, sort_keys=True))
         else:
-            print(trace.format_timeline())
+            print(trace.format_timeline(verbose=args.verbose))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

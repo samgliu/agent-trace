@@ -62,3 +62,18 @@ Run CLI commands in the container:
 docker run --rm agenttrace import examples/support_triage/sample_trace.json
 docker run --rm agenttrace show trace_support_triage_happy_path
 ```
+
+## Docker Compose
+
+Use Compose for the local project workflow. It keeps AgentTrace state in the
+repo-local `.agenttrace/` directory so imported traces persist across runs.
+
+```bash
+docker compose build
+docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
+docker compose run --rm agenttrace list
+docker compose run --rm agenttrace show trace_support_triage_happy_path
+```
+
+The initial Compose setup has one `agenttrace` service. As the project grows,
+this will split into API, web, MCP, and database services.
