@@ -42,3 +42,36 @@ class SQLiteTraceStoreTest(unittest.TestCase):
 
             self.assertEqual(len(traces), 1)
             self.assertEqual(traces[0].trace_id, trace.trace_id)
+
+    def test_list_trace_summaries_filters_by_pending_approval(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            happy_path = load_trace_file(Path("examples/support_triage/sample_trace.json"))
+            intervention = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+
+            store.save_trace(happy_path)
+            store.save_trace(intervention)
+            result = store.list_trace_summaries(approval_status="pending")
+
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["items"][0]["trace_id"], intervention.trace_id)
+            self.assertEqual(result["items"][0]["approval_pending_count"], 1)
+
+    def test_approval_update_refreshes_trace_summary(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+
+            store.save_trace(trace)
+            span = store.get_span(trace.trace_id, "span_approval_failure")
+            assert span is not None
+            span_data = dict(span.span_data)
+            span_data["approval_status"] = "approved"
+            store.update_span_payload(trace.trace_id, span.span_id, output={}, span_data=span_data)
+
+            pending = store.list_trace_summaries(approval_status="pending")
+            approved = store.list_trace_summaries(approval_status="approved")
+            self.assertEqual(pending["total"], 0)
+            self.assertEqual(approved["total"], 1)

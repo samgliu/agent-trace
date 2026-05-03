@@ -19,16 +19,35 @@ import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
+import { buildExecutiveSummary, countApprovals } from "./utils/summary";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 type TraceSummary = {
   trace_id: string;
   workflow_name: string;
+  group_id: string | null;
   status: string;
   started_at: string | null;
   ended_at: string | null;
   duration_ms: number | null;
+  span_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  approval_total_count: number;
+  approval_pending_count: number;
+  approval_approved_count: number;
+  approval_rejected_count: number;
+  grounding_status: string;
+  unsupported_claim_count: number;
+};
+
+type TraceListResponse = {
+  items: TraceSummary[];
+  limit: number;
+  offset: number;
+  total: number;
 };
 
 type Span = {
@@ -86,12 +105,41 @@ type SpanSummary = {
   estimated_cost: number | null;
 };
 
+type DashboardSummary = {
+  total_runs: number;
+  status_counts: Record<string, number>;
+  workflow_counts: Record<string, number>;
+  grounding_counts: Record<string, number>;
+  approval_pending_count: number;
+  approval_rejected_count: number;
+  unsupported_claim_count: number;
+  average_duration_ms: number | null;
+  p95_duration_ms: number | null;
+  estimated_cost: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+type TraceFilters = {
+  status: string;
+  approvalStatus: string;
+  groundingStatus: string;
+};
+
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | {
+      status: "empty";
+      traces: TraceSummary[];
+      traceTotal: number;
+      dashboard: DashboardSummary;
+    }
+  | {
       status: "ready";
       traces: TraceSummary[];
+      traceTotal: number;
+      dashboard: DashboardSummary;
       selectedTrace: TraceDetail;
       metrics: Metrics;
       grounding: GroundingSummary;
@@ -101,6 +149,7 @@ function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<TraceFilters>({ status: "", approvalStatus: "", groundingStatus: "" });
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -108,10 +157,21 @@ function App() {
 
     async function load() {
       try {
-        const traces = await fetchJson<TraceSummary[]>("/traces");
-        const traceId = selectedTraceId ?? traces[0]?.trace_id;
+        const [traceList, dashboard] = await Promise.all([
+          fetchJson<TraceListResponse>(`/traces${filterQuery(filters)}`),
+          fetchJson<DashboardSummary>("/dashboard/summary"),
+        ]);
+        const traces = traceList.items;
+        const traceId = traces.some((trace) => trace.trace_id === selectedTraceId)
+          ? selectedTraceId
+          : traces[0]?.trace_id;
         if (!traceId) {
-          throw new Error("No traces found. Import a trace first.");
+          if (!cancelled) {
+            setSelectedTraceId(null);
+            setSelectedSpanId(null);
+            setState({ status: "empty", traces, traceTotal: traceList.total, dashboard });
+          }
+          return;
         }
         const [selectedTrace, metrics, grounding] = await Promise.all([
           fetchJson<TraceDetail>(`/traces/${traceId}`),
@@ -121,7 +181,15 @@ function App() {
         if (!cancelled) {
           setSelectedTraceId(traceId);
           setSelectedSpanId(selectedTrace.spans[0]?.span_id ?? null);
-          setState({ status: "ready", traces, selectedTrace, metrics, grounding });
+          setState({
+            status: "ready",
+            traces,
+            traceTotal: traceList.total,
+            dashboard,
+            selectedTrace,
+            metrics,
+            grounding,
+          });
         }
       } catch (error) {
         if (!cancelled) {
@@ -134,7 +202,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTraceId, refreshKey]);
+  }, [selectedTraceId, filters, refreshKey]);
 
   async function updateApproval(spanId: string, action: ApprovalAction) {
     if (state.status !== "ready") {
@@ -152,28 +220,45 @@ function App() {
     return <Shell status="API unavailable" error={state.message} />;
   }
 
+  if (state.status === "empty") {
+    return (
+      <Shell status="Connected">
+        <div className="layout">
+          <RunsSidebar
+            traces={state.traces}
+            traceTotal={state.traceTotal}
+            selectedTraceId={null}
+            filters={filters}
+            onFiltersChange={setFilters}
+            onSelectTrace={setSelectedTraceId}
+            onClearSelection={() => setSelectedSpanId(null)}
+          />
+          <main className="main">
+            <DashboardSummaryPanel summary={state.dashboard} />
+            <EmptyRunsState onClearFilters={() => setFilters({ status: "", approvalStatus: "", groundingStatus: "" })} />
+          </main>
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell status="Connected">
       <div className="layout">
-        <aside className="sidebar">
-          <div className="sidebarHeader">Traces</div>
-          <div className="traceList">
-            {state.traces.map((trace) => (
-              <button
-                className={trace.trace_id === state.selectedTrace.trace_id ? "traceButton active" : "traceButton"}
-                key={trace.trace_id}
-                onClick={() => setSelectedTraceId(trace.trace_id)}
-                onDoubleClick={() => setSelectedSpanId(null)}
-              >
-                <span>{trace.workflow_name}</span>
-                <small>{trace.status}</small>
-              </button>
-            ))}
-          </div>
-        </aside>
+        <RunsSidebar
+          traces={state.traces}
+          traceTotal={state.traceTotal}
+          selectedTraceId={state.selectedTrace.trace_id}
+          filters={filters}
+          onFiltersChange={setFilters}
+          onSelectTrace={setSelectedTraceId}
+          onClearSelection={() => setSelectedSpanId(null)}
+        />
 
         <main className="main">
+          <DashboardSummaryPanel summary={state.dashboard} />
           <TraceHeader trace={state.selectedTrace} />
+          <ExecutiveSummaryPanel trace={state.selectedTrace} metrics={state.metrics} grounding={state.grounding} />
           <MetricGrid metrics={state.metrics} grounding={state.grounding} />
           <section className="workspace">
             <TraceTimeline
@@ -193,6 +278,46 @@ function App() {
         </main>
       </div>
     </Shell>
+  );
+}
+
+function RunsSidebar({
+  traces,
+  traceTotal,
+  selectedTraceId,
+  filters,
+  onFiltersChange,
+  onSelectTrace,
+  onClearSelection,
+}: {
+  traces: TraceSummary[];
+  traceTotal: number;
+  selectedTraceId: string | null;
+  filters: TraceFilters;
+  onFiltersChange: (filters: TraceFilters) => void;
+  onSelectTrace: (traceId: string) => void;
+  onClearSelection: () => void;
+}) {
+  return (
+    <aside className="sidebar">
+      <div className="sidebarHeader">Runs Inbox</div>
+      <TraceFiltersPanel filters={filters} onChange={onFiltersChange} />
+      <div className="runsCount">{traceTotal} matching runs</div>
+      <div className="traceList">
+        {traces.map((trace) => (
+          <button
+            className={trace.trace_id === selectedTraceId ? "traceButton active" : "traceButton"}
+            key={trace.trace_id}
+            onClick={() => onSelectTrace(trace.trace_id)}
+            onDoubleClick={onClearSelection}
+          >
+            <span>{trace.workflow_name}</span>
+            <small>{trace.trace_id}</small>
+            <TraceBadges trace={trace} />
+          </button>
+        ))}
+      </div>
+    </aside>
   );
 }
 
@@ -232,6 +357,112 @@ function TraceHeader({ trace }: { trace: TraceDetail }) {
   );
 }
 
+function EmptyRunsState({ onClearFilters }: { onClearFilters: () => void }) {
+  return (
+    <section className="emptyState">
+      <AlertCircle size={22} />
+      <div>
+        <h2>No matching runs</h2>
+        <p>Adjust the filters or clear them to return to the full runs inbox.</p>
+      </div>
+      <button type="button" onClick={onClearFilters}>
+        Clear filters
+      </button>
+    </section>
+  );
+}
+
+function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
+  return (
+    <section className="fleetSummary">
+      <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
+      <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
+      <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
+      <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
+      <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
+      <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
+    </section>
+  );
+}
+
+function TraceFiltersPanel({
+  filters,
+  onChange,
+}: {
+  filters: TraceFilters;
+  onChange: (filters: TraceFilters) => void;
+}) {
+  return (
+    <div className="traceFilters">
+      <label>
+        <span>Status</span>
+        <select value={filters.status} onChange={(event) => onChange({ ...filters, status: event.target.value })}>
+          <option value="">Any</option>
+          <option value="passed">Passed</option>
+          <option value="failed">Failed</option>
+          <option value="running">Running</option>
+        </select>
+      </label>
+      <label>
+        <span>Approval</span>
+        <select
+          value={filters.approvalStatus}
+          onChange={(event) => onChange({ ...filters, approvalStatus: event.target.value })}
+        >
+          <option value="">Any</option>
+          <option value="pending">Needs approval</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="none">No approval</option>
+        </select>
+      </label>
+      <label>
+        <span>Grounding</span>
+        <select
+          value={filters.groundingStatus}
+          onChange={(event) => onChange({ ...filters, groundingStatus: event.target.value })}
+        >
+          <option value="">Any</option>
+          <option value="grounded">Grounded</option>
+          <option value="recovered">Recovered</option>
+          <option value="failed">Failed</option>
+        </select>
+      </label>
+      <button type="button" onClick={() => onChange({ status: "", approvalStatus: "", groundingStatus: "" })}>
+        Clear
+      </button>
+    </div>
+  );
+}
+
+function TraceBadges({ trace }: { trace: TraceSummary }) {
+  return (
+    <div className="traceBadges">
+      <span className={`chip status ${statusTone(trace.status)}`}>Status: {trace.status}</span>
+      {trace.grounding_status !== trace.status ? (
+        <span className={`chip grounding ${groundingTone(trace.grounding_status)}`}>Grounding: {trace.grounding_status}</span>
+      ) : null}
+      {trace.approval_pending_count > 0 ? <strong className="chip warning">Needs approval</strong> : null}
+      {trace.approval_rejected_count > 0 ? <strong className="chip danger">Rejected</strong> : null}
+      {trace.estimated_cost > 0.01 ? <strong className="chip warning">High cost</strong> : null}
+      {trace.duration_ms !== null && trace.duration_ms > 5000 ? <strong className="chip warning">Slow</strong> : null}
+    </div>
+  );
+}
+
+function statusTone(status: string): string {
+  if (status === "failed" || status === "rejected") return "danger";
+  if (status === "running") return "warning";
+  return "neutral";
+}
+
+function groundingTone(status: string): string {
+  if (status === "failed") return "danger";
+  if (status === "recovered") return "warning";
+  if (status === "grounded") return "success";
+  return "neutral";
+}
+
 function MetricGrid({ metrics, grounding }: { metrics: Metrics; grounding: GroundingSummary }) {
   return (
     <section className="metricGrid">
@@ -245,6 +476,49 @@ function MetricGrid({ metrics, grounding }: { metrics: Metrics; grounding: Groun
       <Metric icon={<Braces size={18} />} label="Tokens" value={formatTokens(metrics.input_tokens, metrics.output_tokens)} />
       <Metric icon={<CircleDollarSign size={18} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
     </section>
+  );
+}
+
+function ExecutiveSummaryPanel({
+  trace,
+  metrics,
+  grounding,
+}: {
+  trace: TraceDetail;
+  metrics: Metrics;
+  grounding: GroundingSummary;
+}) {
+  const approvals = countApprovals(trace.spans);
+  const mcpCalls = trace.spans.filter((span) => span.span_data.tool_protocol === "mcp").length;
+  const guardrails = trace.spans.filter((span) => span.span_type === "guardrail" || span.span_type === "validation").length;
+
+  return (
+    <section className={approvals.pending > 0 ? "executiveSummary attention" : "executiveSummary"}>
+      <div className="summaryLead">
+        <small>Executive summary</small>
+        <strong>{buildExecutiveSummary(trace, metrics, grounding)}</strong>
+      </div>
+      <div className="summaryFacts">
+        <SummaryFact icon={<UserCheck size={16} />} label="Approvals" value={`${approvals.pending} waiting`} />
+        <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding" value={grounding.recovered ? "recovered" : grounding.status} />
+        <SummaryFact icon={<Wrench size={16} />} label="MCP calls" value={String(mcpCalls)} />
+        <SummaryFact icon={<ShieldCheck size={16} />} label="Guardrails" value={String(guardrails)} />
+        <SummaryFact icon={<Clock3 size={16} />} label="Duration" value={formatDuration(trace.duration_ms)} />
+        <SummaryFact icon={<CircleDollarSign size={16} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
+      </div>
+    </section>
+  );
+}
+
+function SummaryFact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="summaryFact">
+      {icon}
+      <div>
+        <small>{label}</small>
+        <strong>{value}</strong>
+      </div>
+    </div>
   );
 }
 
@@ -579,7 +853,7 @@ function ApprovalNotice({
         </div>
       </dl>
       <ApprovalActions spanId={spanId} status={status} onApprovalAction={onApprovalAction} />
-      <small>Demo approval state is stored on the approval span.</small>
+      <small>Approval state is stored on the approval span.</small>
     </div>
   );
 }
@@ -677,6 +951,16 @@ async function fetchJson<T>(path: string): Promise<T> {
     throw new Error(`Request failed: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<T>;
+}
+
+function filterQuery(filters: TraceFilters): string {
+  const params = new URLSearchParams();
+  params.set("limit", "50");
+  if (filters.status) params.set("status", filters.status);
+  if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
+  if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 async function postJson<T>(path: string): Promise<T> {

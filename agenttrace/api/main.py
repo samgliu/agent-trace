@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Trace
+from agenttrace.core.summary import build_dashboard_summary
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -31,7 +32,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             "http://127.0.0.1:5173",
         ],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
     trace_store = store or SQLiteTraceStore(_database_path())
@@ -41,9 +42,27 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/dashboard/summary")
+    def dashboard_summary() -> dict[str, Any]:
+        return build_dashboard_summary(trace_store.all_trace_summaries())
+
     @app.get("/traces")
-    def list_traces() -> list[dict[str, Any]]:
-        return [trace.to_dict() for trace in trace_store.list_traces()]
+    def list_traces(
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        status: str | None = None,
+        workflow_name: str | None = None,
+        approval_status: str | None = Query(None, pattern="^(pending|approved|rejected|none)$"),
+        grounding_status: str | None = None,
+    ) -> dict[str, Any]:
+        return trace_store.list_trace_summaries(
+            limit=limit,
+            offset=offset,
+            status=status,
+            workflow_name=workflow_name,
+            approval_status=approval_status,
+            grounding_status=grounding_status,
+        )
 
     @app.get("/traces/{trace_id}")
     def get_trace(trace_id: str) -> dict[str, Any]:

@@ -8,6 +8,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from agenttrace.core.summary import build_trace_summary
 from agenttrace.core.models import Span, Trace, parse_datetime, serialize_datetime
 
 
@@ -54,7 +55,32 @@ class SQLiteTraceStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trace_summaries (
+                    trace_id TEXT PRIMARY KEY,
+                    workflow_name TEXT NOT NULL,
+                    group_id TEXT,
+                    status TEXT NOT NULL,
+                    started_at TEXT,
+                    ended_at TEXT,
+                    duration_ms INTEGER,
+                    span_count INTEGER NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    estimated_cost REAL NOT NULL,
+                    approval_total_count INTEGER NOT NULL,
+                    approval_pending_count INTEGER NOT NULL,
+                    approval_approved_count INTEGER NOT NULL,
+                    approval_rejected_count INTEGER NOT NULL,
+                    grounding_status TEXT NOT NULL,
+                    unsupported_claim_count INTEGER NOT NULL,
+                    FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
+                )
+                """
+            )
             connection.commit()
+        self._backfill_trace_summaries()
 
     def save_trace(self, trace: Trace) -> None:
         with closing(self._connect()) as connection:
@@ -89,6 +115,18 @@ class SQLiteTraceStore:
                 """,
                 [_span_row(span) for span in trace.spans],
             )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO trace_summaries (
+                    trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
+                    span_count, input_tokens, output_tokens, estimated_cost,
+                    approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
+                    grounding_status, unsupported_claim_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _summary_row(build_trace_summary(trace)),
+            )
             connection.commit()
 
     def list_traces(self) -> list[Trace]:
@@ -113,6 +151,51 @@ class SQLiteTraceStore:
             )
             for row in rows
         ]
+
+    def list_trace_summaries(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+        workflow_name: str | None = None,
+        approval_status: str | None = None,
+        grounding_status: str | None = None,
+    ) -> dict[str, Any]:
+        limit = min(max(limit, 1), 200)
+        offset = max(offset, 0)
+        where, params = _summary_filters(
+            status=status,
+            workflow_name=workflow_name,
+            approval_status=approval_status,
+            grounding_status=grounding_status,
+        )
+        with closing(self._connect()) as connection:
+            total = connection.execute(
+                f"SELECT COUNT(*) AS total FROM trace_summaries {where}",
+                params,
+            ).fetchone()["total"]
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM trace_summaries
+                {where}
+                ORDER BY COALESCE(started_at, '') DESC
+                LIMIT ? OFFSET ?
+                """,
+                (*params, limit, offset),
+            ).fetchall()
+        return {
+            "items": [_summary_from_row(row) for row in rows],
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+        }
+
+    def all_trace_summaries(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute("SELECT * FROM trace_summaries").fetchall()
+        return [_summary_from_row(row) for row in rows]
 
     def get_trace(self, trace_id: str) -> Trace | None:
         with closing(self._connect()) as connection:
@@ -185,12 +268,46 @@ class SQLiteTraceStore:
                 (_to_json(output), _to_json(span_data), trace_id, span_id),
             )
             connection.commit()
+        trace = self.get_trace(trace_id)
+        if trace is not None:
+            self._save_trace_summary(trace)
         return self.get_span(trace_id, span_id)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         return connection
+
+    def _save_trace_summary(self, trace: Trace) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO trace_summaries (
+                    trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
+                    span_count, input_tokens, output_tokens, estimated_cost,
+                    approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
+                    grounding_status, unsupported_claim_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _summary_row(build_trace_summary(trace)),
+            )
+            connection.commit()
+
+    def _backfill_trace_summaries(self) -> None:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT t.trace_id
+                FROM traces t
+                LEFT JOIN trace_summaries s ON s.trace_id = t.trace_id
+                WHERE s.trace_id IS NULL
+                """
+            ).fetchall()
+        for row in rows:
+            trace = self.get_trace(row["trace_id"])
+            if trace is not None:
+                self._save_trace_summary(trace)
 
 
 def _span_row(span: Span) -> tuple[Any, ...]:
@@ -241,3 +358,79 @@ def _from_json(value: str | None) -> Any:
     if value is None:
         return None
     return json.loads(value)
+
+
+def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        summary["trace_id"],
+        summary["workflow_name"],
+        summary["group_id"],
+        summary["status"],
+        summary["started_at"],
+        summary["ended_at"],
+        summary["duration_ms"],
+        summary["span_count"],
+        summary["input_tokens"],
+        summary["output_tokens"],
+        summary["estimated_cost"],
+        summary["approval_total_count"],
+        summary["approval_pending_count"],
+        summary["approval_approved_count"],
+        summary["approval_rejected_count"],
+        summary["grounding_status"],
+        summary["unsupported_claim_count"],
+    )
+
+
+def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "trace_id": row["trace_id"],
+        "workflow_name": row["workflow_name"],
+        "group_id": row["group_id"],
+        "status": row["status"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "duration_ms": row["duration_ms"],
+        "span_count": row["span_count"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "estimated_cost": row["estimated_cost"],
+        "approval_total_count": row["approval_total_count"],
+        "approval_pending_count": row["approval_pending_count"],
+        "approval_approved_count": row["approval_approved_count"],
+        "approval_rejected_count": row["approval_rejected_count"],
+        "grounding_status": row["grounding_status"],
+        "unsupported_claim_count": row["unsupported_claim_count"],
+    }
+
+
+def _summary_filters(
+    *,
+    status: str | None,
+    workflow_name: str | None,
+    approval_status: str | None,
+    grounding_status: str | None,
+) -> tuple[str, tuple[Any, ...]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if workflow_name:
+        clauses.append("workflow_name = ?")
+        params.append(workflow_name)
+    if approval_status:
+        if approval_status == "pending":
+            clauses.append("approval_pending_count > 0")
+        elif approval_status == "approved":
+            clauses.append("approval_approved_count > 0")
+        elif approval_status == "rejected":
+            clauses.append("approval_rejected_count > 0")
+        elif approval_status == "none":
+            clauses.append("approval_total_count = 0")
+    if grounding_status:
+        clauses.append("grounding_status = ?")
+        params.append(grounding_status)
+    if not clauses:
+        return "", tuple(params)
+    return "WHERE " + " AND ".join(clauses), tuple(params)

@@ -103,6 +103,7 @@ small {
 }
 
 .sidebar {
+  min-width: 0;
   background: #ffffff;
   border-right: 1px solid #dce4e8;
   padding: 20px 16px;
@@ -121,13 +122,62 @@ small {
   gap: 8px;
 }
 
+.traceFilters {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf1f3;
+}
+
+.traceFilters label {
+  display: grid;
+  gap: 5px;
+}
+
+.traceFilters label span,
+.runsCount {
+  color: #637179;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.traceFilters select {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  color: #172026;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+}
+
+.traceFilters button {
+  min-height: 32px;
+  color: #246b5b;
+  background: #e8f4f0;
+  border: 1px solid #c7e1d8;
+  border-radius: 5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.runsCount {
+  max-width: 100%;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
 .traceButton {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
-  min-height: 58px;
+  min-width: 0;
+  min-height: 74px;
   text-align: left;
   padding: 10px 12px;
+  overflow: hidden;
   background: transparent;
   border: 1px solid #dce4e8;
   border-radius: 6px;
@@ -139,6 +189,57 @@ small {
 .traceButton:hover {
   border-color: #246b5b;
   background: #f1f8f5;
+}
+
+.traceButton > span,
+.traceButton > small {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traceBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.traceBadges .chip {
+  max-width: 100%;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.traceBadges .neutral {
+  color: #3e4a50;
+  background: #f5f7f8;
+  border: 1px solid #dce4e8;
+}
+
+.traceBadges .success {
+  color: #1f6b4f;
+  background: #e8f4f0;
+  border: 1px solid #c7e1d8;
+}
+
+.traceBadges .warning {
+  color: #7b4d12;
+  background: #fff0c4;
+  border: 1px solid #d7b46b;
+}
+
+.traceBadges .danger {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border: 1px solid #e9a7a0;
 }
 
 .main {
@@ -190,6 +291,100 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.fleetSummary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.emptyState {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  max-width: 520px;
+  padding: 22px;
+  color: #3e4a50;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.emptyState svg {
+  color: #7b4d12;
+}
+
+.emptyState h2 {
+  margin-bottom: 6px;
+  font-size: 22px;
+}
+
+.emptyState button {
+  min-height: 36px;
+  padding: 8px 12px;
+  color: #ffffff;
+  background: #246b5b;
+  border: 1px solid #246b5b;
+  border-radius: 5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.executiveSummary {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 1.8fr;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.executiveSummary.attention {
+  border-color: #d7b46b;
+  background: #fff8e8;
+}
+
+.summaryLead {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+}
+
+.summaryLead strong {
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.summaryFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summaryFact {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 10px;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.summaryFact svg {
+  flex: 0 0 auto;
+  color: #246b5b;
+}
+
+.summaryFact strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
 }
 
 .metric {
@@ -714,7 +909,10 @@ h3 {
 @media (max-width: 980px) {
   .layout,
   .workspace,
-  .metricGrid {
+  .metricGrid,
+  .fleetSummary,
+  .executiveSummary,
+  .summaryFacts {
     grid-template-columns: 1fr;
   }
 

@@ -49,9 +49,37 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(len(payload), 1)
-        self.assertEqual(payload[0]["trace_id"], self.trace.trace_id)
-        self.assertEqual(payload[0]["spans"], [])
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["limit"], 50)
+        self.assertEqual(payload["offset"], 0)
+        self.assertEqual(payload["items"][0]["trace_id"], self.trace.trace_id)
+        self.assertEqual(payload["items"][0]["span_count"], 10)
+        self.assertEqual(payload["items"][0]["approval_pending_count"], 0)
+
+    def test_list_traces_filters_by_pending_approval(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get("/traces?approval_status=pending")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], trace.trace_id)
+        self.assertEqual(payload["items"][0]["approval_pending_count"], 1)
+
+    def test_dashboard_summary(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get("/dashboard/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total_runs"], 2)
+        self.assertEqual(payload["approval_pending_count"], 1)
+        self.assertEqual(payload["unsupported_claim_count"], 1)
+        self.assertEqual(payload["workflow_counts"]["support-triage"], 2)
 
     def test_get_trace(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}")
