@@ -19,6 +19,7 @@ import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
+import { buildSpanFacts } from "./utils/spanFacts";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -146,6 +147,7 @@ type LoadState =
       dashboard: DashboardSummary;
       workflows: string[];
       selectedTrace: TraceDetail;
+      rawTrace: unknown;
       metrics: Metrics;
       grounding: GroundingSummary;
     };
@@ -193,8 +195,9 @@ function App() {
           }
           return;
         }
-        const [selectedTrace, metrics, grounding] = await Promise.all([
+        const [selectedTrace, rawTrace, metrics, grounding] = await Promise.all([
           fetchJson<TraceDetail>(`/traces/${traceId}`),
+          fetchJson<unknown>(`/traces/${traceId}/raw`),
           fetchJson<Metrics>(`/traces/${traceId}/metrics`),
           fetchJson<GroundingSummary>(`/traces/${traceId}/grounding`),
         ]);
@@ -212,6 +215,7 @@ function App() {
             dashboard,
             workflows,
             selectedTrace,
+            rawTrace,
             metrics,
             grounding,
           });
@@ -300,6 +304,7 @@ function App() {
                 metrics={state.metrics}
                 grounding={state.grounding}
                 spans={state.selectedTrace.spans}
+                rawTrace={state.rawTrace}
                 selectedSpanId={selectedSpanId}
                 onSelectSpan={setSelectedSpanId}
                 onApprovalAction={updateApproval}
@@ -718,6 +723,7 @@ function AnalysisPanel({
   metrics,
   grounding,
   spans,
+  rawTrace,
   selectedSpanId,
   onSelectSpan,
   onApprovalAction,
@@ -725,6 +731,7 @@ function AnalysisPanel({
   metrics: Metrics;
   grounding: GroundingSummary;
   spans: Span[];
+  rawTrace: unknown;
   selectedSpanId: string | null;
   onSelectSpan: (spanId: string) => void;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
@@ -787,7 +794,7 @@ function AnalysisPanel({
           ))}
         </div>
       ) : null}
-      {selectedSpan ? <SpanDetail span={selectedSpan} onApprovalAction={onApprovalAction} /> : null}
+      {selectedSpan ? <SpanDetail span={selectedSpan} rawTrace={rawTrace} onApprovalAction={onApprovalAction} /> : null}
     </section>
   );
 }
@@ -871,13 +878,17 @@ function GroundingPanel({
 
 function SpanDetail({
   span,
+  rawTrace,
   onApprovalAction,
 }: {
   span: Span;
+  rawTrace: unknown;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
+  const [activeTab, setActiveTab] = useState<"overview" | "span" | "trace">("overview");
   const unsupportedClaims = extractUnsupportedClaims(span.output);
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
+  const facts = buildSpanFacts(span);
 
   return (
     <div className="spanDetail">
@@ -889,24 +900,52 @@ function SpanDetail({
         <span>{span.span_type}</span>
       </div>
 
-      {unsupportedClaims.length > 0 ? (
-        <div className="claimAlert">
-          <strong>Unsupported claims</strong>
-          {unsupportedClaims.map((claim, index) => (
-            <p key={`${claim.claim}-${index}`}>
-              {claim.claim}
-              {claim.reason ? <span>{claim.reason}</span> : null}
-            </p>
-          ))}
-        </div>
+      <div className="spanFacts">
+        {facts.map((fact) => (
+          <div key={fact.label}>
+            <small>{fact.label}</small>
+            <strong>{fact.value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="inspectorTabs" role="tablist" aria-label="Span inspector">
+        <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")}>
+          Overview
+        </button>
+        <button className={activeTab === "span" ? "active" : ""} onClick={() => setActiveTab("span")}>
+          Span JSON
+        </button>
+        <button className={activeTab === "trace" ? "active" : ""} onClick={() => setActiveTab("trace")}>
+          Raw trace
+        </button>
+      </div>
+
+      {activeTab === "overview" ? (
+        <>
+          {unsupportedClaims.length > 0 ? (
+            <div className="claimAlert">
+              <strong>Unsupported claims</strong>
+              {unsupportedClaims.map((claim, index) => (
+                <p key={`${claim.claim}-${index}`}>
+                  {claim.claim}
+                  {claim.reason ? <span>{claim.reason}</span> : null}
+                </p>
+              ))}
+            </div>
+          ) : null}
+
+          {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
+
+          <JsonBlock label="Input" value={span.input} />
+          <JsonBlock label="Output" value={span.output} />
+          <JsonBlock label="Metadata" value={span.span_data} />
+          {span.error ? <JsonBlock label="Error" value={span.error} /> : null}
+        </>
       ) : null}
 
-      {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
-
-      <JsonBlock label="Input" value={span.input} />
-      <JsonBlock label="Output" value={span.output} />
-      <JsonBlock label="Metadata" value={span.span_data} />
-      {span.error ? <JsonBlock label="Error" value={span.error} /> : null}
+      {activeTab === "span" ? <JsonBlock label="Normalized span" value={span} /> : null}
+      {activeTab === "trace" ? <JsonBlock label="Original trace payload" value={rawTrace} /> : null}
     </div>
   );
 }

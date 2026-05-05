@@ -674,6 +674,65 @@ h3 {
   font-size: 12px;
 }
 
+.spanFacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 1px;
+  background: #dce4e8;
+  border-bottom: 1px solid #dce4e8;
+}
+
+.spanFacts div {
+  min-width: 0;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.spanFacts small,
+.spanFacts strong {
+  display: block;
+}
+
+.spanFacts small {
+  margin-bottom: 4px;
+  color: #637179;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.spanFacts strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.inspectorTabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #f8fafb;
+  border-bottom: 1px solid #dce4e8;
+}
+
+.inspectorTabs button {
+  min-height: 32px;
+  padding: 6px 9px;
+  color: #3e4a50;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.inspectorTabs button.active,
+.inspectorTabs button:hover {
+  color: #ffffff;
+  background: #246b5b;
+  border-color: #246b5b;
+}
+
 .claimAlert {
   padding: 12px;
   color: #9b2c2c;
