@@ -31,6 +31,24 @@ class SQLiteTraceStoreTest(unittest.TestCase):
 
             verbose_timeline = saved.format_timeline(verbose=True)
             self.assertIn("at 2026-05-01T23:00:00.000Z", verbose_timeline)
+            self.assertEqual(saved.raw_payload["trace_id"], trace.trace_id)
+
+    def test_openai_raw_payload_round_trips(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = load_trace_file(
+                Path("examples/openai_agents/sample_trace_export.json"),
+                trace_format="openai-agents",
+            )
+
+            store.save_trace(trace)
+            saved = store.get_trace(trace.trace_id)
+
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved.raw_payload["id"], "oa_trace_support_triage_export")
+            self.assertEqual(saved.raw_payload["spans"][1]["type"], "model_call")
 
     def test_list_traces(self) -> None:
         with TemporaryDirectory() as temp_dir:

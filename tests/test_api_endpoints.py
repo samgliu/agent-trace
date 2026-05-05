@@ -163,6 +163,11 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(body["trace_id"], "oa_trace_support_triage_export")
         self.assertEqual(len(body["spans"]), 5)
 
+        raw_response = self.client.get("/traces/oa_trace_support_triage_export/raw")
+        self.assertEqual(raw_response.status_code, 200)
+        self.assertEqual(raw_response.json()["id"], "oa_trace_support_triage_export")
+        self.assertEqual(raw_response.json()["spans"][1]["type"], "model_call")
+
     def test_get_spans(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}/spans")
 

@@ -100,7 +100,7 @@ class SQLiteTraceStore:
                     _to_json(trace.metadata),
                     serialize_datetime(trace.started_at),
                     serialize_datetime(trace.ended_at),
-                    _to_json(trace.to_dict()),
+                    _to_json(trace.raw_payload or trace.to_dict()),
                 ),
             )
             connection.execute("DELETE FROM spans WHERE trace_id = ?", (trace.trace_id,))
@@ -147,7 +147,7 @@ class SQLiteTraceStore:
                     _to_json(trace.metadata),
                     serialize_datetime(trace.started_at),
                     serialize_datetime(trace.ended_at),
-                    _to_json(trace.to_dict()),
+                    _to_json(trace.raw_payload or trace.to_dict()),
                 ),
             )
             connection.commit()
@@ -199,6 +199,7 @@ class SQLiteTraceStore:
             group_id=trace.group_id,
             status=next_status,
             metadata=trace.metadata,
+            raw_payload=trace.raw_payload,
             started_at=trace.started_at,
             ended_at=next_ended_at,
             spans=trace.spans,
@@ -207,10 +208,10 @@ class SQLiteTraceStore:
             connection.execute(
                 """
                 UPDATE traces
-                SET status = ?, ended_at = ?, raw_json = ?
+                SET status = ?, ended_at = ?
                 WHERE trace_id = ?
                 """,
-                (updated.status, serialize_datetime(updated.ended_at), _to_json(updated.to_dict()), trace_id),
+                (updated.status, serialize_datetime(updated.ended_at), trace_id),
             )
             connection.commit()
         self._save_trace_summary(updated)
@@ -232,6 +233,7 @@ class SQLiteTraceStore:
                 group_id=row["group_id"],
                 status=row["status"],
                 metadata=_from_json(row["metadata_json"]) or {},
+                raw_payload=None,
                 started_at=parse_datetime(row["started_at"]),
                 ended_at=parse_datetime(row["ended_at"]),
                 spans=[],
@@ -303,7 +305,7 @@ class SQLiteTraceStore:
         with closing(self._connect()) as connection:
             trace_row = connection.execute(
                 """
-                SELECT trace_id, workflow_name, group_id, status, metadata_json, started_at, ended_at
+                SELECT trace_id, workflow_name, group_id, status, metadata_json, started_at, ended_at, raw_json
                 FROM traces
                 WHERE trace_id = ?
                 """,
@@ -331,6 +333,7 @@ class SQLiteTraceStore:
             group_id=trace_row["group_id"],
             status=trace_row["status"],
             metadata=_from_json(trace_row["metadata_json"]) or {},
+            raw_payload=_from_json(trace_row["raw_json"]),
             started_at=parse_datetime(trace_row["started_at"]),
             ended_at=parse_datetime(trace_row["ended_at"]),
             spans=spans,

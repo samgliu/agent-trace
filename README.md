@@ -97,6 +97,7 @@ GET    /workflows
 GET    /traces
 POST   /traces
 GET    /traces/{trace_id}
+GET    /traces/{trace_id}/raw
 PATCH  /traces/{trace_id}
 POST   /traces/{trace_id}/spans
 POST   /ingest/openai-agents
@@ -158,7 +159,10 @@ curl -X POST http://localhost:8000/ingest/openai-agents \
 ```
 
 The OpenAI Agents adapter supports trace-export style payloads and event-stream
-style payloads. It maps common span concepts into AgentTrace span types:
+style payloads. AgentTrace preserves the original source payload at
+`GET /traces/{trace_id}/raw` and stores normalized spans for dashboards,
+metrics, approvals, and filtering. It maps common span concepts into AgentTrace
+span types:
 
 ```text
 model_call      -> generation
@@ -167,6 +171,11 @@ handoff         -> handoff
 guardrail       -> guardrail
 custom_span     -> custom
 ```
+
+Model usage fields such as `input_tokens`/`output_tokens` and
+`prompt_tokens`/`completion_tokens` are normalized into AgentTrace token
+metrics. Cost fields such as `estimated_cost`, `cost`, and `total_cost` are
+normalized into `estimated_cost`.
 
 ## Frontend
 

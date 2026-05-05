@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agenttrace.core.models import Span, Trace
+from agenttrace.core.models import Span, Trace, parse_datetime
 
 
 SPAN_TYPE_MAP = {
@@ -47,8 +47,9 @@ def _normalize_trace_export(payload: dict[str, Any]) -> Trace:
         group_id=payload.get("group_id"),
         status=_string_value(payload, "status", default="unknown"),
         metadata=dict(payload.get("metadata") or {}),
-        started_at=Trace.from_dict({**payload, "trace_id": trace_id, "spans": []}).started_at,
-        ended_at=Trace.from_dict({**payload, "trace_id": trace_id, "spans": []}).ended_at,
+        raw_payload=payload,
+        started_at=parse_datetime(payload.get("started_at")),
+        ended_at=parse_datetime(payload.get("ended_at")),
         spans=spans,
     )
 
@@ -104,6 +105,7 @@ def _normalize_event_stream(payload: dict[str, Any]) -> Trace:
         group_id=trace.group_id,
         status=trace.status,
         metadata=trace.metadata,
+        raw_payload=payload,
         started_at=trace.started_at,
         ended_at=trace.ended_at,
         spans=[_normalize_span(span, trace_id=trace.trace_id) for span in spans_by_id.values()],
@@ -117,6 +119,8 @@ def _normalize_span(payload: dict[str, Any], *, trace_id: str) -> Span:
         span_data["agent_name"] = payload["agent_name"]
     if "tool_name" in payload:
         span_data["tool_name"] = payload["tool_name"]
+    if "model" in payload:
+        span_data["model"] = payload["model"]
     if span_type == "handoff":
         for key in ("from_agent", "to_agent"):
             if key in payload:
@@ -134,9 +138,9 @@ def _normalize_span(payload: dict[str, Any], *, trace_id: str) -> Span:
         "output": payload.get("output"),
         "error": payload.get("error"),
         "span_data": span_data,
-        "input_tokens": payload.get("input_tokens") or usage.get("input_tokens"),
-        "output_tokens": payload.get("output_tokens") or usage.get("output_tokens"),
-        "estimated_cost": payload.get("estimated_cost"),
+        "input_tokens": _first_number(payload, usage, "input_tokens", "prompt_tokens"),
+        "output_tokens": _first_number(payload, usage, "output_tokens", "completion_tokens"),
+        "estimated_cost": _first_number(payload, usage, "estimated_cost", "cost", "total_cost"),
     }
     return Span.from_dict(normalized, trace_id=trace_id)
 
@@ -168,3 +172,13 @@ def _string_value(payload: dict[str, Any], *keys: str, default: str) -> str:
             return str(value)
     return default
 
+
+def _first_number(*items: Any) -> int | float | None:
+    payloads = [item for item in items if isinstance(item, dict)]
+    keys = [item for item in items if isinstance(item, str)]
+    for payload in payloads:
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                return value
+    return None

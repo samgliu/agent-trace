@@ -113,6 +113,11 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         trace = _require_trace(trace_store, trace_id)
         return trace.to_dict()
 
+    @app.get("/traces/{trace_id}/raw")
+    def get_raw_trace(trace_id: str) -> dict[str, Any] | list[Any]:
+        trace = _require_trace(trace_store, trace_id)
+        return trace.raw_payload or trace.to_dict()
+
     @app.get("/traces/{trace_id}/spans")
     def get_spans(trace_id: str) -> list[dict[str, Any]]:
         trace = _require_trace(trace_store, trace_id)
