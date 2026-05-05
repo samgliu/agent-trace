@@ -6,6 +6,7 @@ debugging, evaluating, and monitoring multi-agent AI workflows.
 It currently supports:
 
 - importing OpenAI-style trace JSON
+- adapting OpenAI Agents trace exports and event streams
 - ingesting live traces and spans through the API
 - polling live trace updates from the dashboard
 - SQLite-backed trace summaries for filtering and fleet metrics
@@ -63,6 +64,12 @@ docker compose run --rm agenttrace show trace_support_triage_happy_path
 docker compose run --rm agenttrace show trace_support_triage_happy_path --verbose
 ```
 
+Import an OpenAI Agents-style trace export:
+
+```bash
+docker compose run --rm agenttrace import examples/openai_agents/sample_trace_export.json --format openai-agents
+```
+
 For local Python development:
 
 ```bash
@@ -92,6 +99,7 @@ POST   /traces
 GET    /traces/{trace_id}
 PATCH  /traces/{trace_id}
 POST   /traces/{trace_id}/spans
+POST   /ingest/openai-agents
 GET    /traces/{trace_id}/metrics
 GET    /traces/{trace_id}/grounding
 POST   /traces/{trace_id}/approvals/{span_id}/approve
@@ -141,6 +149,25 @@ curl -X PATCH http://localhost:8000/traces/live_trace_example \
   }'
 ```
 
+OpenAI Agents-compatible ingest:
+
+```bash
+curl -X POST http://localhost:8000/ingest/openai-agents \
+  -H 'content-type: application/json' \
+  --data @examples/openai_agents/sample_trace_export.json
+```
+
+The OpenAI Agents adapter supports trace-export style payloads and event-stream
+style payloads. It maps common span concepts into AgentTrace span types:
+
+```text
+model_call      -> generation
+tool_call       -> function_tool
+handoff         -> handoff
+guardrail       -> guardrail
+custom_span     -> custom
+```
+
 ## Frontend
 
 For local frontend development:
@@ -169,4 +196,3 @@ Docker build runs the Python and frontend checks inside images:
 ```bash
 docker compose build
 ```
-

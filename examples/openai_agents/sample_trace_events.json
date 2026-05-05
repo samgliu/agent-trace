@@ -1,0 +1,63 @@
+{
+  "trace_id": "oa_trace_support_triage_events",
+  "workflow_name": "support-triage",
+  "events": [
+    {
+      "type": "trace_started",
+      "data": {
+        "trace_id": "oa_trace_support_triage_events",
+        "workflow_name": "support-triage",
+        "status": "running",
+        "timestamp": "2026-05-04T15:00:00Z"
+      }
+    },
+    {
+      "type": "span_started",
+      "data": {
+        "span_id": "oa_event_supervisor",
+        "type": "agent",
+        "name": "Supervisor Agent",
+        "timestamp": "2026-05-04T15:00:00Z"
+      }
+    },
+    {
+      "type": "span_completed",
+      "data": {
+        "span_id": "oa_event_supervisor",
+        "type": "agent",
+        "name": "Supervisor Agent",
+        "timestamp": "2026-05-04T15:00:01Z"
+      }
+    },
+    {
+      "type": "span_started",
+      "data": {
+        "span_id": "oa_event_tool",
+        "parent_id": "oa_event_supervisor",
+        "type": "tool_call",
+        "tool_name": "create_support_action",
+        "timestamp": "2026-05-04T15:00:01Z"
+      }
+    },
+    {
+      "type": "span_completed",
+      "data": {
+        "span_id": "oa_event_tool",
+        "parent_id": "oa_event_supervisor",
+        "type": "tool_call",
+        "tool_name": "create_support_action",
+        "timestamp": "2026-05-04T15:00:02Z",
+        "output": {
+          "action_id": "act_123"
+        }
+      }
+    },
+    {
+      "type": "trace_completed",
+      "data": {
+        "status": "passed",
+        "timestamp": "2026-05-04T15:00:03Z"
+      }
+    }
+  ]
+}

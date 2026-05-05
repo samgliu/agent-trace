@@ -150,6 +150,19 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
+    def test_ingest_openai_agents_trace(self) -> None:
+        with Path("examples/openai_agents/sample_trace_export.json").open("r", encoding="utf-8") as file:
+            import json
+
+            payload = json.load(file)
+
+        response = self.client.post("/ingest/openai-agents", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["trace_id"], "oa_trace_support_triage_export")
+        self.assertEqual(len(body["spans"]), 5)
+
     def test_get_spans(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}/spans")
 

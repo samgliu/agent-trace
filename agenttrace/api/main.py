@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
+from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
 from agenttrace.core.metrics import build_trace_metrics
@@ -78,6 +79,15 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def ingest_trace(payload: TraceIngestRequest) -> dict[str, Any]:
         trace = normalize_trace(payload.model_dump())
         trace_store.upsert_trace(trace)
+        saved = _require_trace(trace_store, trace.trace_id)
+        return saved.to_dict()
+
+    @app.post("/ingest/openai-agents")
+    def ingest_openai_agents_trace(payload: dict[str, Any]) -> dict[str, Any]:
+        trace = normalize_openai_agents_trace(payload)
+        trace_store.upsert_trace(trace)
+        for span in trace.spans:
+            trace_store.upsert_span(span)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
 
