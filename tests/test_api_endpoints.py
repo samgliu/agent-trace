@@ -99,22 +99,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["source_kind"], "trace_export")
 
     def test_list_traces_filters_by_errors(self) -> None:
-        from agenttrace.core.models import Span, Trace
-
-        trace = Trace(
-            trace_id="trace_with_error",
-            workflow_name="support-triage",
-            status="failed",
-            spans=[
-                Span(
-                    span_id="span_tool_error",
-                    trace_id="trace_with_error",
-                    name="lookup_customer",
-                    span_type="function_tool",
-                    error={"message": "timeout"},
-                )
-            ],
-        )
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
         self.store.save_trace(trace)
 
         response = self.client.get("/traces?has_errors=true")
@@ -122,7 +107,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["total"], 1)
-        self.assertEqual(payload["items"][0]["trace_id"], "trace_with_error")
+        self.assertEqual(payload["items"][0]["trace_id"], "trace_support_triage_tool_failure")
         self.assertEqual(payload["items"][0]["error_count"], 1)
 
     def test_list_workflows(self) -> None:

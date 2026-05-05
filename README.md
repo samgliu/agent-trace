@@ -21,6 +21,7 @@ docker compose build
 docker compose up -d api web
 docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
 docker compose run --rm agenttrace import examples/support_triage/sample_trace_grounding_failure.json
+docker compose run --rm agenttrace import examples/support_triage/sample_trace_tool_failure.json
 ```
 
 Open:

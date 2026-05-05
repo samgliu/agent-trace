@@ -74,20 +74,7 @@ class SQLiteTraceStoreTest(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
             store.initialize()
-            trace = Trace(
-                trace_id="trace_with_error",
-                workflow_name="support-triage",
-                status="failed",
-                spans=[
-                    Span(
-                        span_id="span_tool_error",
-                        trace_id="trace_with_error",
-                        name="lookup_customer",
-                        span_type="function_tool",
-                        error={"message": "timeout"},
-                    )
-                ],
-            )
+            trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
 
             store.save_trace(trace)
             result = store.list_trace_summaries(status="failed")
@@ -100,20 +87,7 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
             store.initialize()
             clean_trace = load_trace_file(Path("examples/support_triage/sample_trace.json"))
-            errored_trace = Trace(
-                trace_id="trace_with_error",
-                workflow_name="support-triage",
-                status="failed",
-                spans=[
-                    Span(
-                        span_id="span_tool_error",
-                        trace_id="trace_with_error",
-                        name="lookup_customer",
-                        span_type="function_tool",
-                        error={"message": "timeout"},
-                    )
-                ],
-            )
+            errored_trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
 
             store.save_trace(clean_trace)
             store.save_trace(errored_trace)
@@ -121,7 +95,7 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             without_errors = store.list_trace_summaries(has_errors=False)
 
             self.assertEqual(with_errors["total"], 1)
-            self.assertEqual(with_errors["items"][0]["trace_id"], "trace_with_error")
+            self.assertEqual(with_errors["items"][0]["trace_id"], errored_trace.trace_id)
             self.assertEqual(without_errors["total"], 1)
             self.assertEqual(without_errors["items"][0]["trace_id"], clean_trace.trace_id)
 
