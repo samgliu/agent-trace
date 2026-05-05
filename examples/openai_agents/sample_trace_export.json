@@ -1,0 +1,70 @@
+{
+  "id": "oa_trace_support_triage_export",
+  "name": "support-triage",
+  "status": "passed",
+  "started_at": "2026-05-04T14:00:00Z",
+  "ended_at": "2026-05-04T14:00:05Z",
+  "metadata": {
+    "source": "openai-agents"
+  },
+  "spans": [
+    {
+      "id": "oa_span_supervisor",
+      "type": "agent",
+      "name": "Supervisor Agent",
+      "started_at": "2026-05-04T14:00:00Z",
+      "ended_at": "2026-05-04T14:00:01Z"
+    },
+    {
+      "id": "oa_span_model",
+      "parent_id": "oa_span_supervisor",
+      "type": "model_call",
+      "model": "gpt-5.4",
+      "started_at": "2026-05-04T14:00:01Z",
+      "ended_at": "2026-05-04T14:00:02Z",
+      "usage": {
+        "input_tokens": 620,
+        "output_tokens": 110
+      },
+      "output": {
+        "text": "Route to policy review."
+      }
+    },
+    {
+      "id": "oa_span_tool",
+      "parent_id": "oa_span_supervisor",
+      "type": "tool_call",
+      "tool_name": "lookup_customer",
+      "started_at": "2026-05-04T14:00:02Z",
+      "ended_at": "2026-05-04T14:00:03Z",
+      "output": {
+        "customer_tier": "pro"
+      }
+    },
+    {
+      "id": "oa_span_handoff",
+      "parent_id": "oa_span_supervisor",
+      "type": "handoff",
+      "from_agent": "Supervisor Agent",
+      "to_agent": "Policy Agent",
+      "started_at": "2026-05-04T14:00:03Z",
+      "ended_at": "2026-05-04T14:00:03Z"
+    },
+    {
+      "id": "oa_span_guardrail",
+      "parent_id": "oa_span_supervisor",
+      "type": "guardrail",
+      "name": "Grounding Guardrail",
+      "started_at": "2026-05-04T14:00:04Z",
+      "ended_at": "2026-05-04T14:00:05Z",
+      "output": {
+        "grounded": true,
+        "supported_claims": [
+          {
+            "claim": "support review created"
+          }
+        ]
+      }
+    }
+  ]
+}

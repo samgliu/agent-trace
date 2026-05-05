@@ -82,6 +82,34 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["total"], 2)
 
+    def test_list_traces_filters_by_source(self) -> None:
+        trace = load_trace_file(
+            Path("examples/openai_agents/sample_trace_export.json"),
+            trace_format="openai-agents",
+        )
+        self.store.save_trace(trace)
+
+        response = self.client.get("/traces?source_format=openai-agents&source_kind=trace_export")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], "oa_trace_support_triage_export")
+        self.assertEqual(payload["items"][0]["source_format"], "openai-agents")
+        self.assertEqual(payload["items"][0]["source_kind"], "trace_export")
+
+    def test_list_traces_filters_by_errors(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get("/traces?has_errors=true")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], "trace_support_triage_tool_failure")
+        self.assertEqual(payload["items"][0]["error_count"], 1)
+
     def test_list_workflows(self) -> None:
         response = self.client.get("/workflows")
 
@@ -99,6 +127,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["total_runs"], 2)
         self.assertEqual(payload["approval_pending_count"], 1)
         self.assertEqual(payload["unsupported_claim_count"], 1)
+        self.assertEqual(payload["error_count"], 0)
         self.assertEqual(payload["workflow_counts"]["support-triage"], 2)
         self.assertEqual(payload["status_counts"]["passed"], 2)
 
@@ -139,6 +168,9 @@ class ApiEndpointsTest(unittest.TestCase):
         )
 
         self.assertEqual(trace_response.status_code, 200)
+        self.assertEqual(trace_response.json()["metadata"]["source_format"], "agenttrace")
+        self.assertEqual(trace_response.json()["metadata"]["source_kind"], "live_api")
+        self.assertIn("ingested_at", trace_response.json()["metadata"])
         self.assertEqual(span_response.status_code, 200)
         self.assertEqual(lifecycle_response.status_code, 200)
         self.assertEqual(lifecycle_response.json()["status"], "passed")
@@ -149,6 +181,27 @@ class ApiEndpointsTest(unittest.TestCase):
         response = self.client.post("/traces", json={"workflow_name": "support-triage"})
 
         self.assertEqual(response.status_code, 422)
+
+    def test_ingest_openai_agents_trace(self) -> None:
+        with Path("examples/openai_agents/sample_trace_export.json").open("r", encoding="utf-8") as file:
+            import json
+
+            payload = json.load(file)
+
+        response = self.client.post("/ingest/openai-agents", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["trace_id"], "oa_trace_support_triage_export")
+        self.assertEqual(len(body["spans"]), 5)
+        self.assertEqual(body["metadata"]["source_format"], "openai-agents")
+        self.assertEqual(body["metadata"]["source_kind"], "trace_export")
+        self.assertIn("ingested_at", body["metadata"])
+
+        raw_response = self.client.get("/traces/oa_trace_support_triage_export/raw")
+        self.assertEqual(raw_response.status_code, 200)
+        self.assertEqual(raw_response.json()["id"], "oa_trace_support_triage_export")
+        self.assertEqual(raw_response.json()["spans"][1]["type"], "model_call")
 
     def test_get_spans(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}/spans")

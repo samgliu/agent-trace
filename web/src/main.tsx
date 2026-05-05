@@ -19,6 +19,8 @@ import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
+import { buildSpanFacts } from "./utils/spanFacts";
+import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -28,6 +30,9 @@ type TraceSummary = {
   workflow_name: string;
   group_id: string | null;
   status: string;
+  source_format: string;
+  source_kind: string;
+  ingested_at: string | null;
   started_at: string | null;
   ended_at: string | null;
   duration_ms: number | null;
@@ -35,6 +40,7 @@ type TraceSummary = {
   input_tokens: number;
   output_tokens: number;
   estimated_cost: number;
+  error_count: number;
   approval_total_count: number;
   approval_pending_count: number;
   approval_approved_count: number;
@@ -66,6 +72,7 @@ type Span = {
 };
 
 type TraceDetail = TraceSummary & {
+  metadata: Record<string, unknown>;
   spans: Span[];
 };
 
@@ -74,6 +81,9 @@ type Metrics = {
   input_tokens: number;
   output_tokens: number;
   estimated_cost: number;
+  error_count: number;
+  errored_span_count: number;
+  spans_with_errors: SpanSummary[];
   spans_by_type: Record<string, number>;
   slowest_span: SpanSummary | null;
   most_expensive_span: SpanSummary | null;
@@ -110,9 +120,12 @@ type DashboardSummary = {
   status_counts: Record<string, number>;
   workflow_counts: Record<string, number>;
   grounding_counts: Record<string, number>;
+  source_format_counts: Record<string, number>;
+  source_kind_counts: Record<string, number>;
   approval_pending_count: number;
   approval_rejected_count: number;
   unsupported_claim_count: number;
+  error_count: number;
   average_duration_ms: number | null;
   p95_duration_ms: number | null;
   estimated_cost: number;
@@ -123,6 +136,9 @@ type DashboardSummary = {
 type TraceFilters = {
   status: string;
   workflowName: string;
+  sourceFormat: string;
+  sourceKind: string;
+  errorStatus: string;
   approvalStatus: string;
   groundingStatus: string;
   timeRange: string;
@@ -146,6 +162,7 @@ type LoadState =
       dashboard: DashboardSummary;
       workflows: string[];
       selectedTrace: TraceDetail;
+      rawTrace: unknown;
       metrics: Metrics;
       grounding: GroundingSummary;
     };
@@ -157,6 +174,9 @@ function App() {
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
+    sourceFormat: "",
+    sourceKind: "",
+    errorStatus: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
@@ -193,8 +213,9 @@ function App() {
           }
           return;
         }
-        const [selectedTrace, metrics, grounding] = await Promise.all([
+        const [selectedTrace, rawTrace, metrics, grounding] = await Promise.all([
           fetchJson<TraceDetail>(`/traces/${traceId}`),
+          fetchJson<unknown>(`/traces/${traceId}/raw`),
           fetchJson<Metrics>(`/traces/${traceId}/metrics`),
           fetchJson<GroundingSummary>(`/traces/${traceId}/grounding`),
         ]);
@@ -212,6 +233,7 @@ function App() {
             dashboard,
             workflows,
             selectedTrace,
+            rawTrace,
             metrics,
             grounding,
           });
@@ -300,6 +322,7 @@ function App() {
                 metrics={state.metrics}
                 grounding={state.grounding}
                 spans={state.selectedTrace.spans}
+                rawTrace={state.rawTrace}
                 selectedSpanId={selectedSpanId}
                 onSelectSpan={setSelectedSpanId}
                 onApprovalAction={updateApproval}
@@ -393,6 +416,10 @@ function Shell({ children, status, error }: { children?: React.ReactNode; status
 }
 
 function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; executionStatus: string }) {
+  const sourceFormat = stringMetadata(trace.metadata.source_format);
+  const sourceKind = stringMetadata(trace.metadata.source_kind);
+  const ingestedAt = stringMetadata(trace.metadata.ingested_at);
+
   return (
     <section className="traceHeader">
       <div>
@@ -401,6 +428,9 @@ function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; execution
       </div>
       <div className="traceMeta">
         <span>Execution: {executionStatus}</span>
+        {sourceFormat ? <span>Source: {sourceLabel(sourceFormat)}</span> : null}
+        {sourceKind ? <span>Format: {sourceKindLabel(sourceKind)}</span> : null}
+        {ingestedAt ? <span>Ingested: {ingestedAt}</span> : null}
         <span>{formatDuration(trace.duration_ms)}</span>
       </div>
     </section>
@@ -436,11 +466,44 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
         <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Errors" value={String(summary.error_count)} />
         <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
         <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
       </div>
+      <div className="sourceSummary">
+        <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
+        <SourceBreakdown title="Ingest format" counts={summary.source_kind_counts} labelForValue={sourceKindLabel} />
+      </div>
     </section>
+  );
+}
+
+function SourceBreakdown({
+  title,
+  counts,
+  labelForValue,
+}: {
+  title: string;
+  counts: Record<string, number>;
+  labelForValue: (value: string) => string;
+}) {
+  const entries = Object.entries(counts).sort((left, right) => right[1] - left[1]);
+  return (
+    <div className="sourceBreakdown">
+      <small>{title}</small>
+      <div>
+        {entries.length > 0 ? (
+          entries.map(([value, count]) => (
+            <span key={value}>
+              {labelForValue(value)} <strong>{count}</strong>
+            </span>
+          ))
+        ) : (
+          <span>None <strong>0</strong></span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -477,6 +540,31 @@ function TraceFiltersPanel({
           <option value="passed">Passed</option>
           <option value="failed">Failed</option>
           <option value="running">Running</option>
+        </select>
+      </label>
+      <label>
+        <span>Source</span>
+        <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
+          <option value="">Any</option>
+          <option value="agenttrace">AgentTrace</option>
+          <option value="openai-agents">OpenAI Agents</option>
+        </select>
+      </label>
+      <label>
+        <span>Format</span>
+        <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
+          <option value="">Any</option>
+          <option value="trace_export">Trace export</option>
+          <option value="event_stream">Event stream</option>
+          <option value="live_api">Live API</option>
+        </select>
+      </label>
+      <label>
+        <span>Errors</span>
+        <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
+          <option value="">Any</option>
+          <option value="true">Has errors</option>
+          <option value="false">No errors</option>
         </select>
       </label>
       <label>
@@ -524,11 +612,14 @@ function TraceBadges({ trace }: { trace: TraceSummary }) {
   return (
     <div className="traceBadges">
       <span className={`chip status ${statusTone(trace.status)}`}>Status: {executionStatus(trace.status)}</span>
+      <span className="chip neutral">{sourceLabel(trace.source_format)}</span>
+      <span className="chip neutral">{sourceKindLabel(trace.source_kind)}</span>
       {trace.grounding_status !== trace.status ? (
         <span className={`chip grounding ${groundingTone(trace.grounding_status)}`}>Grounding: {trace.grounding_status}</span>
       ) : null}
       {trace.approval_pending_count > 0 ? <strong className="chip warning">Needs approval</strong> : null}
       {trace.approval_rejected_count > 0 ? <strong className="chip danger">Rejected</strong> : null}
+      {trace.error_count > 0 ? <strong className="chip danger">Errors: {trace.error_count}</strong> : null}
       {trace.estimated_cost > 0.01 ? <strong className="chip warning">High cost</strong> : null}
       {trace.duration_ms !== null && trace.duration_ms > 5000 ? <strong className="chip warning">Slow</strong> : null}
     </div>
@@ -559,6 +650,12 @@ function MetricGrid({ metrics, grounding }: { metrics: Metrics; grounding: Groun
         tone={grounding.unsupported_claim_count > 0 ? "warning" : "normal"}
       />
       <Metric icon={<Braces size={18} />} label="Tokens" value={formatTokens(metrics.input_tokens, metrics.output_tokens)} />
+      <Metric
+        icon={<AlertCircle size={18} />}
+        label="Errors"
+        value={String(metrics.error_count)}
+        tone={metrics.error_count > 0 ? "warning" : "normal"}
+      />
       <Metric icon={<CircleDollarSign size={18} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
     </section>
   );
@@ -678,6 +775,7 @@ function SpanRow({
     "spanRow",
     span.span_id === selectedSpanId ? "selected" : "",
     approvalStatus?.isPending ? "approvalPending" : "",
+    span.error ? "errored" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -695,6 +793,7 @@ function SpanRow({
         </div>
         <div className="spanMeta">
           {approvalStatus?.isPending ? <span className="approvalBadge">Needs approval</span> : null}
+          {span.error ? <span className="errorBadge">Error</span> : null}
           <span>{formatDuration(span.duration_ms)}</span>
           {span.input_tokens || span.output_tokens ? <span>{formatTokens(span.input_tokens ?? 0, span.output_tokens ?? 0)}</span> : null}
           {span.estimated_cost ? <span>{formatCost(span.estimated_cost)}</span> : null}
@@ -718,6 +817,7 @@ function AnalysisPanel({
   metrics,
   grounding,
   spans,
+  rawTrace,
   selectedSpanId,
   onSelectSpan,
   onApprovalAction,
@@ -725,6 +825,7 @@ function AnalysisPanel({
   metrics: Metrics;
   grounding: GroundingSummary;
   spans: Span[];
+  rawTrace: unknown;
   selectedSpanId: string | null;
   onSelectSpan: (spanId: string) => void;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
@@ -734,6 +835,7 @@ function AnalysisPanel({
   const approvals = spans.filter((span) => span.span_type === "approval");
   const pendingApprovals = approvals.filter((span) => getApprovalStatus(span.span_type, span.span_data)?.isPending);
   const handoffs = spans.filter((span) => span.span_type === "handoff");
+  const erroredSpans = spans.filter((span) => span.error);
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
   return (
@@ -752,6 +854,7 @@ function AnalysisPanel({
         <Insight icon={<Wrench size={16} />} label="MCP tools" value={`${mcpSpans.length} calls captured`} />
         <Insight icon={<ShieldCheck size={16} />} label="Guardrails" value={`${guardrails.length} validation span`} />
         <Insight icon={<UserCheck size={16} />} label="Approvals" value={`${pendingApprovals.length} waiting · ${approvals.length} total`} />
+        <Insight icon={<AlertCircle size={16} />} label="Errors" value={`${erroredSpans.length} errored span`} />
         <Insight icon={<CircleDollarSign size={16} />} label="Most expensive" value={metrics.most_expensive_span?.name ?? "-"} />
       </div>
       <ApprovalQueue approvals={approvals} onSelectSpan={onSelectSpan} onApprovalAction={onApprovalAction} />
@@ -777,6 +880,16 @@ function AnalysisPanel({
           ))}
         </div>
       ) : null}
+      {erroredSpans.length > 0 ? (
+        <div className="quickLinks errorLinks">
+          <small>Errored spans</small>
+          {erroredSpans.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {guardrails.length > 0 ? (
         <div className="quickLinks">
           <small>Guardrails and validation</small>
@@ -787,7 +900,7 @@ function AnalysisPanel({
           ))}
         </div>
       ) : null}
-      {selectedSpan ? <SpanDetail span={selectedSpan} onApprovalAction={onApprovalAction} /> : null}
+      {selectedSpan ? <SpanDetail span={selectedSpan} rawTrace={rawTrace} onApprovalAction={onApprovalAction} /> : null}
     </section>
   );
 }
@@ -871,13 +984,17 @@ function GroundingPanel({
 
 function SpanDetail({
   span,
+  rawTrace,
   onApprovalAction,
 }: {
   span: Span;
+  rawTrace: unknown;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
+  const [activeTab, setActiveTab] = useState<"overview" | "span" | "trace">("overview");
   const unsupportedClaims = extractUnsupportedClaims(span.output);
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
+  const facts = buildSpanFacts(span);
 
   return (
     <div className="spanDetail">
@@ -889,24 +1006,52 @@ function SpanDetail({
         <span>{span.span_type}</span>
       </div>
 
-      {unsupportedClaims.length > 0 ? (
-        <div className="claimAlert">
-          <strong>Unsupported claims</strong>
-          {unsupportedClaims.map((claim, index) => (
-            <p key={`${claim.claim}-${index}`}>
-              {claim.claim}
-              {claim.reason ? <span>{claim.reason}</span> : null}
-            </p>
-          ))}
-        </div>
+      <div className="spanFacts">
+        {facts.map((fact) => (
+          <div key={fact.label}>
+            <small>{fact.label}</small>
+            <strong>{fact.value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="inspectorTabs" role="tablist" aria-label="Span inspector">
+        <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")}>
+          Overview
+        </button>
+        <button className={activeTab === "span" ? "active" : ""} onClick={() => setActiveTab("span")}>
+          Span JSON
+        </button>
+        <button className={activeTab === "trace" ? "active" : ""} onClick={() => setActiveTab("trace")}>
+          Raw trace
+        </button>
+      </div>
+
+      {activeTab === "overview" ? (
+        <>
+          {unsupportedClaims.length > 0 ? (
+            <div className="claimAlert">
+              <strong>Unsupported claims</strong>
+              {unsupportedClaims.map((claim, index) => (
+                <p key={`${claim.claim}-${index}`}>
+                  {claim.claim}
+                  {claim.reason ? <span>{claim.reason}</span> : null}
+                </p>
+              ))}
+            </div>
+          ) : null}
+
+          {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
+
+          <JsonBlock label="Input" value={span.input} />
+          <JsonBlock label="Output" value={span.output} />
+          <JsonBlock label="Metadata" value={span.span_data} />
+          {span.error ? <JsonBlock label="Error" value={span.error} /> : null}
+        </>
       ) : null}
 
-      {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
-
-      <JsonBlock label="Input" value={span.input} />
-      <JsonBlock label="Output" value={span.output} />
-      <JsonBlock label="Metadata" value={span.span_data} />
-      {span.error ? <JsonBlock label="Error" value={span.error} /> : null}
+      {activeTab === "span" ? <JsonBlock label="Normalized span" value={span} /> : null}
+      {activeTab === "trace" ? <JsonBlock label="Original trace payload" value={rawTrace} /> : null}
     </div>
   );
 }
@@ -1044,6 +1189,9 @@ function filterQuery(filters: TraceFilters): string {
   params.set("offset", String(filters.offset));
   if (filters.workflowName) params.set("workflow_name", filters.workflowName);
   if (filters.status) params.set("status", filters.status);
+  if (filters.sourceFormat) params.set("source_format", filters.sourceFormat);
+  if (filters.sourceKind) params.set("source_kind", filters.sourceKind);
+  if (filters.errorStatus) params.set("has_errors", filters.errorStatus);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
   const startedAfter = startedAfterForRange(filters.timeRange);
@@ -1056,6 +1204,9 @@ function emptyFilters(): TraceFilters {
   return {
     status: "",
     workflowName: "",
+    sourceFormat: "",
+    sourceKind: "",
+    errorStatus: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",

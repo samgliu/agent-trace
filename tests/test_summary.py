@@ -17,6 +17,13 @@ class TraceSummaryTest(unittest.TestCase):
         self.assertEqual(summary["grounding_status"], "recovered")
         self.assertEqual(summary["unsupported_claim_count"], 1)
 
+    def test_build_trace_summary_counts_span_errors(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
+
+        summary = build_trace_summary(trace)
+
+        self.assertEqual(summary["error_count"], 1)
+
     def test_build_dashboard_summary_aggregates_trace_summaries(self) -> None:
         happy_path = build_trace_summary(load_trace_file(Path("examples/support_triage/sample_trace.json")))
         intervention = build_trace_summary(load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json")))
@@ -28,6 +35,9 @@ class TraceSummaryTest(unittest.TestCase):
         self.assertEqual(summary["unsupported_claim_count"], 1)
         self.assertEqual(summary["workflow_counts"], {"support-triage": 2})
         self.assertEqual(summary["status_counts"], {"passed": 2})
+        self.assertEqual(summary["source_format_counts"], {"agenttrace": 2})
+        self.assertEqual(summary["source_kind_counts"], {"trace_export": 2})
+        self.assertEqual(summary["error_count"], 0)
 
 
 if __name__ == "__main__":

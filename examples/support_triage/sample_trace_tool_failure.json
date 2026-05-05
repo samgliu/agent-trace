@@ -1,0 +1,57 @@
+{
+  "trace_id": "trace_support_triage_tool_failure",
+  "workflow_name": "support-triage",
+  "group_id": "demo-support-triage",
+  "status": "failed",
+  "started_at": "2026-05-01T23:20:00Z",
+  "ended_at": "2026-05-01T23:20:02Z",
+  "metadata": {
+    "scenario": "customer_lookup_timeout",
+    "source": "sample"
+  },
+  "spans": [
+    {
+      "span_id": "span_failure_supervisor",
+      "span_type": "agent",
+      "name": "Supervisor Agent",
+      "started_at": "2026-05-01T23:20:00Z",
+      "ended_at": "2026-05-01T23:20:02Z",
+      "input": {
+        "message": "I cannot access my account after upgrading."
+      },
+      "output": {
+        "final_status": "failed_before_customer_context"
+      },
+      "usage": {
+        "input_tokens": 160,
+        "output_tokens": 38
+      },
+      "estimated_cost": 0.0004,
+      "span_data": {
+        "agent_name": "Supervisor Agent",
+        "role": "orchestrator"
+      }
+    },
+    {
+      "span_id": "span_failure_lookup_customer",
+      "parent_id": "span_failure_supervisor",
+      "span_type": "function_tool",
+      "name": "lookup_customer",
+      "started_at": "2026-05-01T23:20:00.500Z",
+      "ended_at": "2026-05-01T23:20:02Z",
+      "input": {
+        "email": "customer@example.com"
+      },
+      "error": {
+        "type": "TimeoutError",
+        "message": "support-tools-mcp did not respond within 1500ms",
+        "retryable": true
+      },
+      "span_data": {
+        "tool_protocol": "mcp",
+        "tool_server": "support-tools-mcp",
+        "tool_transport": "stdio"
+      }
+    }
+  ]
+}

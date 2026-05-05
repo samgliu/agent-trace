@@ -120,6 +120,7 @@ class Trace:
     status: str
     group_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    raw_payload: dict[str, Any] | list[Any] | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     spans: list[Span] = field(default_factory=list)
@@ -138,6 +139,7 @@ class Trace:
             group_id=payload.get("group_id"),
             status=str(payload.get("status") or "unknown"),
             metadata=dict(payload.get("metadata") or {}),
+            raw_payload=payload.get("raw_payload") or payload,
             started_at=parse_datetime(payload.get("started_at")),
             ended_at=parse_datetime(payload.get("ended_at")),
             spans=spans,

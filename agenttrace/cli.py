@@ -10,8 +10,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from agenttrace.core.importer import load_trace_file
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
@@ -33,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_parser = subparsers.add_parser("import", help="Import a trace JSON file.")
     import_parser.add_argument("path", help="Path to trace JSON.")
+    import_parser.add_argument(
+        "--format",
+        choices=["agenttrace", "openai-agents"],
+        default="agenttrace",
+        help="Input trace format. Defaults to agenttrace.",
+    )
     import_parser.add_argument(
         "--pretty",
         action="store_true",
@@ -77,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     store.initialize()
 
     if args.command == "import":
-        trace = load_trace_file(Path(args.path))
+        trace = load_trace_file(Path(args.path), trace_format=args.format)
         store.save_trace(trace)
         if args.pretty:
             print(json.dumps(trace.to_dict(), indent=2, sort_keys=True))
@@ -117,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def emit_live_sample(*, api_url: str, delay: float) -> None:
+    import httpx
+
     started_at = datetime.now(timezone.utc)
     trace_id = "live_support_triage_" + started_at.strftime("%Y%m%d%H%M%S")
     trace_payload = {

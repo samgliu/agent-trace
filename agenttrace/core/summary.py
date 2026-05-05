@@ -13,11 +13,17 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
     metrics = build_trace_metrics(trace)
     grounding = build_grounding_summary(trace)
     approvals = _approval_counts(trace)
+    source_format = trace.metadata.get("source_format") or _legacy_source_format(trace.metadata)
+    source_kind = trace.metadata.get("source_kind") or _legacy_source_kind(trace.metadata)
+    ingested_at = trace.metadata.get("ingested_at")
     return {
         "trace_id": trace.trace_id,
         "workflow_name": trace.workflow_name,
         "group_id": trace.group_id,
         "status": execution_status(trace.status),
+        "source_format": str(source_format) if source_format else "unknown",
+        "source_kind": str(source_kind) if source_kind else "unknown",
+        "ingested_at": str(ingested_at) if ingested_at else None,
         "started_at": serialize_datetime(trace.started_at),
         "ended_at": serialize_datetime(trace.ended_at),
         "duration_ms": trace.duration_ms,
@@ -25,6 +31,7 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
         "input_tokens": metrics["input_tokens"],
         "output_tokens": metrics["output_tokens"],
         "estimated_cost": metrics["estimated_cost"],
+        "error_count": metrics["error_count"],
         "approval_total_count": approvals["total"],
         "approval_pending_count": approvals["pending"],
         "approval_approved_count": approvals["approved"],
@@ -40,23 +47,32 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     status_counts: dict[str, int] = {}
     workflow_counts: dict[str, int] = {}
     grounding_counts: dict[str, int] = {}
+    source_format_counts: dict[str, int] = {}
+    source_kind_counts: dict[str, int] = {}
 
     for item in summaries:
         status = str(item.get("status") or "unknown")
         workflow = str(item.get("workflow_name") or "unknown")
         grounding = str(item.get("grounding_status") or "unknown")
+        source_format = str(item.get("source_format") or "unknown")
+        source_kind = str(item.get("source_kind") or "unknown")
         status_counts[status] = status_counts.get(status, 0) + 1
         workflow_counts[workflow] = workflow_counts.get(workflow, 0) + 1
         grounding_counts[grounding] = grounding_counts.get(grounding, 0) + 1
+        source_format_counts[source_format] = source_format_counts.get(source_format, 0) + 1
+        source_kind_counts[source_kind] = source_kind_counts.get(source_kind, 0) + 1
 
     return {
         "total_runs": total_runs,
         "status_counts": status_counts,
         "workflow_counts": workflow_counts,
         "grounding_counts": grounding_counts,
+        "source_format_counts": source_format_counts,
+        "source_kind_counts": source_kind_counts,
         "approval_pending_count": sum(item["approval_pending_count"] for item in summaries),
         "approval_rejected_count": sum(item["approval_rejected_count"] for item in summaries),
         "unsupported_claim_count": sum(item["unsupported_claim_count"] for item in summaries),
+        "error_count": sum(item["error_count"] for item in summaries),
         "average_duration_ms": round(sum(durations) / len(durations)) if durations else None,
         "p95_duration_ms": _percentile(durations, 0.95),
         "estimated_cost": round(sum(item["estimated_cost"] for item in summaries), 6),
@@ -69,6 +85,22 @@ def execution_status(status: str) -> str:
     if status in {"grounded", "recovered"}:
         return "passed"
     return status
+
+
+def _legacy_source_format(metadata: dict[str, Any]) -> str:
+    source = metadata.get("source")
+    if source == "sample" or source == "agenttrace-live-sample":
+        return "agenttrace"
+    return "unknown"
+
+
+def _legacy_source_kind(metadata: dict[str, Any]) -> str:
+    source = metadata.get("source")
+    if source == "agenttrace-live-sample":
+        return "live_api"
+    if source == "sample":
+        return "trace_export"
+    return "unknown"
 
 
 def _approval_counts(trace: Trace) -> dict[str, int]:

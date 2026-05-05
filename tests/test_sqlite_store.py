@@ -31,6 +31,73 @@ class SQLiteTraceStoreTest(unittest.TestCase):
 
             verbose_timeline = saved.format_timeline(verbose=True)
             self.assertIn("at 2026-05-01T23:00:00.000Z", verbose_timeline)
+            self.assertEqual(saved.raw_payload["trace_id"], trace.trace_id)
+
+    def test_openai_raw_payload_round_trips(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = load_trace_file(
+                Path("examples/openai_agents/sample_trace_export.json"),
+                trace_format="openai-agents",
+            )
+
+            store.save_trace(trace)
+            saved = store.get_trace(trace.trace_id)
+
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved.raw_payload["id"], "oa_trace_support_triage_export")
+            self.assertEqual(saved.raw_payload["spans"][1]["type"], "model_call")
+
+    def test_list_trace_summaries_filters_by_source(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            agenttrace_trace = load_trace_file(Path("examples/support_triage/sample_trace.json"))
+            openai_trace = load_trace_file(
+                Path("examples/openai_agents/sample_trace_export.json"),
+                trace_format="openai-agents",
+            )
+
+            store.save_trace(agenttrace_trace)
+            store.save_trace(openai_trace)
+            result = store.list_trace_summaries(source_format="openai-agents", source_kind="trace_export")
+
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["items"][0]["trace_id"], openai_trace.trace_id)
+            self.assertEqual(result["items"][0]["source_format"], "openai-agents")
+            self.assertEqual(result["items"][0]["source_kind"], "trace_export")
+            self.assertIsNotNone(result["items"][0]["ingested_at"])
+
+    def test_list_trace_summaries_includes_error_count(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
+
+            store.save_trace(trace)
+            result = store.list_trace_summaries(status="failed")
+
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["items"][0]["error_count"], 1)
+
+    def test_list_trace_summaries_filters_by_errors(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            clean_trace = load_trace_file(Path("examples/support_triage/sample_trace.json"))
+            errored_trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
+
+            store.save_trace(clean_trace)
+            store.save_trace(errored_trace)
+            with_errors = store.list_trace_summaries(has_errors=True)
+            without_errors = store.list_trace_summaries(has_errors=False)
+
+            self.assertEqual(with_errors["total"], 1)
+            self.assertEqual(with_errors["items"][0]["trace_id"], errored_trace.trace_id)
+            self.assertEqual(without_errors["total"], 1)
+            self.assertEqual(without_errors["items"][0]["trace_id"], clean_trace.trace_id)
 
     def test_list_traces(self) -> None:
         with TemporaryDirectory() as temp_dir:

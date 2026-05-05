@@ -62,6 +62,9 @@ class SQLiteTraceStore:
                     workflow_name TEXT NOT NULL,
                     group_id TEXT,
                     status TEXT NOT NULL,
+                    source_format TEXT NOT NULL DEFAULT 'unknown',
+                    source_kind TEXT NOT NULL DEFAULT 'unknown',
+                    ingested_at TEXT,
                     started_at TEXT,
                     ended_at TEXT,
                     duration_ms INTEGER,
@@ -69,6 +72,7 @@ class SQLiteTraceStore:
                     input_tokens INTEGER NOT NULL,
                     output_tokens INTEGER NOT NULL,
                     estimated_cost REAL NOT NULL,
+                    error_count INTEGER NOT NULL DEFAULT 0,
                     approval_total_count INTEGER NOT NULL,
                     approval_pending_count INTEGER NOT NULL,
                     approval_approved_count INTEGER NOT NULL,
@@ -80,6 +84,16 @@ class SQLiteTraceStore:
                 """
             )
             connection.commit()
+            _ensure_columns(
+                connection,
+                "trace_summaries",
+                {
+                    "source_format": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "ingested_at": "TEXT",
+                    "error_count": "INTEGER NOT NULL DEFAULT 0",
+                },
+            )
         self._backfill_trace_summaries()
 
     def save_trace(self, trace: Trace) -> None:
@@ -100,7 +114,7 @@ class SQLiteTraceStore:
                     _to_json(trace.metadata),
                     serialize_datetime(trace.started_at),
                     serialize_datetime(trace.ended_at),
-                    _to_json(trace.to_dict()),
+                    _to_json(trace.raw_payload or trace.to_dict()),
                 ),
             )
             connection.execute("DELETE FROM spans WHERE trace_id = ?", (trace.trace_id,))
@@ -119,11 +133,12 @@ class SQLiteTraceStore:
                 """
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
-                    span_count, input_tokens, output_tokens, estimated_cost,
+                    source_format, source_kind, ingested_at,
+                    span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -147,7 +162,7 @@ class SQLiteTraceStore:
                     _to_json(trace.metadata),
                     serialize_datetime(trace.started_at),
                     serialize_datetime(trace.ended_at),
-                    _to_json(trace.to_dict()),
+                    _to_json(trace.raw_payload or trace.to_dict()),
                 ),
             )
             connection.commit()
@@ -199,6 +214,7 @@ class SQLiteTraceStore:
             group_id=trace.group_id,
             status=next_status,
             metadata=trace.metadata,
+            raw_payload=trace.raw_payload,
             started_at=trace.started_at,
             ended_at=next_ended_at,
             spans=trace.spans,
@@ -207,10 +223,10 @@ class SQLiteTraceStore:
             connection.execute(
                 """
                 UPDATE traces
-                SET status = ?, ended_at = ?, raw_json = ?
+                SET status = ?, ended_at = ?
                 WHERE trace_id = ?
                 """,
-                (updated.status, serialize_datetime(updated.ended_at), _to_json(updated.to_dict()), trace_id),
+                (updated.status, serialize_datetime(updated.ended_at), trace_id),
             )
             connection.commit()
         self._save_trace_summary(updated)
@@ -232,6 +248,7 @@ class SQLiteTraceStore:
                 group_id=row["group_id"],
                 status=row["status"],
                 metadata=_from_json(row["metadata_json"]) or {},
+                raw_payload=None,
                 started_at=parse_datetime(row["started_at"]),
                 ended_at=parse_datetime(row["ended_at"]),
                 spans=[],
@@ -248,6 +265,9 @@ class SQLiteTraceStore:
         workflow_name: str | None = None,
         approval_status: str | None = None,
         grounding_status: str | None = None,
+        source_format: str | None = None,
+        source_kind: str | None = None,
+        has_errors: bool | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
     ) -> dict[str, Any]:
@@ -258,6 +278,9 @@ class SQLiteTraceStore:
             workflow_name=workflow_name,
             approval_status=approval_status,
             grounding_status=grounding_status,
+            source_format=source_format,
+            source_kind=source_kind,
+            has_errors=has_errors,
             started_after=started_after,
             started_before=started_before,
         )
@@ -303,7 +326,7 @@ class SQLiteTraceStore:
         with closing(self._connect()) as connection:
             trace_row = connection.execute(
                 """
-                SELECT trace_id, workflow_name, group_id, status, metadata_json, started_at, ended_at
+                SELECT trace_id, workflow_name, group_id, status, metadata_json, started_at, ended_at, raw_json
                 FROM traces
                 WHERE trace_id = ?
                 """,
@@ -331,6 +354,7 @@ class SQLiteTraceStore:
             group_id=trace_row["group_id"],
             status=trace_row["status"],
             metadata=_from_json(trace_row["metadata_json"]) or {},
+            raw_payload=_from_json(trace_row["raw_json"]),
             started_at=parse_datetime(trace_row["started_at"]),
             ended_at=parse_datetime(trace_row["ended_at"]),
             spans=spans,
@@ -386,11 +410,12 @@ class SQLiteTraceStore:
                 """
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
-                    span_count, input_tokens, output_tokens, estimated_cost,
+                    source_format, source_kind, ingested_at,
+                    span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -404,6 +429,10 @@ class SQLiteTraceStore:
                 FROM traces t
                 LEFT JOIN trace_summaries s ON s.trace_id = t.trace_id
                 WHERE s.trace_id IS NULL
+                   OR s.source_format = 'unknown'
+                   OR s.source_kind = 'unknown'
+                   OR s.ingested_at IS NULL
+                   OR s.error_count IS NULL
                 """
             ).fetchall()
         for row in rows:
@@ -471,10 +500,14 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["started_at"],
         summary["ended_at"],
         summary["duration_ms"],
+        summary["source_format"],
+        summary["source_kind"],
+        summary["ingested_at"],
         summary["span_count"],
         summary["input_tokens"],
         summary["output_tokens"],
         summary["estimated_cost"],
+        summary["error_count"],
         summary["approval_total_count"],
         summary["approval_pending_count"],
         summary["approval_approved_count"],
@@ -490,6 +523,9 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "workflow_name": row["workflow_name"],
         "group_id": row["group_id"],
         "status": execution_status(row["status"]),
+        "source_format": row["source_format"],
+        "source_kind": row["source_kind"],
+        "ingested_at": row["ingested_at"],
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
         "duration_ms": row["duration_ms"],
@@ -497,6 +533,7 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "input_tokens": row["input_tokens"],
         "output_tokens": row["output_tokens"],
         "estimated_cost": row["estimated_cost"],
+        "error_count": row["error_count"],
         "approval_total_count": row["approval_total_count"],
         "approval_pending_count": row["approval_pending_count"],
         "approval_approved_count": row["approval_approved_count"],
@@ -512,6 +549,9 @@ def _summary_filters(
     workflow_name: str | None,
     approval_status: str | None,
     grounding_status: str | None,
+    source_format: str | None,
+    source_kind: str | None,
+    has_errors: bool | None,
     started_after: str | None,
     started_before: str | None,
 ) -> tuple[str, tuple[Any, ...]]:
@@ -539,6 +579,16 @@ def _summary_filters(
     if grounding_status:
         clauses.append("grounding_status = ?")
         params.append(grounding_status)
+    if source_format:
+        clauses.append("source_format = ?")
+        params.append(source_format)
+    if source_kind:
+        clauses.append("source_kind = ?")
+        params.append(source_kind)
+    if has_errors is True:
+        clauses.append("error_count > 0")
+    elif has_errors is False:
+        clauses.append("error_count = 0")
     if started_after:
         clauses.append("started_at >= ?")
         params.append(started_after)
@@ -548,3 +598,11 @@ def _summary_filters(
     if not clauses:
         return "", tuple(params)
     return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _ensure_columns(connection: sqlite3.Connection, table_name: str, columns: dict[str, str]) -> None:
+    existing = {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    for column_name, column_type in columns.items():
+        if column_name not in existing:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+    connection.commit()
