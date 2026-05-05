@@ -28,6 +28,8 @@ class TraceSummaryTest(unittest.TestCase):
         self.assertEqual(summary["unsupported_claim_count"], 1)
         self.assertEqual(summary["workflow_counts"], {"support-triage": 2})
         self.assertEqual(summary["status_counts"], {"passed": 2})
+        self.assertEqual(summary["source_format_counts"], {"agenttrace": 2})
+        self.assertEqual(summary["source_kind_counts"], {"trace_export": 2})
 
 
 if __name__ == "__main__":

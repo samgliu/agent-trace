@@ -378,6 +378,50 @@ h2 {
   color: #172026;
 }
 
+.sourceSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.sourceBreakdown {
+  min-width: 0;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.sourceBreakdown small {
+  display: block;
+  margin-bottom: 9px;
+  color: #637179;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sourceBreakdown div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.sourceBreakdown span {
+  padding: 5px 8px;
+  color: #3e4a50;
+  background: #f5f7f8;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sourceBreakdown strong {
+  margin-left: 4px;
+  color: #172026;
+}
+
 .traceRecord {
   padding-top: 2px;
 }
@@ -1052,6 +1096,7 @@ h3 {
   .workspace,
   .metricGrid,
   .fleetSummary,
+  .sourceSummary,
   .executiveSummary,
   .summaryFacts {
     grid-template-columns: 1fr;

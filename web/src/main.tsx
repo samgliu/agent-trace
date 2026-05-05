@@ -116,6 +116,8 @@ type DashboardSummary = {
   status_counts: Record<string, number>;
   workflow_counts: Record<string, number>;
   grounding_counts: Record<string, number>;
+  source_format_counts: Record<string, number>;
+  source_kind_counts: Record<string, number>;
   approval_pending_count: number;
   approval_rejected_count: number;
   unsupported_claim_count: number;
@@ -461,7 +463,39 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
       </div>
+      <div className="sourceSummary">
+        <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
+        <SourceBreakdown title="Ingest format" counts={summary.source_kind_counts} labelForValue={sourceKindLabel} />
+      </div>
     </section>
+  );
+}
+
+function SourceBreakdown({
+  title,
+  counts,
+  labelForValue,
+}: {
+  title: string;
+  counts: Record<string, number>;
+  labelForValue: (value: string) => string;
+}) {
+  const entries = Object.entries(counts).sort((left, right) => right[1] - left[1]);
+  return (
+    <div className="sourceBreakdown">
+      <small>{title}</small>
+      <div>
+        {entries.length > 0 ? (
+          entries.map(([value, count]) => (
+            <span key={value}>
+              {labelForValue(value)} <strong>{count}</strong>
+            </span>
+          ))
+        ) : (
+          <span>None <strong>0</strong></span>
+        )}
+      </div>
+    </div>
   );
 }
 
