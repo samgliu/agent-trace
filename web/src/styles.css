@@ -705,6 +705,12 @@ h3 {
   cursor: pointer;
 }
 
+.quickLinks.errorLinks button {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
 .spanDetail {
   margin: 0 16px 16px;
   border: 1px solid #dce4e8;

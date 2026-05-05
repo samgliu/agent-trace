@@ -64,6 +64,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         grounding_status: str | None = None,
         source_format: str | None = None,
         source_kind: str | None = None,
+        has_errors: bool | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
     ) -> dict[str, Any]:
@@ -76,6 +77,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             grounding_status=grounding_status,
             source_format=source_format,
             source_kind=source_kind,
+            has_errors=has_errors,
             started_after=started_after,
             started_before=started_before,
         )

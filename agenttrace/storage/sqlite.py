@@ -267,6 +267,7 @@ class SQLiteTraceStore:
         grounding_status: str | None = None,
         source_format: str | None = None,
         source_kind: str | None = None,
+        has_errors: bool | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
     ) -> dict[str, Any]:
@@ -279,6 +280,7 @@ class SQLiteTraceStore:
             grounding_status=grounding_status,
             source_format=source_format,
             source_kind=source_kind,
+            has_errors=has_errors,
             started_after=started_after,
             started_before=started_before,
         )
@@ -549,6 +551,7 @@ def _summary_filters(
     grounding_status: str | None,
     source_format: str | None,
     source_kind: str | None,
+    has_errors: bool | None,
     started_after: str | None,
     started_before: str | None,
 ) -> tuple[str, tuple[Any, ...]]:
@@ -582,6 +585,10 @@ def _summary_filters(
     if source_kind:
         clauses.append("source_kind = ?")
         params.append(source_kind)
+    if has_errors is True:
+        clauses.append("error_count > 0")
+    elif has_errors is False:
+        clauses.append("error_count = 0")
     if started_after:
         clauses.append("started_at >= ?")
         params.append(started_after)

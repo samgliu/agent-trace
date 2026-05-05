@@ -138,6 +138,7 @@ type TraceFilters = {
   workflowName: string;
   sourceFormat: string;
   sourceKind: string;
+  errorStatus: string;
   approvalStatus: string;
   groundingStatus: string;
   timeRange: string;
@@ -175,6 +176,7 @@ function App() {
     workflowName: "",
     sourceFormat: "",
     sourceKind: "",
+    errorStatus: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
@@ -558,6 +560,14 @@ function TraceFiltersPanel({
         </select>
       </label>
       <label>
+        <span>Errors</span>
+        <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
+          <option value="">Any</option>
+          <option value="true">Has errors</option>
+          <option value="false">No errors</option>
+        </select>
+      </label>
+      <label>
         <span>Approval</span>
         <select
           value={filters.approvalStatus}
@@ -825,6 +835,7 @@ function AnalysisPanel({
   const approvals = spans.filter((span) => span.span_type === "approval");
   const pendingApprovals = approvals.filter((span) => getApprovalStatus(span.span_type, span.span_data)?.isPending);
   const handoffs = spans.filter((span) => span.span_type === "handoff");
+  const erroredSpans = spans.filter((span) => span.error);
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
   return (
@@ -843,6 +854,7 @@ function AnalysisPanel({
         <Insight icon={<Wrench size={16} />} label="MCP tools" value={`${mcpSpans.length} calls captured`} />
         <Insight icon={<ShieldCheck size={16} />} label="Guardrails" value={`${guardrails.length} validation span`} />
         <Insight icon={<UserCheck size={16} />} label="Approvals" value={`${pendingApprovals.length} waiting · ${approvals.length} total`} />
+        <Insight icon={<AlertCircle size={16} />} label="Errors" value={`${erroredSpans.length} errored span`} />
         <Insight icon={<CircleDollarSign size={16} />} label="Most expensive" value={metrics.most_expensive_span?.name ?? "-"} />
       </div>
       <ApprovalQueue approvals={approvals} onSelectSpan={onSelectSpan} onApprovalAction={onApprovalAction} />
@@ -862,6 +874,16 @@ function AnalysisPanel({
         <div className="quickLinks">
           <small>MCP tool calls</small>
           {mcpSpans.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {erroredSpans.length > 0 ? (
+        <div className="quickLinks errorLinks">
+          <small>Errored spans</small>
+          {erroredSpans.map((span) => (
             <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
               {span.name}
             </button>
@@ -1169,6 +1191,7 @@ function filterQuery(filters: TraceFilters): string {
   if (filters.status) params.set("status", filters.status);
   if (filters.sourceFormat) params.set("source_format", filters.sourceFormat);
   if (filters.sourceKind) params.set("source_kind", filters.sourceKind);
+  if (filters.errorStatus) params.set("has_errors", filters.errorStatus);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
   const startedAfter = startedAfterForRange(filters.timeRange);
@@ -1183,6 +1206,7 @@ function emptyFilters(): TraceFilters {
     workflowName: "",
     sourceFormat: "",
     sourceKind: "",
+    errorStatus: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
