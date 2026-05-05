@@ -13,11 +13,17 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
     metrics = build_trace_metrics(trace)
     grounding = build_grounding_summary(trace)
     approvals = _approval_counts(trace)
+    source_format = trace.metadata.get("source_format")
+    source_kind = trace.metadata.get("source_kind")
+    ingested_at = trace.metadata.get("ingested_at")
     return {
         "trace_id": trace.trace_id,
         "workflow_name": trace.workflow_name,
         "group_id": trace.group_id,
         "status": execution_status(trace.status),
+        "source_format": str(source_format) if source_format else "unknown",
+        "source_kind": str(source_kind) if source_kind else "unknown",
+        "ingested_at": str(ingested_at) if ingested_at else None,
         "started_at": serialize_datetime(trace.started_at),
         "ended_at": serialize_datetime(trace.ended_at),
         "duration_ms": trace.duration_ms,

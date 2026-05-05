@@ -116,6 +116,8 @@ GET /traces?status=passed
 GET /traces?workflow_name=support-triage
 GET /traces?approval_status=pending
 GET /traces?grounding_status=recovered
+GET /traces?source_format=openai-agents
+GET /traces?source_kind=live_api
 GET /traces?started_after=2026-05-01T00:00:00Z
 ```
 

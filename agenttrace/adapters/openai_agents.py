@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from agenttrace.core.models import Span, Trace, parse_datetime
+from agenttrace.core.provenance import enrich_source_metadata
 
 
 SPAN_TYPE_MAP = {
@@ -46,7 +47,11 @@ def _normalize_trace_export(payload: dict[str, Any]) -> Trace:
         workflow_name=_string_value(payload, "workflow_name", "name", "trace_name", default="unknown"),
         group_id=payload.get("group_id"),
         status=_string_value(payload, "status", default="unknown"),
-        metadata=dict(payload.get("metadata") or {}),
+        metadata=enrich_source_metadata(
+            dict(payload.get("metadata") or {}),
+            source_format="openai-agents",
+            source_kind="trace_export",
+        ),
         raw_payload=payload,
         started_at=parse_datetime(payload.get("started_at")),
         ended_at=parse_datetime(payload.get("ended_at")),
@@ -104,7 +109,11 @@ def _normalize_event_stream(payload: dict[str, Any]) -> Trace:
         workflow_name=trace.workflow_name,
         group_id=trace.group_id,
         status=trace.status,
-        metadata=trace.metadata,
+        metadata=enrich_source_metadata(
+            trace.metadata,
+            source_format="openai-agents",
+            source_kind="event_stream",
+        ),
         raw_payload=payload,
         started_at=trace.started_at,
         ended_at=trace.ended_at,

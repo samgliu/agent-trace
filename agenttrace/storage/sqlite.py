@@ -62,6 +62,9 @@ class SQLiteTraceStore:
                     workflow_name TEXT NOT NULL,
                     group_id TEXT,
                     status TEXT NOT NULL,
+                    source_format TEXT NOT NULL DEFAULT 'unknown',
+                    source_kind TEXT NOT NULL DEFAULT 'unknown',
+                    ingested_at TEXT,
                     started_at TEXT,
                     ended_at TEXT,
                     duration_ms INTEGER,
@@ -80,6 +83,15 @@ class SQLiteTraceStore:
                 """
             )
             connection.commit()
+            _ensure_columns(
+                connection,
+                "trace_summaries",
+                {
+                    "source_format": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "ingested_at": "TEXT",
+                },
+            )
         self._backfill_trace_summaries()
 
     def save_trace(self, trace: Trace) -> None:
@@ -119,11 +131,12 @@ class SQLiteTraceStore:
                 """
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
+                    source_format, source_kind, ingested_at,
                     span_count, input_tokens, output_tokens, estimated_cost,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -250,6 +263,8 @@ class SQLiteTraceStore:
         workflow_name: str | None = None,
         approval_status: str | None = None,
         grounding_status: str | None = None,
+        source_format: str | None = None,
+        source_kind: str | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
     ) -> dict[str, Any]:
@@ -260,6 +275,8 @@ class SQLiteTraceStore:
             workflow_name=workflow_name,
             approval_status=approval_status,
             grounding_status=grounding_status,
+            source_format=source_format,
+            source_kind=source_kind,
             started_after=started_after,
             started_before=started_before,
         )
@@ -389,11 +406,12 @@ class SQLiteTraceStore:
                 """
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
+                    source_format, source_kind, ingested_at,
                     span_count, input_tokens, output_tokens, estimated_cost,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -407,6 +425,9 @@ class SQLiteTraceStore:
                 FROM traces t
                 LEFT JOIN trace_summaries s ON s.trace_id = t.trace_id
                 WHERE s.trace_id IS NULL
+                   OR s.source_format = 'unknown'
+                   OR s.source_kind = 'unknown'
+                   OR s.ingested_at IS NULL
                 """
             ).fetchall()
         for row in rows:
@@ -474,6 +495,9 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["started_at"],
         summary["ended_at"],
         summary["duration_ms"],
+        summary["source_format"],
+        summary["source_kind"],
+        summary["ingested_at"],
         summary["span_count"],
         summary["input_tokens"],
         summary["output_tokens"],
@@ -493,6 +517,9 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "workflow_name": row["workflow_name"],
         "group_id": row["group_id"],
         "status": execution_status(row["status"]),
+        "source_format": row["source_format"],
+        "source_kind": row["source_kind"],
+        "ingested_at": row["ingested_at"],
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
         "duration_ms": row["duration_ms"],
@@ -515,6 +542,8 @@ def _summary_filters(
     workflow_name: str | None,
     approval_status: str | None,
     grounding_status: str | None,
+    source_format: str | None,
+    source_kind: str | None,
     started_after: str | None,
     started_before: str | None,
 ) -> tuple[str, tuple[Any, ...]]:
@@ -542,6 +571,12 @@ def _summary_filters(
     if grounding_status:
         clauses.append("grounding_status = ?")
         params.append(grounding_status)
+    if source_format:
+        clauses.append("source_format = ?")
+        params.append(source_format)
+    if source_kind:
+        clauses.append("source_kind = ?")
+        params.append(source_kind)
     if started_after:
         clauses.append("started_at >= ?")
         params.append(started_after)
@@ -551,3 +586,11 @@ def _summary_filters(
     if not clauses:
         return "", tuple(params)
     return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _ensure_columns(connection: sqlite3.Connection, table_name: str, columns: dict[str, str]) -> None:
+    existing = {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    for column_name, column_type in columns.items():
+        if column_name not in existing:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+    connection.commit()

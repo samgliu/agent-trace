@@ -24,6 +24,9 @@ class OpenAIAgentsAdapterTest(unittest.TestCase):
         self.assertEqual(trace.spans[3].span_type, "handoff")
         self.assertEqual(trace.spans[4].span_type, "guardrail")
         self.assertEqual(trace.raw_payload["id"], "oa_trace_support_triage_export")
+        self.assertEqual(trace.metadata["source_format"], "openai-agents")
+        self.assertEqual(trace.metadata["source_kind"], "trace_export")
+        self.assertIn("ingested_at", trace.metadata)
 
     def test_normalizes_usage_aliases(self) -> None:
         trace = normalize_openai_agents_trace(
@@ -58,6 +61,8 @@ class OpenAIAgentsAdapterTest(unittest.TestCase):
 
         self.assertEqual(trace.trace_id, "oa_trace_support_triage_events")
         self.assertEqual(trace.status, "passed")
+        self.assertEqual(trace.metadata["source_format"], "openai-agents")
+        self.assertEqual(trace.metadata["source_kind"], "event_stream")
         self.assertEqual(len(trace.spans), 2)
         self.assertEqual(trace.spans[0].span_type, "agent")
         self.assertEqual(trace.spans[1].span_type, "function_tool")

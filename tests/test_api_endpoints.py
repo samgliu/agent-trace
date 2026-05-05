@@ -82,6 +82,22 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["total"], 2)
 
+    def test_list_traces_filters_by_source(self) -> None:
+        trace = load_trace_file(
+            Path("examples/openai_agents/sample_trace_export.json"),
+            trace_format="openai-agents",
+        )
+        self.store.save_trace(trace)
+
+        response = self.client.get("/traces?source_format=openai-agents&source_kind=trace_export")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], "oa_trace_support_triage_export")
+        self.assertEqual(payload["items"][0]["source_format"], "openai-agents")
+        self.assertEqual(payload["items"][0]["source_kind"], "trace_export")
+
     def test_list_workflows(self) -> None:
         response = self.client.get("/workflows")
 
@@ -139,6 +155,9 @@ class ApiEndpointsTest(unittest.TestCase):
         )
 
         self.assertEqual(trace_response.status_code, 200)
+        self.assertEqual(trace_response.json()["metadata"]["source_format"], "agenttrace")
+        self.assertEqual(trace_response.json()["metadata"]["source_kind"], "live_api")
+        self.assertIn("ingested_at", trace_response.json()["metadata"])
         self.assertEqual(span_response.status_code, 200)
         self.assertEqual(lifecycle_response.status_code, 200)
         self.assertEqual(lifecycle_response.json()["status"], "passed")
@@ -162,6 +181,9 @@ class ApiEndpointsTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["trace_id"], "oa_trace_support_triage_export")
         self.assertEqual(len(body["spans"]), 5)
+        self.assertEqual(body["metadata"]["source_format"], "openai-agents")
+        self.assertEqual(body["metadata"]["source_kind"], "trace_export")
+        self.assertIn("ingested_at", body["metadata"])
 
         raw_response = self.client.get("/traces/oa_trace_support_triage_export/raw")
         self.assertEqual(raw_response.status_code, 200)

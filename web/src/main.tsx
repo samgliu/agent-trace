@@ -20,6 +20,7 @@ import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildSpanFacts } from "./utils/spanFacts";
+import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -29,6 +30,9 @@ type TraceSummary = {
   workflow_name: string;
   group_id: string | null;
   status: string;
+  source_format: string;
+  source_kind: string;
+  ingested_at: string | null;
   started_at: string | null;
   ended_at: string | null;
   duration_ms: number | null;
@@ -67,6 +71,7 @@ type Span = {
 };
 
 type TraceDetail = TraceSummary & {
+  metadata: Record<string, unknown>;
   spans: Span[];
 };
 
@@ -124,6 +129,8 @@ type DashboardSummary = {
 type TraceFilters = {
   status: string;
   workflowName: string;
+  sourceFormat: string;
+  sourceKind: string;
   approvalStatus: string;
   groundingStatus: string;
   timeRange: string;
@@ -159,6 +166,8 @@ function App() {
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
+    sourceFormat: "",
+    sourceKind: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
@@ -398,6 +407,10 @@ function Shell({ children, status, error }: { children?: React.ReactNode; status
 }
 
 function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; executionStatus: string }) {
+  const sourceFormat = stringMetadata(trace.metadata.source_format);
+  const sourceKind = stringMetadata(trace.metadata.source_kind);
+  const ingestedAt = stringMetadata(trace.metadata.ingested_at);
+
   return (
     <section className="traceHeader">
       <div>
@@ -406,6 +419,9 @@ function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; execution
       </div>
       <div className="traceMeta">
         <span>Execution: {executionStatus}</span>
+        {sourceFormat ? <span>Source: {sourceLabel(sourceFormat)}</span> : null}
+        {sourceKind ? <span>Format: {sourceKindLabel(sourceKind)}</span> : null}
+        {ingestedAt ? <span>Ingested: {ingestedAt}</span> : null}
         <span>{formatDuration(trace.duration_ms)}</span>
       </div>
     </section>
@@ -485,6 +501,23 @@ function TraceFiltersPanel({
         </select>
       </label>
       <label>
+        <span>Source</span>
+        <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
+          <option value="">Any</option>
+          <option value="agenttrace">AgentTrace</option>
+          <option value="openai-agents">OpenAI Agents</option>
+        </select>
+      </label>
+      <label>
+        <span>Format</span>
+        <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
+          <option value="">Any</option>
+          <option value="trace_export">Trace export</option>
+          <option value="event_stream">Event stream</option>
+          <option value="live_api">Live API</option>
+        </select>
+      </label>
+      <label>
         <span>Approval</span>
         <select
           value={filters.approvalStatus}
@@ -529,6 +562,8 @@ function TraceBadges({ trace }: { trace: TraceSummary }) {
   return (
     <div className="traceBadges">
       <span className={`chip status ${statusTone(trace.status)}`}>Status: {executionStatus(trace.status)}</span>
+      <span className="chip neutral">{sourceLabel(trace.source_format)}</span>
+      <span className="chip neutral">{sourceKindLabel(trace.source_kind)}</span>
       {trace.grounding_status !== trace.status ? (
         <span className={`chip grounding ${groundingTone(trace.grounding_status)}`}>Grounding: {trace.grounding_status}</span>
       ) : null}
@@ -1083,6 +1118,8 @@ function filterQuery(filters: TraceFilters): string {
   params.set("offset", String(filters.offset));
   if (filters.workflowName) params.set("workflow_name", filters.workflowName);
   if (filters.status) params.set("status", filters.status);
+  if (filters.sourceFormat) params.set("source_format", filters.sourceFormat);
+  if (filters.sourceKind) params.set("source_kind", filters.sourceKind);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
   const startedAfter = startedAfterForRange(filters.timeRange);
@@ -1095,6 +1132,8 @@ function emptyFilters(): TraceFilters {
   return {
     status: "",
     workflowName: "",
+    sourceFormat: "",
+    sourceKind: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",

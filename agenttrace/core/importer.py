@@ -8,6 +8,7 @@ from typing import Any
 
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
 from agenttrace.core.models import Trace
+from agenttrace.core.provenance import with_source_metadata
 
 
 def load_trace_file(path: Path, *, trace_format: str = "agenttrace") -> Trace:
@@ -20,4 +21,5 @@ def normalize_trace(payload: dict[str, Any], *, trace_format: str = "agenttrace"
     """Normalize an OpenAI-style trace payload into AgentTrace's model."""
     if trace_format == "openai-agents":
         return normalize_openai_agents_trace(payload)
-    return Trace.from_dict(payload)
+    trace = Trace.from_dict(payload)
+    return with_source_metadata(trace, source_format="agenttrace", source_kind="trace_export")

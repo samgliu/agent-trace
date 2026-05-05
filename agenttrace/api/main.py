@@ -16,6 +16,7 @@ from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
 from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Span, Trace
+from agenttrace.core.provenance import with_source_metadata
 from agenttrace.core.summary import build_dashboard_summary
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
@@ -61,6 +62,8 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         workflow_name: str | None = None,
         approval_status: str | None = Query(None, pattern="^(pending|approved|rejected|none)$"),
         grounding_status: str | None = None,
+        source_format: str | None = None,
+        source_kind: str | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
     ) -> dict[str, Any]:
@@ -71,13 +74,19 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             workflow_name=workflow_name,
             approval_status=approval_status,
             grounding_status=grounding_status,
+            source_format=source_format,
+            source_kind=source_kind,
             started_after=started_after,
             started_before=started_before,
         )
 
     @app.post("/traces")
     def ingest_trace(payload: TraceIngestRequest) -> dict[str, Any]:
-        trace = normalize_trace(payload.model_dump())
+        trace = with_source_metadata(
+            normalize_trace(payload.model_dump()),
+            source_format="agenttrace",
+            source_kind="live_api",
+        )
         trace_store.upsert_trace(trace)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
