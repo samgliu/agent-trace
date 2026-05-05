@@ -3,6 +3,7 @@ from pathlib import Path
 
 from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.importer import load_trace_file
+from agenttrace.core.models import Span, Trace
 
 
 class ApiMetricsTest(unittest.TestCase):
@@ -19,3 +20,25 @@ class ApiMetricsTest(unittest.TestCase):
         self.assertEqual(metrics["output_tokens"], 316)
         self.assertEqual(metrics["estimated_cost"], 0.0034)
         self.assertEqual(metrics["slowest_span"]["name"], "Supervisor Agent")
+
+    def test_build_trace_metrics_counts_errors(self) -> None:
+        trace = Trace(
+            trace_id="trace_with_error",
+            workflow_name="support-triage",
+            status="failed",
+            spans=[
+                Span(
+                    span_id="span_model_error",
+                    trace_id="trace_with_error",
+                    name="Policy Agent",
+                    span_type="generation",
+                    error={"message": "model timeout"},
+                )
+            ],
+        )
+
+        metrics = build_trace_metrics(trace)
+
+        self.assertEqual(metrics["error_count"], 1)
+        self.assertEqual(metrics["errored_span_count"], 1)
+        self.assertEqual(metrics["spans_with_errors"][0]["span_id"], "span_model_error")

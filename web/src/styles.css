@@ -317,9 +317,16 @@ h2 {
   font-weight: 800;
 }
 
+.spanMeta .errorBadge {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+  font-weight: 800;
+}
+
 .metricGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -361,7 +368,7 @@ h2 {
 
 .fleetSummary {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
 }
 
@@ -607,6 +614,16 @@ h3 {
 .spanRow.approvalPending:hover,
 .spanRow.approvalPending.selected {
   background: #fff0c4;
+}
+
+.spanRow.errored {
+  background: #fff0ed;
+  border-left: 4px solid #9b2c2c;
+}
+
+.spanRow.errored:hover,
+.spanRow.errored.selected {
+  background: #ffe4df;
 }
 
 .spanType {

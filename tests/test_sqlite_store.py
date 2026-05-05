@@ -70,6 +70,31 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(result["items"][0]["source_kind"], "trace_export")
             self.assertIsNotNone(result["items"][0]["ingested_at"])
 
+    def test_list_trace_summaries_includes_error_count(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = Trace(
+                trace_id="trace_with_error",
+                workflow_name="support-triage",
+                status="failed",
+                spans=[
+                    Span(
+                        span_id="span_tool_error",
+                        trace_id="trace_with_error",
+                        name="lookup_customer",
+                        span_type="function_tool",
+                        error={"message": "timeout"},
+                    )
+                ],
+            )
+
+            store.save_trace(trace)
+            result = store.list_trace_summaries(status="failed")
+
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["items"][0]["error_count"], 1)
+
     def test_list_traces(self) -> None:
         with TemporaryDirectory() as temp_dir:
             store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")

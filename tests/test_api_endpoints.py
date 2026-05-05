@@ -115,6 +115,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["total_runs"], 2)
         self.assertEqual(payload["approval_pending_count"], 1)
         self.assertEqual(payload["unsupported_claim_count"], 1)
+        self.assertEqual(payload["error_count"], 0)
         self.assertEqual(payload["workflow_counts"]["support-triage"], 2)
         self.assertEqual(payload["status_counts"]["passed"], 2)
 

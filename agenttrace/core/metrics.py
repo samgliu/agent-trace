@@ -12,6 +12,7 @@ def build_trace_metrics(trace: Trace) -> dict[str, Any]:
     input_tokens = sum(span.input_tokens or 0 for span in spans)
     output_tokens = sum(span.output_tokens or 0 for span in spans)
     estimated_cost = sum(span.estimated_cost or 0 for span in spans)
+    spans_with_errors = [span for span in spans if span.error is not None]
     spans_by_type: dict[str, int] = {}
     for span in spans:
         spans_by_type[span.span_type] = spans_by_type.get(span.span_type, 0) + 1
@@ -29,6 +30,9 @@ def build_trace_metrics(trace: Trace) -> dict[str, Any]:
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "estimated_cost": round(estimated_cost, 6),
+        "error_count": len(spans_with_errors),
+        "errored_span_count": len(spans_with_errors),
+        "spans_with_errors": [_span_summary(span) for span in spans_with_errors],
         "slowest_span": _span_summary(slowest_span),
         "most_expensive_span": _span_summary(most_expensive_span),
     }

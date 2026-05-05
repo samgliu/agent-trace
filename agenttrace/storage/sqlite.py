@@ -72,6 +72,7 @@ class SQLiteTraceStore:
                     input_tokens INTEGER NOT NULL,
                     output_tokens INTEGER NOT NULL,
                     estimated_cost REAL NOT NULL,
+                    error_count INTEGER NOT NULL DEFAULT 0,
                     approval_total_count INTEGER NOT NULL,
                     approval_pending_count INTEGER NOT NULL,
                     approval_approved_count INTEGER NOT NULL,
@@ -90,6 +91,7 @@ class SQLiteTraceStore:
                     "source_format": "TEXT NOT NULL DEFAULT 'unknown'",
                     "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
                     "ingested_at": "TEXT",
+                    "error_count": "INTEGER NOT NULL DEFAULT 0",
                 },
             )
         self._backfill_trace_summaries()
@@ -132,11 +134,11 @@ class SQLiteTraceStore:
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
                     source_format, source_kind, ingested_at,
-                    span_count, input_tokens, output_tokens, estimated_cost,
+                    span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -407,11 +409,11 @@ class SQLiteTraceStore:
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
                     source_format, source_kind, ingested_at,
-                    span_count, input_tokens, output_tokens, estimated_cost,
+                    span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -428,6 +430,7 @@ class SQLiteTraceStore:
                    OR s.source_format = 'unknown'
                    OR s.source_kind = 'unknown'
                    OR s.ingested_at IS NULL
+                   OR s.error_count IS NULL
                 """
             ).fetchall()
         for row in rows:
@@ -502,6 +505,7 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["input_tokens"],
         summary["output_tokens"],
         summary["estimated_cost"],
+        summary["error_count"],
         summary["approval_total_count"],
         summary["approval_pending_count"],
         summary["approval_approved_count"],
@@ -527,6 +531,7 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "input_tokens": row["input_tokens"],
         "output_tokens": row["output_tokens"],
         "estimated_cost": row["estimated_cost"],
+        "error_count": row["error_count"],
         "approval_total_count": row["approval_total_count"],
         "approval_pending_count": row["approval_pending_count"],
         "approval_approved_count": row["approval_approved_count"],

@@ -40,6 +40,7 @@ type TraceSummary = {
   input_tokens: number;
   output_tokens: number;
   estimated_cost: number;
+  error_count: number;
   approval_total_count: number;
   approval_pending_count: number;
   approval_approved_count: number;
@@ -80,6 +81,9 @@ type Metrics = {
   input_tokens: number;
   output_tokens: number;
   estimated_cost: number;
+  error_count: number;
+  errored_span_count: number;
+  spans_with_errors: SpanSummary[];
   spans_by_type: Record<string, number>;
   slowest_span: SpanSummary | null;
   most_expensive_span: SpanSummary | null;
@@ -121,6 +125,7 @@ type DashboardSummary = {
   approval_pending_count: number;
   approval_rejected_count: number;
   unsupported_claim_count: number;
+  error_count: number;
   average_duration_ms: number | null;
   p95_duration_ms: number | null;
   estimated_cost: number;
@@ -459,6 +464,7 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
         <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Errors" value={String(summary.error_count)} />
         <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
         <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
@@ -603,6 +609,7 @@ function TraceBadges({ trace }: { trace: TraceSummary }) {
       ) : null}
       {trace.approval_pending_count > 0 ? <strong className="chip warning">Needs approval</strong> : null}
       {trace.approval_rejected_count > 0 ? <strong className="chip danger">Rejected</strong> : null}
+      {trace.error_count > 0 ? <strong className="chip danger">Errors: {trace.error_count}</strong> : null}
       {trace.estimated_cost > 0.01 ? <strong className="chip warning">High cost</strong> : null}
       {trace.duration_ms !== null && trace.duration_ms > 5000 ? <strong className="chip warning">Slow</strong> : null}
     </div>
@@ -633,6 +640,12 @@ function MetricGrid({ metrics, grounding }: { metrics: Metrics; grounding: Groun
         tone={grounding.unsupported_claim_count > 0 ? "warning" : "normal"}
       />
       <Metric icon={<Braces size={18} />} label="Tokens" value={formatTokens(metrics.input_tokens, metrics.output_tokens)} />
+      <Metric
+        icon={<AlertCircle size={18} />}
+        label="Errors"
+        value={String(metrics.error_count)}
+        tone={metrics.error_count > 0 ? "warning" : "normal"}
+      />
       <Metric icon={<CircleDollarSign size={18} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
     </section>
   );
@@ -752,6 +765,7 @@ function SpanRow({
     "spanRow",
     span.span_id === selectedSpanId ? "selected" : "",
     approvalStatus?.isPending ? "approvalPending" : "",
+    span.error ? "errored" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -769,6 +783,7 @@ function SpanRow({
         </div>
         <div className="spanMeta">
           {approvalStatus?.isPending ? <span className="approvalBadge">Needs approval</span> : null}
+          {span.error ? <span className="errorBadge">Error</span> : null}
           <span>{formatDuration(span.duration_ms)}</span>
           {span.input_tokens || span.output_tokens ? <span>{formatTokens(span.input_tokens ?? 0, span.output_tokens ?? 0)}</span> : null}
           {span.estimated_cost ? <span>{formatCost(span.estimated_cost)}</span> : null}
