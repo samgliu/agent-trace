@@ -217,3 +217,38 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             assert updated is not None
             self.assertEqual(updated.status, "passed")
             self.assertEqual(updated.duration_ms, 4000)
+
+    def test_chat_session_and_messages_round_trip(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+
+            session = store.create_chat_session(
+                customer_email="customer@example.com",
+                title="Billing issue",
+                metadata={"channel": "demo"},
+            )
+            user_message = store.add_chat_message(
+                session["session_id"],
+                role="user",
+                content="I was charged twice.",
+                trace_id="trace_chat_turn",
+            )
+            assistant_message = store.add_chat_message(
+                session["session_id"],
+                role="assistant",
+                content="I created a refund review.",
+                trace_id="trace_chat_turn",
+            )
+
+            saved_session = store.get_chat_session(session["session_id"])
+            messages = store.list_chat_messages(session["session_id"])
+
+            self.assertIsNotNone(saved_session)
+            assert saved_session is not None
+            self.assertEqual(saved_session["customer_email"], "customer@example.com")
+            self.assertEqual(saved_session["metadata"]["channel"], "demo")
+            self.assertEqual([message["role"] for message in messages], ["user", "assistant"])
+            self.assertEqual(messages[0]["message_id"], user_message["message_id"])
+            self.assertEqual(messages[1]["message_id"], assistant_message["message_id"])
+            self.assertEqual(messages[1]["trace_id"], "trace_chat_turn")

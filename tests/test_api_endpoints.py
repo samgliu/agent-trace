@@ -203,6 +203,38 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["metadata"]["source_format"], "agenttrace")
 
+    def test_chat_message_runs_agent_and_links_trace(self) -> None:
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "customer@example.com", "title": "Billing support"},
+        )
+        self.assertEqual(session_response.status_code, 200)
+        session = session_response.json()
+
+        message_response = self.client.post(
+            f"/chat/sessions/{session['session_id']}/messages",
+            json={"content": "I was charged twice for my Pro subscription yesterday. Can I get a refund?"},
+        )
+
+        self.assertEqual(message_response.status_code, 200)
+        payload = message_response.json()
+        self.assertEqual(payload["session"]["session_id"], session["session_id"])
+        self.assertEqual(payload["user_message"]["role"], "user")
+        self.assertEqual(payload["assistant_message"]["role"], "assistant")
+        self.assertEqual(payload["assistant_message"]["trace_id"], payload["trace"]["trace_id"])
+        self.assertEqual(payload["trace"]["metadata"]["chat_session_id"], session["session_id"])
+        self.assertEqual(payload["trace"]["metadata"]["chat_user_message_id"], payload["user_message"]["message_id"])
+        self.assertTrue(payload["assistant_message"]["content"])
+
+        messages = self.client.get(f"/chat/sessions/{session['session_id']}/messages")
+        self.assertEqual(messages.status_code, 200)
+        self.assertEqual([message["role"] for message in messages.json()], ["user", "assistant"])
+
+    def test_chat_message_missing_session_returns_404(self) -> None:
+        response = self.client.post("/chat/sessions/missing-session/messages", json={"content": "Hello"})
+
+        self.assertEqual(response.status_code, 404)
+
     def test_ingest_openai_agents_trace(self) -> None:
         with Path("examples/openai_agents/sample_trace_export.json").open("r", encoding="utf-8") as file:
             import json

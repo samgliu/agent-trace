@@ -130,6 +130,11 @@ Core endpoints:
 
 ```text
 GET    /health
+POST   /chat/sessions
+GET    /chat/sessions
+GET    /chat/sessions/{session_id}
+GET    /chat/sessions/{session_id}/messages
+POST   /chat/sessions/{session_id}/messages
 GET    /dashboard/summary
 GET    /workflows
 POST   /workflows/support-triage/runs
@@ -159,6 +164,29 @@ GET /traces?source_format=openai-agents
 GET /traces?source_kind=live_api
 GET /traces?has_errors=true
 GET /traces?started_after=2026-05-01T00:00:00Z
+```
+
+Create a monitored customer-service chat session:
+
+```bash
+curl -X POST http://localhost:8000/chat/sessions \
+  -H 'content-type: application/json' \
+  -d '{
+    "customer_email": "customer@example.com",
+    "title": "Billing support"
+  }'
+```
+
+Send a chat message. Each user message runs the support-triage agent workflow,
+stores the assistant reply, and links the assistant message to the generated
+trace:
+
+```bash
+curl -X POST http://localhost:8000/chat/sessions/{session_id}/messages \
+  -H 'content-type: application/json' \
+  -d '{
+    "content": "I was charged twice for my Pro subscription yesterday. Can I get a refund?"
+  }'
 ```
 
 Run the executable support-triage agents workflow:
