@@ -10,7 +10,15 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
+from agenttrace.api.schemas import (
+    ChatMessageCreateRequest,
+    ChatSessionCreateRequest,
+    SpanIngestRequest,
+    SupportTriageRunRequest,
+    TraceIngestRequest,
+    TraceLifecycleUpdateRequest,
+)
+from agenttrace.agents.support_triage import build_default_runner
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
@@ -53,6 +61,76 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     @app.get("/workflows")
     def list_workflows() -> list[str]:
         return sorted(trace_store.workflow_names())
+
+    @app.post("/chat/sessions")
+    def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
+        session = trace_store.create_chat_session(
+            customer_email=payload.customer_email,
+            title=payload.title,
+            metadata=payload.metadata,
+        )
+        return {**session, "messages": []}
+
+    @app.get("/chat/sessions")
+    def list_chat_sessions() -> list[dict[str, Any]]:
+        return trace_store.list_chat_sessions()
+
+    @app.get("/chat/sessions/{session_id}")
+    def get_chat_session(session_id: str) -> dict[str, Any]:
+        session = _require_chat_session(trace_store, session_id)
+        return {**session, "messages": trace_store.list_chat_messages(session_id)}
+
+    @app.get("/chat/sessions/{session_id}/messages")
+    def list_chat_messages(session_id: str) -> list[dict[str, Any]]:
+        _require_chat_session(trace_store, session_id)
+        return trace_store.list_chat_messages(session_id)
+
+    @app.post("/chat/sessions/{session_id}/messages")
+    def create_chat_message(session_id: str, payload: ChatMessageCreateRequest) -> dict[str, Any]:
+        session = _require_chat_session(trace_store, session_id)
+        user_message = trace_store.add_chat_message(
+            session_id,
+            role="user",
+            content=payload.content,
+        )
+        try:
+            trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+                message=payload.content,
+                customer_email=session["customer_email"],
+                trace_id=f"trace_chat_{user_message['message_id']}",
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        trace = _with_chat_metadata(trace, session_id=session_id, user_message_id=user_message["message_id"])
+        trace_store.save_trace(trace)
+        saved_trace = _require_trace(trace_store, trace.trace_id)
+        assistant_message = trace_store.add_chat_message(
+            session_id,
+            role="assistant",
+            content=_assistant_response_from_trace(saved_trace),
+            trace_id=saved_trace.trace_id,
+            metadata={"trace_status": saved_trace.status},
+        )
+        return {
+            "session": _require_chat_session(trace_store, session_id),
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "trace": saved_trace.to_dict(),
+        }
+
+    @app.post("/workflows/support-triage/runs")
+    def run_support_triage_workflow(payload: SupportTriageRunRequest) -> dict[str, Any]:
+        try:
+            trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+                message=payload.message,
+                customer_email=payload.customer_email,
+                trace_id=payload.trace_id,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        trace_store.save_trace(trace)
+        saved = _require_trace(trace_store, trace.trace_id)
+        return saved.to_dict()
 
     @app.get("/traces")
     def list_traces(
@@ -168,6 +246,41 @@ def _require_trace(store: SQLiteTraceStore, trace_id: str) -> Trace:
     if trace is None:
         raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")
     return trace
+
+
+def _require_chat_session(store: SQLiteTraceStore, session_id: str) -> dict[str, Any]:
+    session = store.get_chat_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+    return session
+
+
+def _with_chat_metadata(trace: Trace, *, session_id: str, user_message_id: str) -> Trace:
+    metadata = dict(trace.metadata)
+    metadata["chat_session_id"] = session_id
+    metadata["chat_user_message_id"] = user_message_id
+    return Trace(
+        trace_id=trace.trace_id,
+        workflow_name=trace.workflow_name,
+        group_id=trace.group_id,
+        status=trace.status,
+        metadata=metadata,
+        raw_payload=trace.raw_payload,
+        started_at=trace.started_at,
+        ended_at=trace.ended_at,
+        spans=trace.spans,
+    )
+
+
+def _assistant_response_from_trace(trace: Trace) -> str:
+    for span in reversed(trace.spans):
+        if span.span_type != "generation":
+            continue
+        if isinstance(span.output, dict) and span.output.get("response"):
+            return str(span.output["response"])
+    if trace.status == "failed":
+        return "I could not complete that support workflow. A support specialist should review this request."
+    return "I reviewed the request and created the next support action."
 
 
 def _update_approval_span(

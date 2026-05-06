@@ -49,3 +49,22 @@ class TraceLifecycleUpdateRequest(BaseModel):
     status: Literal["running", "passed", "failed", "cancelled", "recovered", "grounded"] | None = None
     ended_at: str | None = None
 
+
+class SupportTriageRunRequest(BaseModel):
+    message: str
+    customer_email: str
+    trace_id: str | None = None
+    use_openai: bool = False
+    openai_api: Literal["chat_completions", "responses"] = "chat_completions"
+
+
+class ChatSessionCreateRequest(BaseModel):
+    customer_email: str
+    title: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatMessageCreateRequest(BaseModel):
+    content: str
+    use_openai: bool = False
+    openai_api: Literal["chat_completions", "responses"] = "chat_completions"

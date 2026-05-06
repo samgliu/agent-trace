@@ -9,14 +9,22 @@ import {
   CircleDollarSign,
   Clock3,
   GitBranch,
+  MessageSquare,
   Network,
   RotateCcw,
+  Send,
   ShieldCheck,
   UserCheck,
   Wrench
 } from "lucide-react";
 import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
+import {
+  createChatSession,
+  sendChatMessage,
+  type ChatMessage,
+  type ChatSession,
+} from "./utils/chat";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildSpanFacts } from "./utils/spanFacts";
@@ -171,6 +179,9 @@ function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
+  const [chatSession, setChatSession] = useState<ChatSession | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
@@ -259,6 +270,33 @@ function App() {
     setRefreshKey((value) => value + 1);
   }
 
+  async function submitChatTurn(input: ChatInput) {
+    setChatStatus({ status: "submitting" });
+    try {
+      const session =
+        chatSession ??
+        (await createChatSession(apiPostJson, {
+          customerEmail: input.customerEmail,
+          title: "Customer support",
+        }));
+      if (!chatSession) {
+        setChatSession(session);
+      }
+      const result = await sendChatMessage<TraceDetail>(apiPostJson, session.session_id, {
+        content: input.message,
+        useOpenAI: input.useOpenAI,
+      });
+      setChatSession(result.session);
+      setChatMessages((messages) => [...messages, result.user_message, result.assistant_message]);
+      setSelectedTraceId(result.trace.trace_id);
+      setSelectedSpanId(result.trace.spans[0]?.span_id ?? null);
+      setRefreshKey((value) => value + 1);
+      setChatStatus({ status: "idle" });
+    } catch (error) {
+      setChatStatus({ status: "error", message: error instanceof Error ? error.message : "Unknown chat error" });
+    }
+  }
+
   if (state.status === "loading") {
     return <Shell status="Loading traces" />;
   }
@@ -284,6 +322,12 @@ function App() {
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
+            <ChatMonitor
+              session={chatSession}
+              messages={chatMessages}
+              status={chatStatus}
+              onSubmit={submitChatTurn}
+            />
             <EmptyRunsState onClearFilters={() => setFilters(emptyFilters())} />
           </main>
         </div>
@@ -308,6 +352,12 @@ function App() {
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
+          <ChatMonitor
+            session={chatSession}
+            messages={chatMessages}
+            status={chatStatus}
+            onSubmit={submitChatTurn}
+          />
           <section className="traceRecord">
             <TraceHeader trace={state.selectedTrace} executionStatus={executionStatus(state.selectedTrace.status)} />
             <ExecutiveSummaryPanel trace={state.selectedTrace} metrics={state.metrics} grounding={state.grounding} />
@@ -412,6 +462,95 @@ function Shell({ children, status, error }: { children?: React.ReactNode; status
       </header>
       {error ? <div className="errorPanel">{error}</div> : children}
     </div>
+  );
+}
+
+type ChatStatus = { status: "idle" } | { status: "submitting" } | { status: "error"; message: string };
+
+type ChatInput = {
+  customerEmail: string;
+  message: string;
+  useOpenAI: boolean;
+};
+
+function ChatMonitor({
+  session,
+  messages,
+  status,
+  onSubmit,
+}: {
+  session: ChatSession | null;
+  messages: ChatMessage[];
+  status: ChatStatus;
+  onSubmit: (input: ChatInput) => Promise<void>;
+}) {
+  const [customerEmail, setCustomerEmail] = useState("customer@example.com");
+  const [message, setMessage] = useState("I was charged twice for my Pro subscription yesterday. Can I get a refund?");
+  const [useOpenAI, setUseOpenAI] = useState(false);
+  const isSubmitting = status.status === "submitting";
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedMessage = message.trim();
+    const trimmedEmail = customerEmail.trim();
+    if (!trimmedMessage || !trimmedEmail || isSubmitting) {
+      return;
+    }
+    await onSubmit({ customerEmail: trimmedEmail, message: trimmedMessage, useOpenAI });
+    setMessage("");
+  }
+
+  return (
+    <section className="chatMonitor">
+      <div className="chatHeader">
+        <div>
+          <small>Live customer-service agent</small>
+          <h2>Chat monitor</h2>
+        </div>
+        <span>{session ? session.session_id : "No session"}</span>
+      </div>
+      <div className="chatBody">
+        <form className="chatComposer" onSubmit={submit}>
+          <label>
+            <span>Customer email</span>
+            <input
+              value={customerEmail}
+              onChange={(event) => setCustomerEmail(event.target.value)}
+              disabled={Boolean(session) || isSubmitting}
+            />
+          </label>
+          <label className="chatMessageInput">
+            <span>Message</span>
+            <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={isSubmitting} />
+          </label>
+          <label className="chatToggle">
+            <input type="checkbox" checked={useOpenAI} onChange={(event) => setUseOpenAI(event.target.checked)} />
+            <span>Use OpenAI-compatible LLM</span>
+          </label>
+          <button type="submit" disabled={isSubmitting || !message.trim()}>
+            {isSubmitting ? <Activity size={15} /> : <Send size={15} />}
+            Send
+          </button>
+          {status.status === "error" ? <p className="chatError">{status.message}</p> : null}
+        </form>
+        <div className="chatThread">
+          {messages.length === 0 ? (
+            <div className="chatEmpty">
+              <MessageSquare size={18} />
+              <span>Send a customer message to generate a monitored trace.</span>
+            </div>
+          ) : (
+            messages.map((chatMessage) => (
+              <div className={`chatBubble ${chatMessage.role}`} key={chatMessage.message_id}>
+                <small>{chatMessage.role}</small>
+                <p>{chatMessage.content}</p>
+                {chatMessage.trace_id ? <span>Trace: {chatMessage.trace_id}</span> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1233,6 +1372,18 @@ function startedAfterForRange(value: string): string | null {
 async function postJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status} ${response.statusText}`);

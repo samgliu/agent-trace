@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +85,33 @@ class SQLiteTraceStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    customer_email TEXT NOT NULL,
+                    title TEXT,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    message_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    trace_id TEXT,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES chat_sessions(session_id),
+                    FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
+                )
+                """
+            )
             connection.commit()
             _ensure_columns(
                 connection,
@@ -95,6 +124,132 @@ class SQLiteTraceStore:
                 },
             )
         self._backfill_trace_summaries()
+
+    def create_chat_session(
+        self,
+        *,
+        customer_email: str,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        now = _utc_now()
+        session = {
+            "session_id": session_id or f"chat_{uuid.uuid4().hex[:12]}",
+            "customer_email": customer_email,
+            "title": title,
+            "metadata": metadata or {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO chat_sessions (
+                    session_id, customer_email, title, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session["session_id"],
+                    session["customer_email"],
+                    session["title"],
+                    _to_json(session["metadata"]),
+                    session["created_at"],
+                    session["updated_at"],
+                ),
+            )
+            connection.commit()
+        return session
+
+    def get_chat_session(self, session_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT session_id, customer_email, title, metadata_json, created_at, updated_at
+                FROM chat_sessions
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _chat_session_from_row(row)
+
+    def list_chat_sessions(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT session_id, customer_email, title, metadata_json, created_at, updated_at
+                FROM chat_sessions
+                ORDER BY updated_at DESC
+                """
+            ).fetchall()
+        return [_chat_session_from_row(row) for row in rows]
+
+    def add_chat_message(
+        self,
+        session_id: str,
+        *,
+        role: str,
+        content: str,
+        trace_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        message_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self.get_chat_session(session_id) is None:
+            raise ValueError(f"Chat session not found: {session_id}")
+        now = _utc_now()
+        message = {
+            "message_id": message_id or f"msg_{uuid.uuid4().hex[:12]}",
+            "session_id": session_id,
+            "role": role,
+            "content": content,
+            "trace_id": trace_id,
+            "metadata": metadata or {},
+            "created_at": now,
+        }
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO chat_messages (
+                    message_id, session_id, role, content, trace_id, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message["message_id"],
+                    message["session_id"],
+                    message["role"],
+                    message["content"],
+                    message["trace_id"],
+                    _to_json(message["metadata"]),
+                    message["created_at"],
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE chat_sessions
+                SET updated_at = ?
+                WHERE session_id = ?
+                """,
+                (now, session_id),
+            )
+            connection.commit()
+        return message
+
+    def list_chat_messages(self, session_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT message_id, session_id, role, content, trace_id, metadata_json, created_at
+                FROM chat_messages
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_chat_message_from_row(row) for row in rows]
 
     def save_trace(self, trace: Trace) -> None:
         with closing(self._connect()) as connection:
@@ -541,6 +696,33 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "grounding_status": row["grounding_status"],
         "unsupported_claim_count": row["unsupported_claim_count"],
     }
+
+
+def _chat_session_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "session_id": row["session_id"],
+        "customer_email": row["customer_email"],
+        "title": row["title"],
+        "metadata": _from_json(row["metadata_json"]) or {},
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _chat_message_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "message_id": row["message_id"],
+        "session_id": row["session_id"],
+        "role": row["role"],
+        "content": row["content"],
+        "trace_id": row["trace_id"],
+        "metadata": _from_json(row["metadata_json"]) or {},
+        "created_at": row["created_at"],
+    }
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _summary_filters(
