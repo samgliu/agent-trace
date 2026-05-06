@@ -613,6 +613,36 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.chatTraceLink {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 5px 8px;
+  color: #185f52;
+  background: #f1faf7;
+  border: 1px solid #c7e1d8;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.chatTraceLink:hover {
+  background: #e4f4ef;
+}
+
+.chatTraceLink strong {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  color: #195d34;
+  background: #dff3e6;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
 .traceRecord {
   padding-top: 2px;
 }

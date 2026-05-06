@@ -23,6 +23,7 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
         "status": execution_status(trace.status),
         "source_format": str(source_format) if source_format else "unknown",
         "source_kind": str(source_kind) if source_kind else "unknown",
+        "metadata": trace.metadata,
         "ingested_at": str(ingested_at) if ingested_at else None,
         "started_at": serialize_datetime(trace.started_at),
         "ended_at": serialize_datetime(trace.ended_at),

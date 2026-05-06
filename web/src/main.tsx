@@ -25,6 +25,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from "./utils/chat";
+import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildSpanFacts } from "./utils/spanFacts";
@@ -55,6 +56,7 @@ type TraceSummary = {
   approval_rejected_count: number;
   grounding_status: string;
   unsupported_claim_count: number;
+  metadata?: Record<string, unknown>;
 };
 
 type TraceListResponse = {
@@ -181,6 +183,7 @@ function App() {
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [chatSession, setChatSession] = useState<ChatSession | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [latestChatTraceId, setLatestChatTraceId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
@@ -288,6 +291,7 @@ function App() {
       });
       setChatSession(result.session);
       setChatMessages((messages) => [...messages, result.user_message, result.assistant_message]);
+      setLatestChatTraceId(result.trace.trace_id);
       setSelectedTraceId(result.trace.trace_id);
       setSelectedSpanId(result.trace.spans[0]?.span_id ?? null);
       setRefreshKey((value) => value + 1);
@@ -315,6 +319,8 @@ function App() {
             selectedTraceId={null}
             filters={filters}
             workflows={state.workflows}
+            activeChatSessionId={chatSession?.session_id ?? null}
+            latestChatTraceId={latestChatTraceId}
             onFiltersChange={setFilters}
             onSelectTrace={setSelectedTraceId}
             onClearSelection={() => setSelectedSpanId(null)}
@@ -326,6 +332,8 @@ function App() {
               session={chatSession}
               messages={chatMessages}
               status={chatStatus}
+              latestTraceId={latestChatTraceId}
+              onSelectTrace={setSelectedTraceId}
               onSubmit={submitChatTurn}
             />
             <EmptyRunsState onClearFilters={() => setFilters(emptyFilters())} />
@@ -344,6 +352,8 @@ function App() {
           selectedTraceId={state.selectedTrace.trace_id}
           filters={filters}
           workflows={state.workflows}
+          activeChatSessionId={chatSession?.session_id ?? null}
+          latestChatTraceId={latestChatTraceId}
           onFiltersChange={setFilters}
           onSelectTrace={setSelectedTraceId}
           onClearSelection={() => setSelectedSpanId(null)}
@@ -356,6 +366,8 @@ function App() {
             session={chatSession}
             messages={chatMessages}
             status={chatStatus}
+            latestTraceId={latestChatTraceId}
+            onSelectTrace={setSelectedTraceId}
             onSubmit={submitChatTurn}
           />
           <section className="traceRecord">
@@ -391,6 +403,8 @@ function RunsSidebar({
   selectedTraceId,
   filters,
   workflows,
+  activeChatSessionId,
+  latestChatTraceId,
   onFiltersChange,
   onSelectTrace,
   onClearSelection,
@@ -401,6 +415,8 @@ function RunsSidebar({
   selectedTraceId: string | null;
   filters: TraceFilters;
   workflows: string[];
+  activeChatSessionId: string | null;
+  latestChatTraceId: string | null;
   onFiltersChange: (filters: TraceFilters) => void;
   onSelectTrace: (traceId: string) => void;
   onClearSelection: () => void;
@@ -425,7 +441,11 @@ function RunsSidebar({
           >
             <span>{trace.workflow_name}</span>
             <small>{trace.trace_id}</small>
-            <TraceBadges trace={trace} />
+            <TraceBadges
+              trace={trace}
+              isChatTurn={isChatTrace(trace, activeChatSessionId)}
+              isLatestChatTrace={isLatestChatTrace(trace.trace_id, latestChatTraceId)}
+            />
           </button>
         ))}
       </div>
@@ -477,11 +497,15 @@ function ChatMonitor({
   session,
   messages,
   status,
+  latestTraceId,
+  onSelectTrace,
   onSubmit,
 }: {
   session: ChatSession | null;
   messages: ChatMessage[];
   status: ChatStatus;
+  latestTraceId: string | null;
+  onSelectTrace: (traceId: string) => void;
   onSubmit: (input: ChatInput) => Promise<void>;
 }) {
   const [customerEmail, setCustomerEmail] = useState("customer@example.com");
@@ -544,7 +568,12 @@ function ChatMonitor({
               <div className={`chatBubble ${chatMessage.role}`} key={chatMessage.message_id}>
                 <small>{chatMessage.role}</small>
                 <p>{chatMessage.content}</p>
-                {chatMessage.trace_id ? <span>Trace: {chatMessage.trace_id}</span> : null}
+                {chatMessage.trace_id ? (
+                  <button className="chatTraceLink" type="button" onClick={() => onSelectTrace(chatMessage.trace_id!)}>
+                    Trace: {chatMessage.trace_id}
+                    {chatMessage.trace_id === latestTraceId ? <strong>Latest</strong> : null}
+                  </button>
+                ) : null}
               </div>
             ))
           )}
@@ -747,9 +776,23 @@ function TraceFiltersPanel({
   );
 }
 
-function TraceBadges({ trace }: { trace: TraceSummary }) {
+function TraceBadges({
+  trace,
+  isChatTurn,
+  isLatestChatTrace,
+}: {
+  trace: TraceSummary;
+  isChatTurn: boolean;
+  isLatestChatTrace: boolean;
+}) {
+  const chatBadges = chatTurnBadges(trace, { isChatTurn, isLatest: isLatestChatTrace });
   return (
     <div className="traceBadges">
+      {chatBadges.map((badge) => (
+        <strong className={badge === "Latest" ? "chip success" : "chip neutral"} key={badge}>
+          {badge}
+        </strong>
+      ))}
       <span className={`chip status ${statusTone(trace.status)}`}>Status: {executionStatus(trace.status)}</span>
       <span className="chip neutral">{sourceLabel(trace.source_format)}</span>
       <span className="chip neutral">{sourceKindLabel(trace.source_kind)}</span>

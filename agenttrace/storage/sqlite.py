@@ -66,6 +66,7 @@ class SQLiteTraceStore:
                     status TEXT NOT NULL,
                     source_format TEXT NOT NULL DEFAULT 'unknown',
                     source_kind TEXT NOT NULL DEFAULT 'unknown',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     ingested_at TEXT,
                     started_at TEXT,
                     ended_at TEXT,
@@ -119,6 +120,7 @@ class SQLiteTraceStore:
                 {
                     "source_format": "TEXT NOT NULL DEFAULT 'unknown'",
                     "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
                     "ingested_at": "TEXT",
                     "error_count": "INTEGER NOT NULL DEFAULT 0",
                 },
@@ -289,11 +291,12 @@ class SQLiteTraceStore:
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
                     source_format, source_kind, ingested_at,
+                    metadata_json,
                     span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -566,11 +569,12 @@ class SQLiteTraceStore:
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
                     source_format, source_kind, ingested_at,
+                    metadata_json,
                     span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -658,6 +662,7 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["source_format"],
         summary["source_kind"],
         summary["ingested_at"],
+        _to_json(summary["metadata"]),
         summary["span_count"],
         summary["input_tokens"],
         summary["output_tokens"],
@@ -680,6 +685,7 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "status": execution_status(row["status"]),
         "source_format": row["source_format"],
         "source_kind": row["source_kind"],
+        "metadata": _from_json(row["metadata_json"]) or {},
         "ingested_at": row["ingested_at"],
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
