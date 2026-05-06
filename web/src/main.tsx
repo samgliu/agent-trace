@@ -21,6 +21,8 @@ import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import {
   createChatSession,
+  getChatSession,
+  listChatSessions,
   sendChatMessage,
   type ChatMessage,
   type ChatSession,
@@ -152,6 +154,7 @@ type TraceFilters = {
   approvalStatus: string;
   groundingStatus: string;
   timeRange: string;
+  currentChatOnly: boolean;
   offset: number;
 };
 
@@ -182,6 +185,7 @@ function App() {
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [chatSession, setChatSession] = useState<ChatSession | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [latestChatTraceId, setLatestChatTraceId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
@@ -194,6 +198,7 @@ function App() {
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
+    currentChatOnly: false,
     offset: 0,
   });
   const [refreshKey, setRefreshKey] = useState(0);
@@ -206,12 +211,16 @@ function App() {
   }, []);
 
   useEffect(() => {
+    loadChatSessions();
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
         const [traceList, dashboard, workflows] = await Promise.all([
-          fetchJson<TraceListResponse>(`/traces${filterQuery(filters)}`),
+          fetchJson<TraceListResponse>(`/traces${filterQuery(filters, chatSession?.session_id ?? null)}`),
           fetchJson<DashboardSummary>("/dashboard/summary"),
           fetchJson<string[]>("/workflows"),
         ]);
@@ -263,7 +272,38 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTraceId, filters, refreshKey]);
+  }, [selectedTraceId, filters, refreshKey, chatSession?.session_id]);
+
+  async function loadChatSessions() {
+    try {
+      setChatSessions(await listChatSessions(fetchJson));
+    } catch {
+      setChatSessions([]);
+    }
+  }
+
+  async function openChatSession(sessionId: string) {
+    if (!sessionId) {
+      startNewChatSession();
+      return;
+    }
+    setChatStatus({ status: "idle" });
+    const session = await getChatSession(fetchJson, sessionId);
+    setChatSession(session);
+    setChatMessages(session.messages);
+    setLatestChatTraceId(latestTraceFromMessages(session.messages));
+    setRefreshKey((value) => value + 1);
+  }
+
+  function startNewChatSession() {
+    setChatSession(null);
+    setChatMessages([]);
+    setLatestChatTraceId(null);
+    setChatStatus({ status: "idle" });
+    if (filters.currentChatOnly) {
+      setFilters({ ...filters, currentChatOnly: false, offset: 0 });
+    }
+  }
 
   async function updateApproval(spanId: string, action: ApprovalAction) {
     if (state.status !== "ready") {
@@ -284,12 +324,14 @@ function App() {
         }));
       if (!chatSession) {
         setChatSession(session);
+        setChatSessions((sessions) => upsertChatSession(sessions, session));
       }
       const result = await sendChatMessage<TraceDetail>(apiPostJson, session.session_id, {
         content: input.message,
         useOpenAI: input.useOpenAI,
       });
       setChatSession(result.session);
+      setChatSessions((sessions) => upsertChatSession(sessions, result.session));
       setChatMessages((messages) => [...messages, result.user_message, result.assistant_message]);
       setLatestChatTraceId(result.trace.trace_id);
       setSelectedTraceId(result.trace.trace_id);
@@ -317,9 +359,9 @@ function App() {
             traces={state.traces}
             traceTotal={state.traceTotal}
             selectedTraceId={null}
-            filters={filters}
-            workflows={state.workflows}
-            activeChatSessionId={chatSession?.session_id ?? null}
+              filters={filters}
+              workflows={state.workflows}
+              activeChatSessionId={chatSession?.session_id ?? null}
             latestChatTraceId={latestChatTraceId}
             onFiltersChange={setFilters}
             onSelectTrace={setSelectedTraceId}
@@ -330,9 +372,12 @@ function App() {
             <DashboardSummaryPanel summary={state.dashboard} />
             <ChatMonitor
               session={chatSession}
+              sessions={chatSessions}
               messages={chatMessages}
               status={chatStatus}
               latestTraceId={latestChatTraceId}
+              onSelectSession={openChatSession}
+              onNewSession={startNewChatSession}
               onSelectTrace={setSelectedTraceId}
               onSubmit={submitChatTurn}
             />
@@ -364,9 +409,12 @@ function App() {
           <DashboardSummaryPanel summary={state.dashboard} />
           <ChatMonitor
             session={chatSession}
+            sessions={chatSessions}
             messages={chatMessages}
             status={chatStatus}
             latestTraceId={latestChatTraceId}
+            onSelectSession={openChatSession}
+            onNewSession={startNewChatSession}
             onSelectTrace={setSelectedTraceId}
             onSubmit={submitChatTurn}
           />
@@ -429,7 +477,12 @@ function RunsSidebar({
   return (
     <aside className="sidebar">
       <div className="sidebarHeader">Runs Inbox</div>
-      <TraceFiltersPanel filters={filters} workflows={workflows} onChange={onFiltersChange} />
+      <TraceFiltersPanel
+        filters={filters}
+        workflows={workflows}
+        activeChatSessionId={activeChatSessionId}
+        onChange={onFiltersChange}
+      />
       <div className="runsCount">{traceTotal} matching runs</div>
       <div className="traceList">
         {traces.map((trace) => (
@@ -495,16 +548,22 @@ type ChatInput = {
 
 function ChatMonitor({
   session,
+  sessions,
   messages,
   status,
   latestTraceId,
+  onSelectSession,
+  onNewSession,
   onSelectTrace,
   onSubmit,
 }: {
   session: ChatSession | null;
+  sessions: ChatSession[];
   messages: ChatMessage[];
   status: ChatStatus;
   latestTraceId: string | null;
+  onSelectSession: (sessionId: string) => Promise<void>;
+  onNewSession: () => void;
   onSelectTrace: (traceId: string) => void;
   onSubmit: (input: ChatInput) => Promise<void>;
 }) {
@@ -531,7 +590,19 @@ function ChatMonitor({
           <small>Live customer-service agent</small>
           <h2>Chat monitor</h2>
         </div>
-        <span>{session ? session.session_id : "No session"}</span>
+        <div className="chatSessionControls">
+          <select value={session?.session_id ?? ""} onChange={(event) => onSelectSession(event.target.value)}>
+            <option value="">New session</option>
+            {sessions.map((chatSession) => (
+              <option value={chatSession.session_id} key={chatSession.session_id}>
+                {chatSession.title ?? chatSession.customer_email} · {chatSession.customer_email}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={onNewSession}>
+            New
+          </button>
+        </div>
       </div>
       <div className="chatBody">
         <form className="chatComposer" onSubmit={submit}>
@@ -678,100 +749,132 @@ function SourceBreakdown({
 function TraceFiltersPanel({
   filters,
   workflows,
+  activeChatSessionId,
   onChange,
 }: {
   filters: TraceFilters;
   workflows: string[];
+  activeChatSessionId: string | null;
   onChange: (filters: TraceFilters) => void;
 }) {
   function update(next: Partial<TraceFilters>) {
     onChange({ ...filters, ...next, offset: 0 });
   }
 
+  const activeCount = activeFilterCount(filters);
+
   return (
     <div className="traceFilters">
-      <label>
-        <span>Workflow</span>
-        <select value={filters.workflowName} onChange={(event) => update({ workflowName: event.target.value })}>
-          <option value="">Any</option>
-          {workflows.map((workflow) => (
-            <option value={workflow} key={workflow}>
-              {workflow}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <span>Status</span>
-        <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
-          <option value="">Any</option>
-          <option value="passed">Passed</option>
-          <option value="failed">Failed</option>
-          <option value="running">Running</option>
-        </select>
-      </label>
-      <label>
-        <span>Source</span>
-        <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
-          <option value="">Any</option>
-          <option value="agenttrace">AgentTrace</option>
-          <option value="openai-agents">OpenAI Agents</option>
-        </select>
-      </label>
-      <label>
-        <span>Format</span>
-        <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
-          <option value="">Any</option>
-          <option value="trace_export">Trace export</option>
-          <option value="event_stream">Event stream</option>
-          <option value="live_api">Live API</option>
-        </select>
-      </label>
-      <label>
-        <span>Errors</span>
-        <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
-          <option value="">Any</option>
-          <option value="true">Has errors</option>
-          <option value="false">No errors</option>
-        </select>
-      </label>
-      <label>
-        <span>Approval</span>
-        <select
-          value={filters.approvalStatus}
-          onChange={(event) => update({ approvalStatus: event.target.value })}
-        >
-          <option value="">Any</option>
-          <option value="pending">Needs approval</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-          <option value="none">No approval</option>
-        </select>
-      </label>
-      <label>
-        <span>Grounding</span>
-        <select
-          value={filters.groundingStatus}
-          onChange={(event) => update({ groundingStatus: event.target.value })}
-        >
-          <option value="">Any</option>
-          <option value="grounded">Grounded</option>
-          <option value="recovered">Recovered</option>
-          <option value="failed">Failed</option>
-        </select>
-      </label>
-      <label>
-        <span>Time range</span>
-        <select value={filters.timeRange} onChange={(event) => update({ timeRange: event.target.value })}>
-          <option value="">Any time</option>
-          <option value="15m">Last 15 minutes</option>
-          <option value="1h">Last hour</option>
-          <option value="24h">Last 24 hours</option>
-        </select>
-      </label>
-      <button type="button" onClick={() => onChange(emptyFilters())}>
-        Clear
-      </button>
+      <div className="filterHeader">
+        <span>Filters</span>
+        {activeCount > 0 ? <strong>{activeCount}</strong> : null}
+        <button type="button" onClick={() => onChange(emptyFilters())} disabled={activeCount === 0}>
+          Clear
+        </button>
+      </div>
+      <details className="filterGroup" open>
+        <summary>Run</summary>
+        <div className="filterFields">
+          <label>
+            <span>Workflow</span>
+            <select value={filters.workflowName} onChange={(event) => update({ workflowName: event.target.value })}>
+              <option value="">Any</option>
+              {workflows.map((workflow) => (
+                <option value={workflow} key={workflow}>
+                  {workflow}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
+              <option value="">Any</option>
+              <option value="passed">Passed</option>
+              <option value="failed">Failed</option>
+              <option value="running">Running</option>
+            </select>
+          </label>
+          <label className="inlineFilter">
+            <input
+              type="checkbox"
+              checked={filters.currentChatOnly}
+              disabled={!activeChatSessionId}
+              onChange={(event) => update({ currentChatOnly: event.target.checked })}
+            />
+            <span>Current chat only</span>
+          </label>
+        </div>
+      </details>
+      <details className="filterGroup">
+        <summary>Signals</summary>
+        <div className="filterFields">
+          <label>
+            <span>Errors</span>
+            <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
+              <option value="">Any</option>
+              <option value="true">Has errors</option>
+              <option value="false">No errors</option>
+            </select>
+          </label>
+          <label>
+            <span>Approval</span>
+            <select
+              value={filters.approvalStatus}
+              onChange={(event) => update({ approvalStatus: event.target.value })}
+            >
+              <option value="">Any</option>
+              <option value="pending">Needs approval</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="none">No approval</option>
+            </select>
+          </label>
+          <label>
+            <span>Grounding</span>
+            <select
+              value={filters.groundingStatus}
+              onChange={(event) => update({ groundingStatus: event.target.value })}
+            >
+              <option value="">Any</option>
+              <option value="grounded">Grounded</option>
+              <option value="recovered">Recovered</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+        </div>
+      </details>
+      <details className="filterGroup">
+        <summary>Source</summary>
+        <div className="filterFields">
+          <label>
+            <span>Source</span>
+            <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
+              <option value="">Any</option>
+              <option value="agenttrace">AgentTrace</option>
+              <option value="openai-agents">OpenAI Agents</option>
+            </select>
+          </label>
+          <label>
+            <span>Format</span>
+            <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
+              <option value="">Any</option>
+              <option value="trace_export">Trace export</option>
+              <option value="event_stream">Event stream</option>
+              <option value="live_api">Live API</option>
+            </select>
+          </label>
+          <label>
+            <span>Time range</span>
+            <select value={filters.timeRange} onChange={(event) => update({ timeRange: event.target.value })}>
+              <option value="">Any time</option>
+              <option value="15m">Last 15 minutes</option>
+              <option value="1h">Last hour</option>
+              <option value="24h">Last 24 hours</option>
+            </select>
+          </label>
+        </div>
+      </details>
     </div>
   );
 }
@@ -1365,7 +1468,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function filterQuery(filters: TraceFilters): string {
+function filterQuery(filters: TraceFilters, activeChatSessionId: string | null): string {
   const params = new URLSearchParams();
   params.set("limit", "50");
   params.set("offset", String(filters.offset));
@@ -1376,6 +1479,7 @@ function filterQuery(filters: TraceFilters): string {
   if (filters.errorStatus) params.set("has_errors", filters.errorStatus);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
+  if (filters.currentChatOnly && activeChatSessionId) params.set("chat_session_id", activeChatSessionId);
   const startedAfter = startedAfterForRange(filters.timeRange);
   if (startedAfter) params.set("started_after", startedAfter);
   const query = params.toString();
@@ -1392,8 +1496,36 @@ function emptyFilters(): TraceFilters {
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
+    currentChatOnly: false,
     offset: 0,
   };
+}
+
+function activeFilterCount(filters: TraceFilters): number {
+  return [
+    filters.workflowName,
+    filters.status,
+    filters.sourceFormat,
+    filters.sourceKind,
+    filters.errorStatus,
+    filters.approvalStatus,
+    filters.groundingStatus,
+    filters.timeRange,
+    filters.currentChatOnly ? "current-chat" : "",
+  ].filter(Boolean).length;
+}
+
+function latestTraceFromMessages(messages: ChatMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const traceId = messages[index].trace_id;
+    if (traceId) return traceId;
+  }
+  return null;
+}
+
+function upsertChatSession(sessions: ChatSession[], session: ChatSession): ChatSession[] {
+  const next = sessions.filter((item) => item.session_id !== session.session_id);
+  return [session, ...next];
 }
 
 function executionStatus(status: string): string {

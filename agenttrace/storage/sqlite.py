@@ -425,6 +425,7 @@ class SQLiteTraceStore:
         grounding_status: str | None = None,
         source_format: str | None = None,
         source_kind: str | None = None,
+        chat_session_id: str | None = None,
         has_errors: bool | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
@@ -438,6 +439,7 @@ class SQLiteTraceStore:
             grounding_status=grounding_status,
             source_format=source_format,
             source_kind=source_kind,
+            chat_session_id=chat_session_id,
             has_errors=has_errors,
             started_after=started_after,
             started_before=started_before,
@@ -739,6 +741,7 @@ def _summary_filters(
     grounding_status: str | None,
     source_format: str | None,
     source_kind: str | None,
+    chat_session_id: str | None,
     has_errors: bool | None,
     started_after: str | None,
     started_before: str | None,
@@ -773,6 +776,9 @@ def _summary_filters(
     if source_kind:
         clauses.append("source_kind = ?")
         params.append(source_kind)
+    if chat_session_id:
+        clauses.append("metadata_json LIKE ? ESCAPE '\\'")
+        params.append(f'%"chat_session_id": "{_escape_like(chat_session_id)}"%')
     if has_errors is True:
         clauses.append("error_count > 0")
     elif has_errors is False:
@@ -786,6 +792,10 @@ def _summary_filters(
     if not clauses:
         return "", tuple(params)
     return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _ensure_columns(connection: sqlite3.Connection, table_name: str, columns: dict[str, str]) -> None:

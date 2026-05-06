@@ -98,6 +98,20 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["source_format"], "openai-agents")
         self.assertEqual(payload["items"][0]["source_kind"], "trace_export")
 
+    def test_list_traces_filters_by_chat_session(self) -> None:
+        self.trace.metadata["chat_session_id"] = "chat_1"
+        self.store.save_trace(self.trace)
+        other_trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        other_trace.metadata["chat_session_id"] = "chat_2"
+        self.store.save_trace(other_trace)
+
+        response = self.client.get("/traces?chat_session_id=chat_1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], self.trace.trace_id)
+
     def test_list_traces_filters_by_errors(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
         self.store.save_trace(trace)

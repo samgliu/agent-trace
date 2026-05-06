@@ -25,6 +25,19 @@ export type ChatTurnResponse<Trace = unknown> = {
 };
 
 export type ChatTransport = <T>(path: string, body?: unknown) => Promise<T>;
+export type ChatGetTransport = <T>(path: string) => Promise<T>;
+
+export type ChatSessionDetail = ChatSession & {
+  messages: ChatMessage[];
+};
+
+export function listChatSessions(transport: ChatGetTransport): Promise<ChatSession[]> {
+  return transport("/chat/sessions");
+}
+
+export function getChatSession(transport: ChatGetTransport, sessionId: string): Promise<ChatSessionDetail> {
+  return transport(`/chat/sessions/${sessionId}`);
+}
 
 export function createChatSession(
   transport: ChatTransport,
