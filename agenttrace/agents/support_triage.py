@@ -740,6 +740,18 @@ def _working_memory(message: str, customer_email: str, triage: dict[str, Any]) -
 
 def _customer_memory(customer: dict[str, Any]) -> dict[str, Any]:
     customer_id = str(customer.get("customer_id") or "unknown")
+    if not customer.get("found"):
+        memory = {
+            "memory_id": "mem_unknown_legacy_note",
+            "summary": "Legacy unverified note says the customer may prefer phone support.",
+            "source": "support_history",
+        }
+        return {
+            "memories": [memory],
+            "relevance_score": 0.42,
+            "memory_age_seconds": 86400 * 180,
+            "used_in_response": False,
+        }
     if customer.get("annual_price_usd", 0) > 500:
         memory = {
             "memory_id": f"mem_{customer_id}_annual_refund",

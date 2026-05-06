@@ -31,6 +31,7 @@ import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
+import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
 import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
@@ -1164,6 +1165,7 @@ function AnalysisPanel({
   const memorySpans = spans.filter((span) => span.span_type === "memory_read" || span.span_type === "memory_write");
   const memoryReads = memorySpans.filter((span) => span.span_type === "memory_read").length;
   const memoryWrites = memorySpans.filter((span) => span.span_type === "memory_write").length;
+  const memorySummary = buildMemorySummary(spans);
   const erroredSpans = spans.filter((span) => span.error);
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
@@ -1189,6 +1191,7 @@ function AnalysisPanel({
       </div>
       <ApprovalQueue approvals={approvals} onSelectSpan={onSelectSpan} onApprovalAction={onApprovalAction} />
       <GroundingPanel grounding={grounding} onSelectSpan={onSelectSpan} />
+      <MemoryPanel summary={memorySummary} onSelectSpan={onSelectSpan} />
       <div className="typeBreakdown">
         {Object.entries(metrics.spans_by_type).map(([type, count]) => (
           <div key={type} className="typeBar">
@@ -1318,6 +1321,46 @@ function GroundingPanel({
       ) : (
         <p className="groundingOk">No unsupported claims detected.</p>
       )}
+    </div>
+  );
+}
+
+function MemoryPanel({ summary, onSelectSpan }: { summary: MemorySummary; onSelectSpan: (spanId: string) => void }) {
+  if (summary.readCount + summary.writeCount === 0) {
+    return null;
+  }
+
+  return (
+    <div className={summary.warnings.length > 0 ? "memoryPanel warning" : "memoryPanel"}>
+      <div className="memoryHeader">
+        <strong>Memory analysis</strong>
+        <span>{summary.warnings.length > 0 ? `${summary.warnings.length} warning` : "Healthy"}</span>
+      </div>
+      <div className="memoryStats">
+        <span>Reads <strong>{summary.readCount}</strong></span>
+        <span>Writes <strong>{summary.writeCount}</strong></span>
+        <span>Retrieved <strong>{summary.retrievedCount}</strong></span>
+        <span>Relevance <strong>{summary.averageRelevance === null ? "-" : summary.averageRelevance.toFixed(2)}</strong></span>
+        <span>Used <strong>{summary.usedCount}</strong></span>
+        <span>Ignored <strong>{summary.ignoredCount}</strong></span>
+      </div>
+      {summary.stores.length > 0 ? (
+        <div className="memoryStores">
+          <small>Stores</small>
+          <span>{summary.stores.join(" · ")}</span>
+        </div>
+      ) : null}
+      {summary.warnings.length > 0 ? (
+        <div className="memoryWarnings">
+          <small>Warnings</small>
+          {summary.warnings.map((warning, index) => (
+            <button className={warning.tone} key={`${warning.spanId}-${warning.label}-${index}`} onClick={() => onSelectSpan(warning.spanId)}>
+              <strong>{warning.label}</strong>
+              <span>{warning.detail}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

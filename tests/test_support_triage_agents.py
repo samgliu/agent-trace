@@ -99,6 +99,20 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertGreater(memory_spans[1].span_data["memory_relevance_score"], 0.8)
         self.assertTrue(memory_spans[1].span_data["memory_used_in_response"])
 
+    def test_runner_records_ignored_stale_memory_for_unverified_customer(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="Can you help with my account?",
+            customer_email="unknown@example.com",
+            trace_id="trace_runner_memory_warning",
+        )
+
+        memory_read = next(span for span in trace.spans if span.span_type == "memory_read")
+        self.assertEqual(memory_read.span_data["memory_relevance_score"], 0.42)
+        self.assertGreater(memory_read.span_data["memory_age_seconds"], 86400 * 90)
+        self.assertFalse(memory_read.span_data["memory_used_in_response"])
+
     def test_runner_creates_pending_approval_for_high_value_policy(self) -> None:
         runner = SupportTriageRunner()
 

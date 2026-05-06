@@ -1406,6 +1406,88 @@ h3 {
   font-size: 13px;
 }
 
+.memoryPanel {
+  display: grid;
+  gap: 10px;
+  margin: 0 16px 16px;
+  padding: 12px;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.memoryPanel.warning {
+  background: #fff8e8;
+  border-color: #d7b46b;
+}
+
+.memoryHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.memoryHeader span {
+  padding: 4px 7px;
+  color: #7b4d12;
+  background: #fff0c4;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.memoryStats,
+.memoryStores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memoryStats span,
+.memoryStores span {
+  padding: 4px 7px;
+  color: #3e4a50;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.memoryStores small,
+.memoryWarnings small {
+  flex-basis: 100%;
+  color: #637179;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.memoryWarnings {
+  display: grid;
+  gap: 8px;
+}
+
+.memoryWarnings button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 8px;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #efd79c;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.memoryWarnings button.danger {
+  border-color: #e9a7a0;
+}
+
+.memoryWarnings span {
+  color: #637179;
+  font-size: 12px;
+}
+
 .typeBar {
   gap: 10px;
   min-height: 32px;
