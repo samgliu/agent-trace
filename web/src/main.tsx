@@ -997,6 +997,7 @@ function ExecutiveSummaryPanel({
   const approvals = countApprovals(trace.spans);
   const mcpCalls = trace.spans.filter((span) => span.span_data.tool_protocol === "mcp").length;
   const guardrails = trace.spans.filter((span) => span.span_type === "guardrail" || span.span_type === "validation").length;
+  const memorySpans = trace.spans.filter((span) => span.span_type === "memory_read" || span.span_type === "memory_write");
 
   return (
     <section className={approvals.pending > 0 ? "executiveSummary attention" : "executiveSummary"}>
@@ -1008,6 +1009,7 @@ function ExecutiveSummaryPanel({
         <SummaryFact icon={<UserCheck size={16} />} label="Approvals" value={`${approvals.pending} waiting`} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding" value={grounding.recovered ? "recovered" : grounding.status} />
         <SummaryFact icon={<Wrench size={16} />} label="MCP calls" value={String(mcpCalls)} />
+        <SummaryFact icon={<Braces size={16} />} label="Memory" value={`${memorySpans.length} events`} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Guardrails" value={String(guardrails)} />
         <SummaryFact icon={<Clock3 size={16} />} label="Duration" value={formatDuration(trace.duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
@@ -1159,6 +1161,9 @@ function AnalysisPanel({
   const approvals = spans.filter((span) => span.span_type === "approval");
   const pendingApprovals = approvals.filter((span) => getApprovalStatus(span.span_type, span.span_data)?.isPending);
   const handoffs = spans.filter((span) => span.span_type === "handoff");
+  const memorySpans = spans.filter((span) => span.span_type === "memory_read" || span.span_type === "memory_write");
+  const memoryReads = memorySpans.filter((span) => span.span_type === "memory_read").length;
+  const memoryWrites = memorySpans.filter((span) => span.span_type === "memory_write").length;
   const erroredSpans = spans.filter((span) => span.error);
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
@@ -1176,6 +1181,7 @@ function AnalysisPanel({
         />
         <Insight icon={<ArrowRight size={16} />} label="Handoffs" value={`${handoffs.length} supervisor routes`} />
         <Insight icon={<Wrench size={16} />} label="MCP tools" value={`${mcpSpans.length} calls captured`} />
+        <Insight icon={<Braces size={16} />} label="Memory" value={`${memoryReads} reads · ${memoryWrites} writes`} />
         <Insight icon={<ShieldCheck size={16} />} label="Guardrails" value={`${guardrails.length} validation span`} />
         <Insight icon={<UserCheck size={16} />} label="Approvals" value={`${pendingApprovals.length} waiting · ${approvals.length} total`} />
         <Insight icon={<AlertCircle size={16} />} label="Errors" value={`${erroredSpans.length} errored span`} />
@@ -1198,6 +1204,16 @@ function AnalysisPanel({
         <div className="quickLinks">
           <small>MCP tool calls</small>
           {mcpSpans.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {memorySpans.length > 0 ? (
+        <div className="quickLinks">
+          <small>Memory events</small>
+          {memorySpans.map((span) => (
             <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
               {span.name}
             </button>
@@ -1494,6 +1510,7 @@ function spanIcon(spanType: string) {
   if (spanType === "guardrail") return <ShieldCheck size={15} />;
   if (spanType === "handoff") return <ArrowRight size={15} />;
   if (spanType === "approval") return <UserCheck size={15} />;
+  if (spanType === "memory_read" || spanType === "memory_write") return <Braces size={15} />;
   return <Activity size={15} />;
 }
 

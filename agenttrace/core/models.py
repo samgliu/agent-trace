@@ -15,6 +15,8 @@ KNOWN_SPAN_TYPES = {
     "rag_retrieval",
     "approval",
     "validation",
+    "memory_read",
+    "memory_write",
     "custom",
 }
 

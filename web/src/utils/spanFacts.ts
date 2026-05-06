@@ -35,9 +35,33 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
     facts.push({ label: "Tool", value: [toolName, toolServer].filter(Boolean).join(" · ") });
   }
 
+  const memoryStore = stringValue(span.span_data.memory_store);
+  const memoryKey = stringValue(span.span_data.memory_key);
+  if (memoryStore || memoryKey) {
+    facts.push({ label: "Memory", value: [memoryStore, memoryKey].filter(Boolean).join(" · ") });
+  }
+
+  const relevance = numberValue(span.span_data.memory_relevance_score);
+  if (relevance !== null) {
+    facts.push({ label: "Relevance", value: relevance.toFixed(2) });
+  }
+
+  const memoryUsed = booleanValue(span.span_data.memory_used_in_response);
+  if (memoryUsed !== null) {
+    facts.push({ label: "Used in response", value: memoryUsed ? "yes" : "no" });
+  }
+
   return facts;
 }
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function booleanValue(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }

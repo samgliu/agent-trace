@@ -242,10 +242,12 @@ class SupportTriageRunner:
             "supervisor": _span_id(trace_id, "supervisor"),
             "handoff_triage": _span_id(trace_id, "handoff_triage"),
             "triage": _span_id(trace_id, "triage"),
+            "working_memory_write": _span_id(trace_id, "working_memory_write"),
             "lookup_customer": _span_id(trace_id, "lookup_customer"),
             "handoff_policy": _span_id(trace_id, "handoff_policy"),
             "policy_agent": _span_id(trace_id, "policy_agent"),
             "retrieve_policy": _span_id(trace_id, "retrieve_policy"),
+            "customer_memory_read": _span_id(trace_id, "customer_memory_read"),
             "action_agent": _span_id(trace_id, "action_agent"),
             "create_action": _span_id(trace_id, "create_action"),
             "validator": _span_id(trace_id, "validator"),
@@ -291,6 +293,27 @@ class SupportTriageRunner:
                 input={"message": message},
                 output=triage,
                 span_data={"agent_role": "triage"},
+            )
+        )
+        working_memory = _working_memory(message, customer_email, triage)
+        spans.append(
+            _span(
+                trace_id=trace_id,
+                span_id=span_ids["working_memory_write"],
+                name="Write Working Memory",
+                span_type="memory_write",
+                parent_id=span_ids["triage"],
+                clock=clock,
+                duration_ms=50,
+                input={"message": message, "triage": triage},
+                output=working_memory,
+                span_data={
+                    "memory_type": "short_term",
+                    "memory_operation": "write",
+                    "memory_store": "conversation_working_memory",
+                    "memory_key": working_memory["memory_key"],
+                    "memory_used_in_response": True,
+                },
             )
         )
 
@@ -377,9 +400,33 @@ class SupportTriageRunner:
                 span_data={"retriever": "mcp_policy_store", **_mcp_span_data("retrieve_policy_tool")},
             )
         )
+        customer_memory = _customer_memory(customer)
+        spans.append(
+            _span(
+                trace_id=trace_id,
+                span_id=span_ids["customer_memory_read"],
+                name="Read Customer Memory",
+                span_type="memory_read",
+                parent_id=supervisor.span_id,
+                clock=clock,
+                duration_ms=80,
+                input={"customer_id": customer.get("customer_id"), "issue_type": triage["issue_type"]},
+                output=customer_memory,
+                span_data={
+                    "memory_type": "long_term",
+                    "memory_operation": "read",
+                    "memory_store": "customer_history",
+                    "memory_key": str(customer.get("customer_id") or "unknown"),
+                    "retrieved_memory_count": len(customer_memory["memories"]),
+                    "memory_relevance_score": customer_memory["relevance_score"],
+                    "memory_age_seconds": customer_memory["memory_age_seconds"],
+                    "memory_used_in_response": customer_memory["used_in_response"],
+                },
+            )
+        )
 
         action_type = _action_type(triage, customer)
-        action_reason = _action_reason(triage, customer, policy)
+        action_reason = _action_reason(triage, customer, policy, customer_memory)
         spans.append(
             _span(
                 trace_id=trace_id,
@@ -389,7 +436,7 @@ class SupportTriageRunner:
                 parent_id=supervisor.span_id,
                 clock=clock,
                 duration_ms=450,
-                input={"issue_type": triage["issue_type"], "policy": policy},
+                input={"issue_type": triage["issue_type"], "policy": policy, "memory": customer_memory},
                 output={"action_type": action_type, "reason": action_reason},
                 span_data={"agent_role": "action"},
             )
@@ -457,7 +504,7 @@ class SupportTriageRunner:
 
         llm_response = self.llm_client.generate(
             instructions=_customer_response_instructions(),
-            input_text=_customer_response_input(message, customer, policy, action, validation),
+            input_text=_customer_response_input(message, customer, policy, action, validation, working_memory, customer_memory),
         )
         spans.append(
             _span(
@@ -630,10 +677,18 @@ def _action_type(triage: dict[str, Any], customer: dict[str, Any]) -> str:
     return "refund_review"
 
 
-def _action_reason(triage: dict[str, Any], customer: dict[str, Any], policy: dict[str, Any]) -> str:
+def _action_reason(
+    triage: dict[str, Any],
+    customer: dict[str, Any],
+    policy: dict[str, Any],
+    customer_memory: dict[str, Any],
+) -> str:
+    memory_note = ""
+    if customer_memory.get("used_in_response"):
+        memory_note = f" Memory context: {customer_memory['memories'][0]['summary']}"
     return (
         f"{triage['issue_type']} for {customer.get('customer_id', 'unknown customer')} "
-        f"under {policy.get('policy_id', 'missing policy')}."
+        f"under {policy.get('policy_id', 'missing policy')}.{memory_note}"
     )
 
 
@@ -654,10 +709,14 @@ def _customer_response_input(
     policy: dict[str, Any],
     action: dict[str, Any],
     validation: dict[str, Any],
+    working_memory: dict[str, Any],
+    customer_memory: dict[str, Any],
 ) -> str:
     return (
         f"Customer message: {message}\n"
+        f"Working memory: {working_memory}\n"
         f"Customer context: {customer}\n"
+        f"Customer memory: {customer_memory}\n"
         f"Policy evidence: {policy}\n"
         f"Support action: {action}\n"
         f"Validation: {validation}"
@@ -666,3 +725,41 @@ def _customer_response_input(
 
 def _rough_token_count(text: str) -> int:
     return max(1, len(text.split()))
+
+
+def _working_memory(message: str, customer_email: str, triage: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "memory_key": f"working:{customer_email}",
+        "facts": [
+            {"key": "latest_customer_message", "value": message},
+            {"key": "issue_type", "value": triage["issue_type"]},
+            {"key": "urgency", "value": triage["urgency"]},
+        ],
+    }
+
+
+def _customer_memory(customer: dict[str, Any]) -> dict[str, Any]:
+    customer_id = str(customer.get("customer_id") or "unknown")
+    if customer.get("annual_price_usd", 0) > 500:
+        memory = {
+            "memory_id": f"mem_{customer_id}_annual_refund",
+            "summary": "Prior refund requests on annual plans require careful approval review.",
+            "source": "support_history",
+        }
+        return {
+            "memories": [memory],
+            "relevance_score": 0.91,
+            "memory_age_seconds": 86400 * 12,
+            "used_in_response": True,
+        }
+    memory = {
+        "memory_id": f"mem_{customer_id}_billing",
+        "summary": "Customer previously contacted support about billing and prefers concise email updates.",
+        "source": "support_history",
+    }
+    return {
+        "memories": [memory],
+        "relevance_score": 0.82,
+        "memory_age_seconds": 86400 * 4,
+        "used_in_response": True,
+    }
