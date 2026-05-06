@@ -300,3 +300,14 @@ class SQLiteTraceStoreTest(unittest.TestCase):
 
             self.assertEqual(result["total"], 1)
             self.assertEqual(result["items"][0]["trace_id"], "trace_chat_1")
+
+    def test_trace_summaries_by_ids(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            store.save_trace(Trace(trace_id="trace_1", workflow_name="support-triage", status="passed"))
+            store.save_trace(Trace(trace_id="trace_2", workflow_name="support-triage", status="failed"))
+
+            result = store.trace_summaries_by_ids(["trace_2", "missing", "trace_2", "trace_1"])
+
+            self.assertEqual({item["trace_id"] for item in result}, {"trace_1", "trace_2"})

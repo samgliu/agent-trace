@@ -471,6 +471,23 @@ class SQLiteTraceStore:
             rows = connection.execute("SELECT * FROM trace_summaries").fetchall()
         return [_summary_from_row(row) for row in rows]
 
+    def trace_summaries_by_ids(self, trace_ids: list[str]) -> list[dict[str, Any]]:
+        unique_trace_ids = list(dict.fromkeys(trace_id for trace_id in trace_ids if trace_id))
+        if not unique_trace_ids:
+            return []
+        placeholders = ", ".join("?" for _ in unique_trace_ids)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM trace_summaries
+                WHERE trace_id IN ({placeholders})
+                ORDER BY COALESCE(started_at, '') DESC
+                """,
+                tuple(unique_trace_ids),
+            ).fetchall()
+        return [_summary_from_row(row) for row in rows]
+
     def workflow_names(self) -> list[str]:
         with closing(self._connect()) as connection:
             rows = connection.execute(

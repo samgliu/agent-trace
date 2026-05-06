@@ -692,6 +692,44 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.chatMessageChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chatMessageChip {
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.chatMessageChip.neutral {
+  color: #3e4a50;
+  background: #f5f7f8;
+  border: 1px solid #dce4e8;
+}
+
+.chatMessageChip.success {
+  color: #1f6b4f;
+  background: #e8f4f0;
+  border: 1px solid #c7e1d8;
+}
+
+.chatMessageChip.warning {
+  color: #7b4d12;
+  background: #fff0c4;
+  border: 1px solid #d7b46b;
+}
+
+.chatMessageChip.danger {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border: 1px solid #e9a7a0;
+}
+
 .chatTraceLink {
   justify-self: start;
   display: inline-flex;

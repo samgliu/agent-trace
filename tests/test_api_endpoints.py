@@ -112,6 +112,16 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["items"][0]["trace_id"], self.trace.trace_id)
 
+    def test_trace_summaries_filters_by_ids(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get(f"/trace-summaries?trace_ids={trace.trace_id},missing,{self.trace.trace_id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual({item["trace_id"] for item in payload}, {self.trace.trace_id, trace.trace_id})
+
     def test_list_traces_filters_by_errors(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
         self.store.save_trace(trace)

@@ -162,6 +162,11 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             started_before=started_before,
         )
 
+    @app.get("/trace-summaries")
+    def trace_summaries(trace_ids: str = Query("")) -> list[dict[str, Any]]:
+        ids = [trace_id.strip() for trace_id in trace_ids.split(",") if trace_id.strip()]
+        return trace_store.trace_summaries_by_ids(ids)
+
     @app.post("/traces")
     def ingest_trace(payload: TraceIngestRequest) -> dict[str, Any]:
         trace = with_source_metadata(

@@ -27,6 +27,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from "./utils/chat";
+import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
@@ -187,6 +188,7 @@ function App() {
   const [chatSession, setChatSession] = useState<ChatSession | null>(null);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatTraceSummaries, setChatTraceSummaries] = useState<Record<string, TraceSummary>>({});
   const [latestChatTraceId, setLatestChatTraceId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
@@ -213,6 +215,29 @@ function App() {
   useEffect(() => {
     loadChatSessions();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadChatTraceSummaries() {
+      const traceIds = uniqueTraceIds(chatMessages);
+      if (traceIds.length === 0) {
+        setChatTraceSummaries({});
+        return;
+      }
+      const summaries = await fetchJson<TraceSummary[]>(`/trace-summaries${traceSummaryQuery(traceIds)}`);
+      if (!cancelled) {
+        setChatTraceSummaries(summaryMap(summaries));
+      }
+    }
+    loadChatTraceSummaries().catch(() => {
+      if (!cancelled) {
+        setChatTraceSummaries({});
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatMessages, refreshKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -332,6 +357,7 @@ function App() {
       });
       setChatSession(result.session);
       setChatSessions((sessions) => upsertChatSession(sessions, result.session));
+      setChatTraceSummaries((summaries) => ({ ...summaries, [result.trace.trace_id]: result.trace }));
       setChatMessages((messages) => [...messages, result.user_message, result.assistant_message]);
       setLatestChatTraceId(result.trace.trace_id);
       setSelectedTraceId(result.trace.trace_id);
@@ -374,6 +400,7 @@ function App() {
               session={chatSession}
               sessions={chatSessions}
               messages={chatMessages}
+              traceSummaries={chatTraceSummaries}
               status={chatStatus}
               latestTraceId={latestChatTraceId}
               onSelectSession={openChatSession}
@@ -411,6 +438,7 @@ function App() {
             session={chatSession}
             sessions={chatSessions}
             messages={chatMessages}
+            traceSummaries={chatTraceSummaries}
             status={chatStatus}
             latestTraceId={latestChatTraceId}
             onSelectSession={openChatSession}
@@ -550,6 +578,7 @@ function ChatMonitor({
   session,
   sessions,
   messages,
+  traceSummaries,
   status,
   latestTraceId,
   onSelectSession,
@@ -560,6 +589,7 @@ function ChatMonitor({
   session: ChatSession | null;
   sessions: ChatSession[];
   messages: ChatMessage[];
+  traceSummaries: Record<string, TraceSummary>;
   status: ChatStatus;
   latestTraceId: string | null;
   onSelectSession: (sessionId: string) => Promise<void>;
@@ -639,6 +669,15 @@ function ChatMonitor({
               <div className={`chatBubble ${chatMessage.role}`} key={chatMessage.message_id}>
                 <small>{chatMessage.role}</small>
                 <p>{chatMessage.content}</p>
+                {chatMessage.trace_id ? (
+                  <div className="chatMessageChips">
+                    {buildChatMessageChips(traceSummaries[chatMessage.trace_id]).map((chip) => (
+                      <span className={`chatMessageChip ${chip.tone}`} key={chip.label}>
+                        {chip.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 {chatMessage.trace_id ? (
                   <button className="chatTraceLink" type="button" onClick={() => onSelectTrace(chatMessage.trace_id!)}>
                     Trace: {chatMessage.trace_id}
@@ -1486,6 +1525,12 @@ function filterQuery(filters: TraceFilters, activeChatSessionId: string | null):
   return query ? `?${query}` : "";
 }
 
+function traceSummaryQuery(traceIds: string[]): string {
+  const params = new URLSearchParams();
+  params.set("trace_ids", traceIds.join(","));
+  return `?${params.toString()}`;
+}
+
 function emptyFilters(): TraceFilters {
   return {
     status: "",
@@ -1521,6 +1566,14 @@ function latestTraceFromMessages(messages: ChatMessage[]): string | null {
     if (traceId) return traceId;
   }
   return null;
+}
+
+function uniqueTraceIds(messages: ChatMessage[]): string[] {
+  return Array.from(new Set(messages.map((message) => message.trace_id).filter((traceId): traceId is string => Boolean(traceId))));
+}
+
+function summaryMap(summaries: TraceSummary[]): Record<string, TraceSummary> {
+  return Object.fromEntries(summaries.map((summary) => [summary.trace_id, summary]));
 }
 
 function upsertChatSession(sessions: ChatSession[], session: ChatSession): ChatSession[] {
