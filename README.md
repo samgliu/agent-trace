@@ -13,6 +13,7 @@ It currently supports:
 - approval gates with approve, reject, and revert actions
 - grounding summaries for grounded, recovered, and failed responses
 - multi-agent spans, handoffs, MCP tool calls, guardrails, and validation spans
+- a FastMCP MCP-tools service for the next real workflow runner milestone
 
 ## Quick Start
 
@@ -38,7 +39,7 @@ AgentTrace stores local demo data in `.agenttrace/agenttrace.db`.
 Start the API and dashboard:
 
 ```bash
-docker compose up -d api web
+docker compose up -d api web mcp-tools
 ```
 
 Emit a live support-triage trace into the API:
@@ -52,6 +53,35 @@ arrive. Use a smaller delay for a faster demo:
 
 ```bash
 docker compose run --rm agenttrace live-sample --api-url http://api:8000 --delay 0.1
+```
+
+## MCP Tools Server
+
+Start the FastMCP MCP-tools service:
+
+```bash
+docker compose up -d mcp-tools
+```
+
+Health check:
+
+```text
+http://localhost:8010/health
+```
+
+MCP endpoint:
+
+```text
+http://localhost:8010/mcp/
+```
+
+The server exposes deterministic support tools used by the next real workflow
+runner milestone:
+
+```text
+lookup_customer_tool
+retrieve_policy_tool
+create_support_action_tool
 ```
 
 ## CLI
