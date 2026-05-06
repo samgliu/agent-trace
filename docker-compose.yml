@@ -15,10 +15,23 @@ services:
     command: ["agenttrace.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       AGENTTRACE_DB: /app/.agenttrace/agenttrace.db
+      AGENTTRACE_MCP_TOOLS_URL: http://mcp-tools:8010/mcp/
     ports:
       - "8000:8000"
     volumes:
       - ./.agenttrace:/app/.agenttrace
+    working_dir: /app
+    depends_on:
+      - mcp-tools
+
+  mcp-tools:
+    build:
+      context: .
+    image: agenttrace:local
+    entrypoint: ["python", "-m", "agenttrace.mcp_tools.server"]
+    command: ["--transport", "http", "--host", "0.0.0.0", "--port", "8010"]
+    ports:
+      - "8010:8010"
     working_dir: /app
 
   web:

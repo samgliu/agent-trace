@@ -182,6 +182,27 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
+    def test_run_support_triage_workflow_persists_agent_trace(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs",
+            json={
+                "trace_id": "trace_api_runner",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["trace_id"], "trace_api_runner")
+        self.assertEqual(body["status"], "passed")
+        self.assertEqual(body["metadata"]["source_kind"], "agent_runner")
+        self.assertTrue(any(span["span_type"] == "generation" for span in body["spans"]))
+
+        saved = self.client.get("/traces/trace_api_runner")
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["metadata"]["source_format"], "agenttrace")
+
     def test_ingest_openai_agents_trace(self) -> None:
         with Path("examples/openai_agents/sample_trace_export.json").open("r", encoding="utf-8") as file:
             import json

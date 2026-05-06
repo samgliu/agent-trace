@@ -13,7 +13,9 @@ It currently supports:
 - approval gates with approve, reject, and revert actions
 - grounding summaries for grounded, recovered, and failed responses
 - multi-agent spans, handoffs, MCP tool calls, guardrails, and validation spans
-- a FastMCP MCP-tools service for the next real workflow runner milestone
+- a FastMCP MCP-tools service used by the real workflow runner in Docker
+- an executable `agents/` support-triage workflow runner with optional
+  OpenAI-compatible chat completions generation
 
 ## Quick Start
 
@@ -84,6 +86,11 @@ retrieve_policy_tool
 create_support_action_tool
 ```
 
+When the stack runs through Docker Compose, the API service sets
+`AGENTTRACE_MCP_TOOLS_URL=http://mcp-tools:8010/mcp/`, so
+`POST /workflows/support-triage/runs` calls the MCP tools service instead of
+the local in-process tool fallback.
+
 ## CLI
 
 Import and inspect sample traces:
@@ -125,6 +132,7 @@ Core endpoints:
 GET    /health
 GET    /dashboard/summary
 GET    /workflows
+POST   /workflows/support-triage/runs
 GET    /traces
 POST   /traces
 GET    /traces/{trace_id}
@@ -151,6 +159,45 @@ GET /traces?source_format=openai-agents
 GET /traces?source_kind=live_api
 GET /traces?has_errors=true
 GET /traces?started_after=2026-05-01T00:00:00Z
+```
+
+Run the executable support-triage agents workflow:
+
+```bash
+curl -X POST http://localhost:8000/workflows/support-triage/runs \
+  -H 'content-type: application/json' \
+  -d '{
+    "trace_id": "trace_live_support_triage",
+    "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+    "customer_email": "customer@example.com"
+  }'
+```
+
+By default the workflow uses a deterministic local response generator so tests
+and demos do not require credentials. To call a generic OpenAI-compatible
+`/v1/chat/completions` provider for the customer response generation span, set
+`OPENAI_API_KEY` on the API service and send:
+
+```json
+{
+  "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+  "customer_email": "customer@example.com",
+  "use_openai": true
+}
+```
+
+The default real LLM protocol is `/v1/chat/completions` because it is widely
+supported by OpenAI-compatible providers. Set `AGENTTRACE_OPENAI_BASE_URL` for
+local or third-party providers. OpenAI-native `/v1/responses` can be selected
+explicitly:
+
+```json
+{
+  "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+  "customer_email": "customer@example.com",
+  "use_openai": true,
+  "openai_api": "responses"
+}
 ```
 
 Minimal live ingestion example:

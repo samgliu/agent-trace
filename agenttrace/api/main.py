@@ -10,7 +10,13 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
+from agenttrace.api.schemas import (
+    SpanIngestRequest,
+    SupportTriageRunRequest,
+    TraceIngestRequest,
+    TraceLifecycleUpdateRequest,
+)
+from agenttrace.agents.support_triage import build_default_runner
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
@@ -53,6 +59,20 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     @app.get("/workflows")
     def list_workflows() -> list[str]:
         return sorted(trace_store.workflow_names())
+
+    @app.post("/workflows/support-triage/runs")
+    def run_support_triage_workflow(payload: SupportTriageRunRequest) -> dict[str, Any]:
+        try:
+            trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+                message=payload.message,
+                customer_email=payload.customer_email,
+                trace_id=payload.trace_id,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        trace_store.save_trace(trace)
+        saved = _require_trace(trace_store, trace.trace_id)
+        return saved.to_dict()
 
     @app.get("/traces")
     def list_traces(
