@@ -13,6 +13,7 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
     metrics = build_trace_metrics(trace)
     grounding = build_grounding_summary(trace)
     approvals = _approval_counts(trace)
+    memory = _memory_counts(trace)
     source_format = trace.metadata.get("source_format") or _legacy_source_format(trace.metadata)
     source_kind = trace.metadata.get("source_kind") or _legacy_source_kind(trace.metadata)
     ingested_at = trace.metadata.get("ingested_at")
@@ -39,6 +40,13 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
         "approval_rejected_count": approvals["rejected"],
         "grounding_status": grounding["status"],
         "unsupported_claim_count": grounding["unsupported_claim_count"],
+        "memory_read_count": memory["read_count"],
+        "memory_write_count": memory["write_count"],
+        "memory_retrieved_count": memory["retrieved_count"],
+        "memory_ignored_count": memory["ignored_count"],
+        "memory_stale_count": memory["stale_count"],
+        "memory_warning_count": memory["warning_count"],
+        "memory_average_relevance": memory["average_relevance"],
     }
 
 
@@ -50,6 +58,9 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     grounding_counts: dict[str, int] = {}
     source_format_counts: dict[str, int] = {}
     source_kind_counts: dict[str, int] = {}
+    memory_relevance_scores = [
+        item["memory_average_relevance"] for item in summaries if item.get("memory_average_relevance") is not None
+    ]
 
     for item in summaries:
         status = str(item.get("status") or "unknown")
@@ -79,6 +90,15 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "estimated_cost": round(sum(item["estimated_cost"] for item in summaries), 6),
         "input_tokens": sum(item["input_tokens"] for item in summaries),
         "output_tokens": sum(item["output_tokens"] for item in summaries),
+        "memory_read_count": sum(item["memory_read_count"] for item in summaries),
+        "memory_write_count": sum(item["memory_write_count"] for item in summaries),
+        "memory_retrieved_count": sum(item["memory_retrieved_count"] for item in summaries),
+        "memory_ignored_count": sum(item["memory_ignored_count"] for item in summaries),
+        "memory_stale_count": sum(item["memory_stale_count"] for item in summaries),
+        "memory_warning_count": sum(item["memory_warning_count"] for item in summaries),
+        "memory_average_relevance": (
+            round(sum(memory_relevance_scores) / len(memory_relevance_scores), 4) if memory_relevance_scores else None
+        ),
     }
 
 
@@ -118,6 +138,37 @@ def _approval_counts(trace: Trace) -> dict[str, int]:
         elif status == "rejected":
             counts["rejected"] += 1
     return counts
+
+
+def _memory_counts(trace: Trace) -> dict[str, Any]:
+    reads = [span for span in trace.spans if span.span_type == "memory_read"]
+    writes = [span for span in trace.spans if span.span_type == "memory_write"]
+    relevance_scores = [
+        span.span_data["memory_relevance_score"]
+        for span in reads
+        if isinstance(span.span_data.get("memory_relevance_score"), (int, float))
+    ]
+    ignored_count = sum(1 for span in reads if span.span_data.get("memory_used_in_response") is False)
+    stale_count = sum(
+        1
+        for span in reads
+        if isinstance(span.span_data.get("memory_age_seconds"), (int, float))
+        and span.span_data["memory_age_seconds"] > 86400 * 90
+    )
+    low_relevance_count = sum(1 for score in relevance_scores if score < 0.65)
+    return {
+        "read_count": len(reads),
+        "write_count": len(writes),
+        "retrieved_count": sum(
+            span.span_data["retrieved_memory_count"]
+            for span in reads
+            if isinstance(span.span_data.get("retrieved_memory_count"), (int, float))
+        ),
+        "ignored_count": ignored_count,
+        "stale_count": stale_count,
+        "warning_count": ignored_count + stale_count + low_relevance_count,
+        "average_relevance": round(sum(relevance_scores) / len(relevance_scores), 4) if relevance_scores else None,
+    }
 
 
 def _percentile(values: list[int], percentile: float) -> int | None:

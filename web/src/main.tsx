@@ -145,6 +145,13 @@ type DashboardSummary = {
   estimated_cost: number;
   input_tokens: number;
   output_tokens: number;
+  memory_read_count: number;
+  memory_write_count: number;
+  memory_retrieved_count: number;
+  memory_ignored_count: number;
+  memory_stale_count: number;
+  memory_warning_count: number;
+  memory_average_relevance: number | null;
 };
 
 type TraceFilters = {
@@ -749,6 +756,17 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
         <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
+      </div>
+      <div className="memoryFleetSummary">
+        <SummaryFact
+          icon={<Braces size={16} />}
+          label="Memory events"
+          value={`${summary.memory_read_count} reads · ${summary.memory_write_count} writes`}
+        />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Memory warnings" value={String(summary.memory_warning_count)} />
+        <SummaryFact icon={<Braces size={16} />} label="Ignored memory" value={String(summary.memory_ignored_count)} />
+        <SummaryFact icon={<Clock3 size={16} />} label="Stale memory" value={String(summary.memory_stale_count)} />
+        <SummaryFact icon={<ShieldCheck size={16} />} label="Avg relevance" value={formatRelevance(summary.memory_average_relevance)} />
       </div>
       <div className="sourceSummary">
         <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
@@ -1655,6 +1673,10 @@ function startedAfterForRange(value: string): string | null {
   const minutes = minutesByRange[value];
   if (!minutes) return null;
   return new Date(Date.now() - minutes * 60 * 1000).toISOString();
+}
+
+function formatRelevance(value: number | null): string {
+  return value === null ? "-" : value.toFixed(2);
 }
 
 async function postJson<T>(path: string): Promise<T> {

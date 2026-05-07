@@ -82,6 +82,13 @@ class SQLiteTraceStore:
                     approval_rejected_count INTEGER NOT NULL,
                     grounding_status TEXT NOT NULL,
                     unsupported_claim_count INTEGER NOT NULL,
+                    memory_read_count INTEGER NOT NULL DEFAULT 0,
+                    memory_write_count INTEGER NOT NULL DEFAULT 0,
+                    memory_retrieved_count INTEGER NOT NULL DEFAULT 0,
+                    memory_ignored_count INTEGER NOT NULL DEFAULT 0,
+                    memory_stale_count INTEGER NOT NULL DEFAULT 0,
+                    memory_warning_count INTEGER NOT NULL DEFAULT 0,
+                    memory_average_relevance REAL,
                     FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
                 )
                 """
@@ -123,6 +130,13 @@ class SQLiteTraceStore:
                     "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
                     "ingested_at": "TEXT",
                     "error_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_read_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_write_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_retrieved_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_ignored_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_stale_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_warning_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_average_relevance": "REAL",
                 },
             )
         self._backfill_trace_summaries()
@@ -294,9 +308,11 @@ class SQLiteTraceStore:
                     metadata_json,
                     span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
-                    grounding_status, unsupported_claim_count
+                    grounding_status, unsupported_claim_count,
+                    memory_read_count, memory_write_count, memory_retrieved_count, memory_ignored_count,
+                    memory_stale_count, memory_warning_count, memory_average_relevance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -591,9 +607,11 @@ class SQLiteTraceStore:
                     metadata_json,
                     span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
-                    grounding_status, unsupported_claim_count
+                    grounding_status, unsupported_claim_count,
+                    memory_read_count, memory_write_count, memory_retrieved_count, memory_ignored_count,
+                    memory_stale_count, memory_warning_count, memory_average_relevance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -693,6 +711,13 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["approval_rejected_count"],
         summary["grounding_status"],
         summary["unsupported_claim_count"],
+        summary["memory_read_count"],
+        summary["memory_write_count"],
+        summary["memory_retrieved_count"],
+        summary["memory_ignored_count"],
+        summary["memory_stale_count"],
+        summary["memory_warning_count"],
+        summary["memory_average_relevance"],
     )
 
 
@@ -720,6 +745,13 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "approval_rejected_count": row["approval_rejected_count"],
         "grounding_status": row["grounding_status"],
         "unsupported_claim_count": row["unsupported_claim_count"],
+        "memory_read_count": row["memory_read_count"],
+        "memory_write_count": row["memory_write_count"],
+        "memory_retrieved_count": row["memory_retrieved_count"],
+        "memory_ignored_count": row["memory_ignored_count"],
+        "memory_stale_count": row["memory_stale_count"],
+        "memory_warning_count": row["memory_warning_count"],
+        "memory_average_relevance": row["memory_average_relevance"],
     }
 
 

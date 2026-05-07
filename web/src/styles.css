@@ -434,6 +434,13 @@ h2 {
   gap: 10px;
 }
 
+.memoryFleetSummary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .dashboardSummary .summaryFact {
   background: #ffffff;
   border-color: #dce4e8;
