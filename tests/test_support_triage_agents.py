@@ -63,10 +63,12 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 "Supervisor Agent",
                 "Supervisor -> Triage Agent",
                 "Triage Agent",
+                "Write Working Memory",
                 "lookup_customer",
                 "Supervisor -> Policy Agent",
                 "Policy Agent",
                 "retrieve_policy",
+                "Read Customer Memory",
                 "Action Agent",
                 "create_support_action",
                 "Validator Agent",
@@ -75,8 +77,41 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
         self.assertTrue(any(span.span_type == "handoff" for span in trace.spans))
         self.assertTrue(any(span.span_type == "function_tool" for span in trace.spans))
+        self.assertTrue(any(span.span_type == "memory_write" for span in trace.spans))
+        self.assertTrue(any(span.span_type == "memory_read" for span in trace.spans))
         self.assertTrue(any(span.span_type == "generation" for span in trace.spans))
         self.assertEqual(llm.calls[0]["input_text"].count("duplicate_charge_detected"), 1)
+
+    def test_runner_records_memory_metadata(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="Can you refund my annual plan?",
+            customer_email="annual@example.com",
+            trace_id="trace_runner_memory",
+        )
+
+        memory_spans = [span for span in trace.spans if span.span_type in {"memory_read", "memory_write"}]
+        self.assertEqual([span.span_type for span in memory_spans], ["memory_write", "memory_read"])
+        self.assertEqual(memory_spans[0].span_data["memory_type"], "short_term")
+        self.assertEqual(memory_spans[1].span_data["memory_type"], "long_term")
+        self.assertEqual(memory_spans[1].span_data["retrieved_memory_count"], 1)
+        self.assertGreater(memory_spans[1].span_data["memory_relevance_score"], 0.8)
+        self.assertTrue(memory_spans[1].span_data["memory_used_in_response"])
+
+    def test_runner_records_ignored_stale_memory_for_unverified_customer(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="Can you help with my account?",
+            customer_email="unknown@example.com",
+            trace_id="trace_runner_memory_warning",
+        )
+
+        memory_read = next(span for span in trace.spans if span.span_type == "memory_read")
+        self.assertEqual(memory_read.span_data["memory_relevance_score"], 0.42)
+        self.assertGreater(memory_read.span_data["memory_age_seconds"], 86400 * 90)
+        self.assertFalse(memory_read.span_data["memory_used_in_response"])
 
     def test_runner_creates_pending_approval_for_high_value_policy(self) -> None:
         runner = SupportTriageRunner()

@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from agenttrace.core.importer import load_trace_file
+from agenttrace.core.models import Span, Trace
 from agenttrace.core.summary import build_dashboard_summary, build_trace_summary
 
 
@@ -38,6 +39,44 @@ class TraceSummaryTest(unittest.TestCase):
         self.assertEqual(summary["source_format_counts"], {"agenttrace": 2})
         self.assertEqual(summary["source_kind_counts"], {"trace_export": 2})
         self.assertEqual(summary["error_count"], 0)
+
+    def test_build_dashboard_summary_aggregates_memory_health(self) -> None:
+        trace = Trace(
+            trace_id="trace_memory",
+            workflow_name="support-triage",
+            status="passed",
+            spans=[
+                Span(
+                    span_id="memory_write",
+                    trace_id="trace_memory",
+                    name="Write Working Memory",
+                    span_type="memory_write",
+                    span_data={"memory_store": "conversation_working_memory"},
+                ),
+                Span(
+                    span_id="memory_read",
+                    trace_id="trace_memory",
+                    name="Read Customer Memory",
+                    span_type="memory_read",
+                    span_data={
+                        "retrieved_memory_count": 1,
+                        "memory_relevance_score": 0.42,
+                        "memory_age_seconds": 86400 * 180,
+                        "memory_used_in_response": False,
+                    },
+                ),
+            ],
+        )
+
+        summary = build_dashboard_summary([build_trace_summary(trace)])
+
+        self.assertEqual(summary["memory_read_count"], 1)
+        self.assertEqual(summary["memory_write_count"], 1)
+        self.assertEqual(summary["memory_retrieved_count"], 1)
+        self.assertEqual(summary["memory_ignored_count"], 1)
+        self.assertEqual(summary["memory_stale_count"], 1)
+        self.assertEqual(summary["memory_warning_count"], 3)
+        self.assertEqual(summary["memory_average_relevance"], 0.42)
 
 
 if __name__ == "__main__":

@@ -252,3 +252,62 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(messages[0]["message_id"], user_message["message_id"])
             self.assertEqual(messages[1]["message_id"], assistant_message["message_id"])
             self.assertEqual(messages[1]["trace_id"], "trace_chat_turn")
+
+    def test_trace_summary_includes_chat_metadata(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            trace = Trace(
+                trace_id="trace_chat_turn",
+                workflow_name="support-triage",
+                status="passed",
+                metadata={
+                    "source_format": "agenttrace",
+                    "source_kind": "agent_runner",
+                    "chat_session_id": "chat_123",
+                    "chat_user_message_id": "msg_123",
+                },
+            )
+
+            store.save_trace(trace)
+            result = store.list_trace_summaries()
+
+            self.assertEqual(result["items"][0]["metadata"]["chat_session_id"], "chat_123")
+            self.assertEqual(result["items"][0]["metadata"]["chat_user_message_id"], "msg_123")
+
+    def test_list_trace_summaries_filters_by_chat_session(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            store.save_trace(
+                Trace(
+                    trace_id="trace_chat_1",
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"chat_session_id": "chat_1"},
+                )
+            )
+            store.save_trace(
+                Trace(
+                    trace_id="trace_chat_2",
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"chat_session_id": "chat_2"},
+                )
+            )
+
+            result = store.list_trace_summaries(chat_session_id="chat_1")
+
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["items"][0]["trace_id"], "trace_chat_1")
+
+    def test_trace_summaries_by_ids(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            store.save_trace(Trace(trace_id="trace_1", workflow_name="support-triage", status="passed"))
+            store.save_trace(Trace(trace_id="trace_2", workflow_name="support-triage", status="failed"))
+
+            result = store.trace_summaries_by_ids(["trace_2", "missing", "trace_2", "trace_1"])
+
+            self.assertEqual({item["trace_id"] for item in result}, {"trace_1", "trace_2"})

@@ -142,6 +142,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         grounding_status: str | None = None,
         source_format: str | None = None,
         source_kind: str | None = None,
+        chat_session_id: str | None = None,
         has_errors: bool | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
@@ -155,10 +156,16 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             grounding_status=grounding_status,
             source_format=source_format,
             source_kind=source_kind,
+            chat_session_id=chat_session_id,
             has_errors=has_errors,
             started_after=started_after,
             started_before=started_before,
         )
+
+    @app.get("/trace-summaries")
+    def trace_summaries(trace_ids: str = Query("")) -> list[dict[str, Any]]:
+        ids = [trace_id.strip() for trace_id in trace_ids.split(",") if trace_id.strip()]
+        return trace_store.trace_summaries_by_ids(ids)
 
     @app.post("/traces")
     def ingest_trace(payload: TraceIngestRequest) -> dict[str, Any]:

@@ -8,6 +8,7 @@ except ModuleNotFoundError:  # pragma: no cover - local env may not have FastAPI
     TestClient = None  # type: ignore[assignment]
 
 from agenttrace.core.importer import load_trace_file
+from agenttrace.core.models import Span, Trace
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 
@@ -98,6 +99,30 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["source_format"], "openai-agents")
         self.assertEqual(payload["items"][0]["source_kind"], "trace_export")
 
+    def test_list_traces_filters_by_chat_session(self) -> None:
+        self.trace.metadata["chat_session_id"] = "chat_1"
+        self.store.save_trace(self.trace)
+        other_trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        other_trace.metadata["chat_session_id"] = "chat_2"
+        self.store.save_trace(other_trace)
+
+        response = self.client.get("/traces?chat_session_id=chat_1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], self.trace.trace_id)
+
+    def test_trace_summaries_filters_by_ids(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
+        self.store.save_trace(trace)
+
+        response = self.client.get(f"/trace-summaries?trace_ids={trace.trace_id},missing,{self.trace.trace_id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual({item["trace_id"] for item in payload}, {self.trace.trace_id, trace.trace_id})
+
     def test_list_traces_filters_by_errors(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_tool_failure.json"))
         self.store.save_trace(trace)
@@ -119,17 +144,39 @@ class ApiEndpointsTest(unittest.TestCase):
     def test_dashboard_summary(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
         self.store.save_trace(trace)
+        memory_trace = Trace(
+            trace_id="trace_memory_api",
+            workflow_name="support-triage",
+            status="passed",
+            spans=[
+                Span(
+                    span_id="memory_read",
+                    trace_id="trace_memory_api",
+                    name="Read Customer Memory",
+                    span_type="memory_read",
+                    span_data={
+                        "retrieved_memory_count": 1,
+                        "memory_relevance_score": 0.42,
+                        "memory_age_seconds": 86400 * 180,
+                        "memory_used_in_response": False,
+                    },
+                )
+            ],
+        )
+        self.store.save_trace(memory_trace)
 
         response = self.client.get("/dashboard/summary")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["total_runs"], 2)
+        self.assertEqual(payload["total_runs"], 3)
         self.assertEqual(payload["approval_pending_count"], 1)
         self.assertEqual(payload["unsupported_claim_count"], 1)
         self.assertEqual(payload["error_count"], 0)
-        self.assertEqual(payload["workflow_counts"]["support-triage"], 2)
-        self.assertEqual(payload["status_counts"]["passed"], 2)
+        self.assertEqual(payload["workflow_counts"]["support-triage"], 3)
+        self.assertEqual(payload["memory_read_count"], 1)
+        self.assertEqual(payload["memory_warning_count"], 3)
+        self.assertEqual(payload["status_counts"]["passed"], 3)
 
     def test_get_trace(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}")

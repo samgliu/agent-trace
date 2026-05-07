@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from agenttrace.core.importer import load_trace_file
+from agenttrace.core.models import Trace
 
 
 class ImporterTest(unittest.TestCase):
@@ -37,3 +38,26 @@ class ImporterTest(unittest.TestCase):
         self.assertEqual(validator_span.output["unsupported_claims"][0]["claim"], "refund your last 3 months")
         self.assertEqual(approval_span.span_type, "approval")
         self.assertEqual(approval_span.span_data["approval_status"], "blocked")
+
+    def test_trace_model_accepts_memory_span_types(self) -> None:
+        trace = Trace.from_dict(
+            {
+                "trace_id": "trace_memory",
+                "workflow_name": "support-triage",
+                "status": "passed",
+                "spans": [
+                    {
+                        "span_id": "span_memory_read",
+                        "span_type": "memory_read",
+                        "name": "Read Customer Memory",
+                    },
+                    {
+                        "span_id": "span_memory_write",
+                        "span_type": "memory_write",
+                        "name": "Write Working Memory",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual([span.span_type for span in trace.spans], ["memory_read", "memory_write"])

@@ -66,6 +66,7 @@ class SQLiteTraceStore:
                     status TEXT NOT NULL,
                     source_format TEXT NOT NULL DEFAULT 'unknown',
                     source_kind TEXT NOT NULL DEFAULT 'unknown',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     ingested_at TEXT,
                     started_at TEXT,
                     ended_at TEXT,
@@ -81,6 +82,13 @@ class SQLiteTraceStore:
                     approval_rejected_count INTEGER NOT NULL,
                     grounding_status TEXT NOT NULL,
                     unsupported_claim_count INTEGER NOT NULL,
+                    memory_read_count INTEGER NOT NULL DEFAULT 0,
+                    memory_write_count INTEGER NOT NULL DEFAULT 0,
+                    memory_retrieved_count INTEGER NOT NULL DEFAULT 0,
+                    memory_ignored_count INTEGER NOT NULL DEFAULT 0,
+                    memory_stale_count INTEGER NOT NULL DEFAULT 0,
+                    memory_warning_count INTEGER NOT NULL DEFAULT 0,
+                    memory_average_relevance REAL,
                     FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
                 )
                 """
@@ -119,8 +127,16 @@ class SQLiteTraceStore:
                 {
                     "source_format": "TEXT NOT NULL DEFAULT 'unknown'",
                     "source_kind": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
                     "ingested_at": "TEXT",
                     "error_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_read_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_write_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_retrieved_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_ignored_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_stale_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_warning_count": "INTEGER NOT NULL DEFAULT 0",
+                    "memory_average_relevance": "REAL",
                 },
             )
         self._backfill_trace_summaries()
@@ -289,11 +305,14 @@ class SQLiteTraceStore:
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
                     source_format, source_kind, ingested_at,
+                    metadata_json,
                     span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
-                    grounding_status, unsupported_claim_count
+                    grounding_status, unsupported_claim_count,
+                    memory_read_count, memory_write_count, memory_retrieved_count, memory_ignored_count,
+                    memory_stale_count, memory_warning_count, memory_average_relevance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -422,6 +441,7 @@ class SQLiteTraceStore:
         grounding_status: str | None = None,
         source_format: str | None = None,
         source_kind: str | None = None,
+        chat_session_id: str | None = None,
         has_errors: bool | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
@@ -435,6 +455,7 @@ class SQLiteTraceStore:
             grounding_status=grounding_status,
             source_format=source_format,
             source_kind=source_kind,
+            chat_session_id=chat_session_id,
             has_errors=has_errors,
             started_after=started_after,
             started_before=started_before,
@@ -464,6 +485,23 @@ class SQLiteTraceStore:
     def all_trace_summaries(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute("SELECT * FROM trace_summaries").fetchall()
+        return [_summary_from_row(row) for row in rows]
+
+    def trace_summaries_by_ids(self, trace_ids: list[str]) -> list[dict[str, Any]]:
+        unique_trace_ids = list(dict.fromkeys(trace_id for trace_id in trace_ids if trace_id))
+        if not unique_trace_ids:
+            return []
+        placeholders = ", ".join("?" for _ in unique_trace_ids)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM trace_summaries
+                WHERE trace_id IN ({placeholders})
+                ORDER BY COALESCE(started_at, '') DESC
+                """,
+                tuple(unique_trace_ids),
+            ).fetchall()
         return [_summary_from_row(row) for row in rows]
 
     def workflow_names(self) -> list[str]:
@@ -566,11 +604,14 @@ class SQLiteTraceStore:
                 INSERT OR REPLACE INTO trace_summaries (
                     trace_id, workflow_name, group_id, status, started_at, ended_at, duration_ms,
                     source_format, source_kind, ingested_at,
+                    metadata_json,
                     span_count, input_tokens, output_tokens, estimated_cost, error_count,
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
-                    grounding_status, unsupported_claim_count
+                    grounding_status, unsupported_claim_count,
+                    memory_read_count, memory_write_count, memory_retrieved_count, memory_ignored_count,
+                    memory_stale_count, memory_warning_count, memory_average_relevance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -658,6 +699,7 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["source_format"],
         summary["source_kind"],
         summary["ingested_at"],
+        _to_json(summary["metadata"]),
         summary["span_count"],
         summary["input_tokens"],
         summary["output_tokens"],
@@ -669,6 +711,13 @@ def _summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["approval_rejected_count"],
         summary["grounding_status"],
         summary["unsupported_claim_count"],
+        summary["memory_read_count"],
+        summary["memory_write_count"],
+        summary["memory_retrieved_count"],
+        summary["memory_ignored_count"],
+        summary["memory_stale_count"],
+        summary["memory_warning_count"],
+        summary["memory_average_relevance"],
     )
 
 
@@ -680,6 +729,7 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "status": execution_status(row["status"]),
         "source_format": row["source_format"],
         "source_kind": row["source_kind"],
+        "metadata": _from_json(row["metadata_json"]) or {},
         "ingested_at": row["ingested_at"],
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
@@ -695,6 +745,13 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "approval_rejected_count": row["approval_rejected_count"],
         "grounding_status": row["grounding_status"],
         "unsupported_claim_count": row["unsupported_claim_count"],
+        "memory_read_count": row["memory_read_count"],
+        "memory_write_count": row["memory_write_count"],
+        "memory_retrieved_count": row["memory_retrieved_count"],
+        "memory_ignored_count": row["memory_ignored_count"],
+        "memory_stale_count": row["memory_stale_count"],
+        "memory_warning_count": row["memory_warning_count"],
+        "memory_average_relevance": row["memory_average_relevance"],
     }
 
 
@@ -733,6 +790,7 @@ def _summary_filters(
     grounding_status: str | None,
     source_format: str | None,
     source_kind: str | None,
+    chat_session_id: str | None,
     has_errors: bool | None,
     started_after: str | None,
     started_before: str | None,
@@ -767,6 +825,9 @@ def _summary_filters(
     if source_kind:
         clauses.append("source_kind = ?")
         params.append(source_kind)
+    if chat_session_id:
+        clauses.append("metadata_json LIKE ? ESCAPE '\\'")
+        params.append(f'%"chat_session_id": "{_escape_like(chat_session_id)}"%')
     if has_errors is True:
         clauses.append("error_count > 0")
     elif has_errors is False:
@@ -780,6 +841,10 @@ def _summary_filters(
     if not clauses:
         return "", tuple(params)
     return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _ensure_columns(connection: sqlite3.Connection, table_name: str, columns: dict[str, str]) -> None:

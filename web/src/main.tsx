@@ -21,12 +21,17 @@ import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import {
   createChatSession,
+  getChatSession,
+  listChatSessions,
   sendChatMessage,
   type ChatMessage,
   type ChatSession,
 } from "./utils/chat";
+import { buildChatMessageChips } from "./utils/chatMessageChips";
+import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
+import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
 import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
@@ -55,6 +60,7 @@ type TraceSummary = {
   approval_rejected_count: number;
   grounding_status: string;
   unsupported_claim_count: number;
+  metadata?: Record<string, unknown>;
 };
 
 type TraceListResponse = {
@@ -139,6 +145,13 @@ type DashboardSummary = {
   estimated_cost: number;
   input_tokens: number;
   output_tokens: number;
+  memory_read_count: number;
+  memory_write_count: number;
+  memory_retrieved_count: number;
+  memory_ignored_count: number;
+  memory_stale_count: number;
+  memory_warning_count: number;
+  memory_average_relevance: number | null;
 };
 
 type TraceFilters = {
@@ -150,6 +163,7 @@ type TraceFilters = {
   approvalStatus: string;
   groundingStatus: string;
   timeRange: string;
+  currentChatOnly: boolean;
   offset: number;
 };
 
@@ -180,7 +194,10 @@ function App() {
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [chatSession, setChatSession] = useState<ChatSession | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatTraceSummaries, setChatTraceSummaries] = useState<Record<string, TraceSummary>>({});
+  const [latestChatTraceId, setLatestChatTraceId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
@@ -191,6 +208,7 @@ function App() {
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
+    currentChatOnly: false,
     offset: 0,
   });
   const [refreshKey, setRefreshKey] = useState(0);
@@ -203,12 +221,39 @@ function App() {
   }, []);
 
   useEffect(() => {
+    loadChatSessions();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadChatTraceSummaries() {
+      const traceIds = uniqueTraceIds(chatMessages);
+      if (traceIds.length === 0) {
+        setChatTraceSummaries({});
+        return;
+      }
+      const summaries = await fetchJson<TraceSummary[]>(`/trace-summaries${traceSummaryQuery(traceIds)}`);
+      if (!cancelled) {
+        setChatTraceSummaries(summaryMap(summaries));
+      }
+    }
+    loadChatTraceSummaries().catch(() => {
+      if (!cancelled) {
+        setChatTraceSummaries({});
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatMessages, refreshKey]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
         const [traceList, dashboard, workflows] = await Promise.all([
-          fetchJson<TraceListResponse>(`/traces${filterQuery(filters)}`),
+          fetchJson<TraceListResponse>(`/traces${filterQuery(filters, chatSession?.session_id ?? null)}`),
           fetchJson<DashboardSummary>("/dashboard/summary"),
           fetchJson<string[]>("/workflows"),
         ]);
@@ -260,7 +305,38 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTraceId, filters, refreshKey]);
+  }, [selectedTraceId, filters, refreshKey, chatSession?.session_id]);
+
+  async function loadChatSessions() {
+    try {
+      setChatSessions(await listChatSessions(fetchJson));
+    } catch {
+      setChatSessions([]);
+    }
+  }
+
+  async function openChatSession(sessionId: string) {
+    if (!sessionId) {
+      startNewChatSession();
+      return;
+    }
+    setChatStatus({ status: "idle" });
+    const session = await getChatSession(fetchJson, sessionId);
+    setChatSession(session);
+    setChatMessages(session.messages);
+    setLatestChatTraceId(latestTraceFromMessages(session.messages));
+    setRefreshKey((value) => value + 1);
+  }
+
+  function startNewChatSession() {
+    setChatSession(null);
+    setChatMessages([]);
+    setLatestChatTraceId(null);
+    setChatStatus({ status: "idle" });
+    if (filters.currentChatOnly) {
+      setFilters({ ...filters, currentChatOnly: false, offset: 0 });
+    }
+  }
 
   async function updateApproval(spanId: string, action: ApprovalAction) {
     if (state.status !== "ready") {
@@ -281,13 +357,17 @@ function App() {
         }));
       if (!chatSession) {
         setChatSession(session);
+        setChatSessions((sessions) => upsertChatSession(sessions, session));
       }
       const result = await sendChatMessage<TraceDetail>(apiPostJson, session.session_id, {
         content: input.message,
         useOpenAI: input.useOpenAI,
       });
       setChatSession(result.session);
+      setChatSessions((sessions) => upsertChatSession(sessions, result.session));
+      setChatTraceSummaries((summaries) => ({ ...summaries, [result.trace.trace_id]: result.trace }));
       setChatMessages((messages) => [...messages, result.user_message, result.assistant_message]);
+      setLatestChatTraceId(result.trace.trace_id);
       setSelectedTraceId(result.trace.trace_id);
       setSelectedSpanId(result.trace.spans[0]?.span_id ?? null);
       setRefreshKey((value) => value + 1);
@@ -313,8 +393,10 @@ function App() {
             traces={state.traces}
             traceTotal={state.traceTotal}
             selectedTraceId={null}
-            filters={filters}
-            workflows={state.workflows}
+              filters={filters}
+              workflows={state.workflows}
+              activeChatSessionId={chatSession?.session_id ?? null}
+            latestChatTraceId={latestChatTraceId}
             onFiltersChange={setFilters}
             onSelectTrace={setSelectedTraceId}
             onClearSelection={() => setSelectedSpanId(null)}
@@ -324,8 +406,14 @@ function App() {
             <DashboardSummaryPanel summary={state.dashboard} />
             <ChatMonitor
               session={chatSession}
+              sessions={chatSessions}
               messages={chatMessages}
+              traceSummaries={chatTraceSummaries}
               status={chatStatus}
+              latestTraceId={latestChatTraceId}
+              onSelectSession={openChatSession}
+              onNewSession={startNewChatSession}
+              onSelectTrace={setSelectedTraceId}
               onSubmit={submitChatTurn}
             />
             <EmptyRunsState onClearFilters={() => setFilters(emptyFilters())} />
@@ -344,6 +432,8 @@ function App() {
           selectedTraceId={state.selectedTrace.trace_id}
           filters={filters}
           workflows={state.workflows}
+          activeChatSessionId={chatSession?.session_id ?? null}
+          latestChatTraceId={latestChatTraceId}
           onFiltersChange={setFilters}
           onSelectTrace={setSelectedTraceId}
           onClearSelection={() => setSelectedSpanId(null)}
@@ -354,8 +444,14 @@ function App() {
           <DashboardSummaryPanel summary={state.dashboard} />
           <ChatMonitor
             session={chatSession}
+            sessions={chatSessions}
             messages={chatMessages}
+            traceSummaries={chatTraceSummaries}
             status={chatStatus}
+            latestTraceId={latestChatTraceId}
+            onSelectSession={openChatSession}
+            onNewSession={startNewChatSession}
+            onSelectTrace={setSelectedTraceId}
             onSubmit={submitChatTurn}
           />
           <section className="traceRecord">
@@ -391,6 +487,8 @@ function RunsSidebar({
   selectedTraceId,
   filters,
   workflows,
+  activeChatSessionId,
+  latestChatTraceId,
   onFiltersChange,
   onSelectTrace,
   onClearSelection,
@@ -401,6 +499,8 @@ function RunsSidebar({
   selectedTraceId: string | null;
   filters: TraceFilters;
   workflows: string[];
+  activeChatSessionId: string | null;
+  latestChatTraceId: string | null;
   onFiltersChange: (filters: TraceFilters) => void;
   onSelectTrace: (traceId: string) => void;
   onClearSelection: () => void;
@@ -413,7 +513,12 @@ function RunsSidebar({
   return (
     <aside className="sidebar">
       <div className="sidebarHeader">Runs Inbox</div>
-      <TraceFiltersPanel filters={filters} workflows={workflows} onChange={onFiltersChange} />
+      <TraceFiltersPanel
+        filters={filters}
+        workflows={workflows}
+        activeChatSessionId={activeChatSessionId}
+        onChange={onFiltersChange}
+      />
       <div className="runsCount">{traceTotal} matching runs</div>
       <div className="traceList">
         {traces.map((trace) => (
@@ -425,7 +530,11 @@ function RunsSidebar({
           >
             <span>{trace.workflow_name}</span>
             <small>{trace.trace_id}</small>
-            <TraceBadges trace={trace} />
+            <TraceBadges
+              trace={trace}
+              isChatTurn={isChatTrace(trace, activeChatSessionId)}
+              isLatestChatTrace={isLatestChatTrace(trace.trace_id, latestChatTraceId)}
+            />
           </button>
         ))}
       </div>
@@ -475,13 +584,25 @@ type ChatInput = {
 
 function ChatMonitor({
   session,
+  sessions,
   messages,
+  traceSummaries,
   status,
+  latestTraceId,
+  onSelectSession,
+  onNewSession,
+  onSelectTrace,
   onSubmit,
 }: {
   session: ChatSession | null;
+  sessions: ChatSession[];
   messages: ChatMessage[];
+  traceSummaries: Record<string, TraceSummary>;
   status: ChatStatus;
+  latestTraceId: string | null;
+  onSelectSession: (sessionId: string) => Promise<void>;
+  onNewSession: () => void;
+  onSelectTrace: (traceId: string) => void;
   onSubmit: (input: ChatInput) => Promise<void>;
 }) {
   const [customerEmail, setCustomerEmail] = useState("customer@example.com");
@@ -507,7 +628,19 @@ function ChatMonitor({
           <small>Live customer-service agent</small>
           <h2>Chat monitor</h2>
         </div>
-        <span>{session ? session.session_id : "No session"}</span>
+        <div className="chatSessionControls">
+          <select value={session?.session_id ?? ""} onChange={(event) => onSelectSession(event.target.value)}>
+            <option value="">New session</option>
+            {sessions.map((chatSession) => (
+              <option value={chatSession.session_id} key={chatSession.session_id}>
+                {chatSession.title ?? chatSession.customer_email} · {chatSession.customer_email}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={onNewSession}>
+            New
+          </button>
+        </div>
       </div>
       <div className="chatBody">
         <form className="chatComposer" onSubmit={submit}>
@@ -544,7 +677,21 @@ function ChatMonitor({
               <div className={`chatBubble ${chatMessage.role}`} key={chatMessage.message_id}>
                 <small>{chatMessage.role}</small>
                 <p>{chatMessage.content}</p>
-                {chatMessage.trace_id ? <span>Trace: {chatMessage.trace_id}</span> : null}
+                {chatMessage.trace_id ? (
+                  <div className="chatMessageChips">
+                    {buildChatMessageChips(traceSummaries[chatMessage.trace_id]).map((chip) => (
+                      <span className={`chatMessageChip ${chip.tone}`} key={chip.label}>
+                        {chip.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {chatMessage.trace_id ? (
+                  <button className="chatTraceLink" type="button" onClick={() => onSelectTrace(chatMessage.trace_id!)}>
+                    Trace: {chatMessage.trace_id}
+                    {chatMessage.trace_id === latestTraceId ? <strong>Latest</strong> : null}
+                  </button>
+                ) : null}
               </div>
             ))
           )}
@@ -610,6 +757,17 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
       </div>
+      <div className="memoryFleetSummary">
+        <SummaryFact
+          icon={<Braces size={16} />}
+          label="Memory events"
+          value={`${summary.memory_read_count} reads · ${summary.memory_write_count} writes`}
+        />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Memory warnings" value={String(summary.memory_warning_count)} />
+        <SummaryFact icon={<Braces size={16} />} label="Ignored memory" value={String(summary.memory_ignored_count)} />
+        <SummaryFact icon={<Clock3 size={16} />} label="Stale memory" value={String(summary.memory_stale_count)} />
+        <SummaryFact icon={<ShieldCheck size={16} />} label="Avg relevance" value={formatRelevance(summary.memory_average_relevance)} />
+      </div>
       <div className="sourceSummary">
         <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
         <SourceBreakdown title="Ingest format" counts={summary.source_kind_counts} labelForValue={sourceKindLabel} />
@@ -649,107 +807,153 @@ function SourceBreakdown({
 function TraceFiltersPanel({
   filters,
   workflows,
+  activeChatSessionId,
   onChange,
 }: {
   filters: TraceFilters;
   workflows: string[];
+  activeChatSessionId: string | null;
   onChange: (filters: TraceFilters) => void;
 }) {
   function update(next: Partial<TraceFilters>) {
     onChange({ ...filters, ...next, offset: 0 });
   }
 
+  const activeCount = activeFilterCount(filters);
+
   return (
     <div className="traceFilters">
-      <label>
-        <span>Workflow</span>
-        <select value={filters.workflowName} onChange={(event) => update({ workflowName: event.target.value })}>
-          <option value="">Any</option>
-          {workflows.map((workflow) => (
-            <option value={workflow} key={workflow}>
-              {workflow}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <span>Status</span>
-        <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
-          <option value="">Any</option>
-          <option value="passed">Passed</option>
-          <option value="failed">Failed</option>
-          <option value="running">Running</option>
-        </select>
-      </label>
-      <label>
-        <span>Source</span>
-        <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
-          <option value="">Any</option>
-          <option value="agenttrace">AgentTrace</option>
-          <option value="openai-agents">OpenAI Agents</option>
-        </select>
-      </label>
-      <label>
-        <span>Format</span>
-        <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
-          <option value="">Any</option>
-          <option value="trace_export">Trace export</option>
-          <option value="event_stream">Event stream</option>
-          <option value="live_api">Live API</option>
-        </select>
-      </label>
-      <label>
-        <span>Errors</span>
-        <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
-          <option value="">Any</option>
-          <option value="true">Has errors</option>
-          <option value="false">No errors</option>
-        </select>
-      </label>
-      <label>
-        <span>Approval</span>
-        <select
-          value={filters.approvalStatus}
-          onChange={(event) => update({ approvalStatus: event.target.value })}
-        >
-          <option value="">Any</option>
-          <option value="pending">Needs approval</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-          <option value="none">No approval</option>
-        </select>
-      </label>
-      <label>
-        <span>Grounding</span>
-        <select
-          value={filters.groundingStatus}
-          onChange={(event) => update({ groundingStatus: event.target.value })}
-        >
-          <option value="">Any</option>
-          <option value="grounded">Grounded</option>
-          <option value="recovered">Recovered</option>
-          <option value="failed">Failed</option>
-        </select>
-      </label>
-      <label>
-        <span>Time range</span>
-        <select value={filters.timeRange} onChange={(event) => update({ timeRange: event.target.value })}>
-          <option value="">Any time</option>
-          <option value="15m">Last 15 minutes</option>
-          <option value="1h">Last hour</option>
-          <option value="24h">Last 24 hours</option>
-        </select>
-      </label>
-      <button type="button" onClick={() => onChange(emptyFilters())}>
-        Clear
-      </button>
+      <div className="filterHeader">
+        <span>Filters</span>
+        {activeCount > 0 ? <strong>{activeCount}</strong> : null}
+        <button type="button" onClick={() => onChange(emptyFilters())} disabled={activeCount === 0}>
+          Clear
+        </button>
+      </div>
+      <details className="filterGroup" open>
+        <summary>Run</summary>
+        <div className="filterFields">
+          <label>
+            <span>Workflow</span>
+            <select value={filters.workflowName} onChange={(event) => update({ workflowName: event.target.value })}>
+              <option value="">Any</option>
+              {workflows.map((workflow) => (
+                <option value={workflow} key={workflow}>
+                  {workflow}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
+              <option value="">Any</option>
+              <option value="passed">Passed</option>
+              <option value="failed">Failed</option>
+              <option value="running">Running</option>
+            </select>
+          </label>
+          <label className="inlineFilter">
+            <input
+              type="checkbox"
+              checked={filters.currentChatOnly}
+              disabled={!activeChatSessionId}
+              onChange={(event) => update({ currentChatOnly: event.target.checked })}
+            />
+            <span>Current chat only</span>
+          </label>
+        </div>
+      </details>
+      <details className="filterGroup">
+        <summary>Signals</summary>
+        <div className="filterFields">
+          <label>
+            <span>Errors</span>
+            <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
+              <option value="">Any</option>
+              <option value="true">Has errors</option>
+              <option value="false">No errors</option>
+            </select>
+          </label>
+          <label>
+            <span>Approval</span>
+            <select
+              value={filters.approvalStatus}
+              onChange={(event) => update({ approvalStatus: event.target.value })}
+            >
+              <option value="">Any</option>
+              <option value="pending">Needs approval</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="none">No approval</option>
+            </select>
+          </label>
+          <label>
+            <span>Grounding</span>
+            <select
+              value={filters.groundingStatus}
+              onChange={(event) => update({ groundingStatus: event.target.value })}
+            >
+              <option value="">Any</option>
+              <option value="grounded">Grounded</option>
+              <option value="recovered">Recovered</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+        </div>
+      </details>
+      <details className="filterGroup">
+        <summary>Source</summary>
+        <div className="filterFields">
+          <label>
+            <span>Source</span>
+            <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
+              <option value="">Any</option>
+              <option value="agenttrace">AgentTrace</option>
+              <option value="openai-agents">OpenAI Agents</option>
+            </select>
+          </label>
+          <label>
+            <span>Format</span>
+            <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
+              <option value="">Any</option>
+              <option value="trace_export">Trace export</option>
+              <option value="event_stream">Event stream</option>
+              <option value="live_api">Live API</option>
+            </select>
+          </label>
+          <label>
+            <span>Time range</span>
+            <select value={filters.timeRange} onChange={(event) => update({ timeRange: event.target.value })}>
+              <option value="">Any time</option>
+              <option value="15m">Last 15 minutes</option>
+              <option value="1h">Last hour</option>
+              <option value="24h">Last 24 hours</option>
+            </select>
+          </label>
+        </div>
+      </details>
     </div>
   );
 }
 
-function TraceBadges({ trace }: { trace: TraceSummary }) {
+function TraceBadges({
+  trace,
+  isChatTurn,
+  isLatestChatTrace,
+}: {
+  trace: TraceSummary;
+  isChatTurn: boolean;
+  isLatestChatTrace: boolean;
+}) {
+  const chatBadges = chatTurnBadges(trace, { isChatTurn, isLatest: isLatestChatTrace });
   return (
     <div className="traceBadges">
+      {chatBadges.map((badge) => (
+        <strong className={badge === "Latest" ? "chip success" : "chip neutral"} key={badge}>
+          {badge}
+        </strong>
+      ))}
       <span className={`chip status ${statusTone(trace.status)}`}>Status: {executionStatus(trace.status)}</span>
       <span className="chip neutral">{sourceLabel(trace.source_format)}</span>
       <span className="chip neutral">{sourceKindLabel(trace.source_kind)}</span>
@@ -812,6 +1016,7 @@ function ExecutiveSummaryPanel({
   const approvals = countApprovals(trace.spans);
   const mcpCalls = trace.spans.filter((span) => span.span_data.tool_protocol === "mcp").length;
   const guardrails = trace.spans.filter((span) => span.span_type === "guardrail" || span.span_type === "validation").length;
+  const memorySpans = trace.spans.filter((span) => span.span_type === "memory_read" || span.span_type === "memory_write");
 
   return (
     <section className={approvals.pending > 0 ? "executiveSummary attention" : "executiveSummary"}>
@@ -823,6 +1028,7 @@ function ExecutiveSummaryPanel({
         <SummaryFact icon={<UserCheck size={16} />} label="Approvals" value={`${approvals.pending} waiting`} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding" value={grounding.recovered ? "recovered" : grounding.status} />
         <SummaryFact icon={<Wrench size={16} />} label="MCP calls" value={String(mcpCalls)} />
+        <SummaryFact icon={<Braces size={16} />} label="Memory" value={`${memorySpans.length} events`} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Guardrails" value={String(guardrails)} />
         <SummaryFact icon={<Clock3 size={16} />} label="Duration" value={formatDuration(trace.duration_ms)} />
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
@@ -974,6 +1180,10 @@ function AnalysisPanel({
   const approvals = spans.filter((span) => span.span_type === "approval");
   const pendingApprovals = approvals.filter((span) => getApprovalStatus(span.span_type, span.span_data)?.isPending);
   const handoffs = spans.filter((span) => span.span_type === "handoff");
+  const memorySpans = spans.filter((span) => span.span_type === "memory_read" || span.span_type === "memory_write");
+  const memoryReads = memorySpans.filter((span) => span.span_type === "memory_read").length;
+  const memoryWrites = memorySpans.filter((span) => span.span_type === "memory_write").length;
+  const memorySummary = buildMemorySummary(spans);
   const erroredSpans = spans.filter((span) => span.error);
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
 
@@ -991,6 +1201,7 @@ function AnalysisPanel({
         />
         <Insight icon={<ArrowRight size={16} />} label="Handoffs" value={`${handoffs.length} supervisor routes`} />
         <Insight icon={<Wrench size={16} />} label="MCP tools" value={`${mcpSpans.length} calls captured`} />
+        <Insight icon={<Braces size={16} />} label="Memory" value={`${memoryReads} reads · ${memoryWrites} writes`} />
         <Insight icon={<ShieldCheck size={16} />} label="Guardrails" value={`${guardrails.length} validation span`} />
         <Insight icon={<UserCheck size={16} />} label="Approvals" value={`${pendingApprovals.length} waiting · ${approvals.length} total`} />
         <Insight icon={<AlertCircle size={16} />} label="Errors" value={`${erroredSpans.length} errored span`} />
@@ -998,6 +1209,7 @@ function AnalysisPanel({
       </div>
       <ApprovalQueue approvals={approvals} onSelectSpan={onSelectSpan} onApprovalAction={onApprovalAction} />
       <GroundingPanel grounding={grounding} onSelectSpan={onSelectSpan} />
+      <MemoryPanel summary={memorySummary} onSelectSpan={onSelectSpan} />
       <div className="typeBreakdown">
         {Object.entries(metrics.spans_by_type).map(([type, count]) => (
           <div key={type} className="typeBar">
@@ -1013,6 +1225,16 @@ function AnalysisPanel({
         <div className="quickLinks">
           <small>MCP tool calls</small>
           {mcpSpans.map((span) => (
+            <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+              {span.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {memorySpans.length > 0 ? (
+        <div className="quickLinks">
+          <small>Memory events</small>
+          {memorySpans.map((span) => (
             <button key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
               {span.name}
             </button>
@@ -1117,6 +1339,46 @@ function GroundingPanel({
       ) : (
         <p className="groundingOk">No unsupported claims detected.</p>
       )}
+    </div>
+  );
+}
+
+function MemoryPanel({ summary, onSelectSpan }: { summary: MemorySummary; onSelectSpan: (spanId: string) => void }) {
+  if (summary.readCount + summary.writeCount === 0) {
+    return null;
+  }
+
+  return (
+    <div className={summary.warnings.length > 0 ? "memoryPanel warning" : "memoryPanel"}>
+      <div className="memoryHeader">
+        <strong>Memory analysis</strong>
+        <span>{summary.warnings.length > 0 ? `${summary.warnings.length} warning` : "Healthy"}</span>
+      </div>
+      <div className="memoryStats">
+        <span>Reads <strong>{summary.readCount}</strong></span>
+        <span>Writes <strong>{summary.writeCount}</strong></span>
+        <span>Retrieved <strong>{summary.retrievedCount}</strong></span>
+        <span>Relevance <strong>{summary.averageRelevance === null ? "-" : summary.averageRelevance.toFixed(2)}</strong></span>
+        <span>Used <strong>{summary.usedCount}</strong></span>
+        <span>Ignored <strong>{summary.ignoredCount}</strong></span>
+      </div>
+      {summary.stores.length > 0 ? (
+        <div className="memoryStores">
+          <small>Stores</small>
+          <span>{summary.stores.join(" · ")}</span>
+        </div>
+      ) : null}
+      {summary.warnings.length > 0 ? (
+        <div className="memoryWarnings">
+          <small>Warnings</small>
+          {summary.warnings.map((warning, index) => (
+            <button className={warning.tone} key={`${warning.spanId}-${warning.label}-${index}`} onClick={() => onSelectSpan(warning.spanId)}>
+              <strong>{warning.label}</strong>
+              <span>{warning.detail}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1309,6 +1571,7 @@ function spanIcon(spanType: string) {
   if (spanType === "guardrail") return <ShieldCheck size={15} />;
   if (spanType === "handoff") return <ArrowRight size={15} />;
   if (spanType === "approval") return <UserCheck size={15} />;
+  if (spanType === "memory_read" || spanType === "memory_write") return <Braces size={15} />;
   return <Activity size={15} />;
 }
 
@@ -1322,7 +1585,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function filterQuery(filters: TraceFilters): string {
+function filterQuery(filters: TraceFilters, activeChatSessionId: string | null): string {
   const params = new URLSearchParams();
   params.set("limit", "50");
   params.set("offset", String(filters.offset));
@@ -1333,10 +1596,17 @@ function filterQuery(filters: TraceFilters): string {
   if (filters.errorStatus) params.set("has_errors", filters.errorStatus);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
+  if (filters.currentChatOnly && activeChatSessionId) params.set("chat_session_id", activeChatSessionId);
   const startedAfter = startedAfterForRange(filters.timeRange);
   if (startedAfter) params.set("started_after", startedAfter);
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function traceSummaryQuery(traceIds: string[]): string {
+  const params = new URLSearchParams();
+  params.set("trace_ids", traceIds.join(","));
+  return `?${params.toString()}`;
 }
 
 function emptyFilters(): TraceFilters {
@@ -1349,8 +1619,44 @@ function emptyFilters(): TraceFilters {
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
+    currentChatOnly: false,
     offset: 0,
   };
+}
+
+function activeFilterCount(filters: TraceFilters): number {
+  return [
+    filters.workflowName,
+    filters.status,
+    filters.sourceFormat,
+    filters.sourceKind,
+    filters.errorStatus,
+    filters.approvalStatus,
+    filters.groundingStatus,
+    filters.timeRange,
+    filters.currentChatOnly ? "current-chat" : "",
+  ].filter(Boolean).length;
+}
+
+function latestTraceFromMessages(messages: ChatMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const traceId = messages[index].trace_id;
+    if (traceId) return traceId;
+  }
+  return null;
+}
+
+function uniqueTraceIds(messages: ChatMessage[]): string[] {
+  return Array.from(new Set(messages.map((message) => message.trace_id).filter((traceId): traceId is string => Boolean(traceId))));
+}
+
+function summaryMap(summaries: TraceSummary[]): Record<string, TraceSummary> {
+  return Object.fromEntries(summaries.map((summary) => [summary.trace_id, summary]));
+}
+
+function upsertChatSession(sessions: ChatSession[], session: ChatSession): ChatSession[] {
+  const next = sessions.filter((item) => item.session_id !== session.session_id);
+  return [session, ...next];
 }
 
 function executionStatus(status: string): string {
@@ -1367,6 +1673,10 @@ function startedAfterForRange(value: string): string | null {
   const minutes = minutesByRange[value];
   if (!minutes) return null;
   return new Date(Date.now() - minutes * 60 * 1000).toISOString();
+}
+
+function formatRelevance(value: number | null): string {
+  return value === null ? "-" : value.toFixed(2);
 }
 
 async function postJson<T>(path: string): Promise<T> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createChatSession, sendChatMessage, type ChatTransport } from "./chat";
+import { createChatSession, getChatSession, listChatSessions, sendChatMessage, type ChatGetTransport, type ChatTransport } from "./chat";
 
 describe("chat api helpers", () => {
   it("creates a chat session with backend field names", async () => {
@@ -51,5 +51,23 @@ describe("chat api helpers", () => {
         body: { content: "Refund?", use_openai: false, openai_api: "chat_completions" },
       },
     ]);
+  });
+
+  it("loads chat sessions and session details", async () => {
+    const calls: string[] = [];
+    const transport: ChatGetTransport = async <T>(path: string): Promise<T> => {
+      calls.push(path);
+      if (path === "/chat/sessions") {
+        return [{ session_id: "chat_1" }] as T;
+      }
+      return { session_id: "chat_1", messages: [{ message_id: "msg_1" }] } as T;
+    };
+
+    const sessions = await listChatSessions(transport);
+    const detail = await getChatSession(transport, "chat_1");
+
+    expect(sessions[0].session_id).toBe("chat_1");
+    expect(detail.messages[0].message_id).toBe("msg_1");
+    expect(calls).toEqual(["/chat/sessions", "/chat/sessions/chat_1"]);
   });
 });
