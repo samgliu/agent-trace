@@ -6,8 +6,10 @@ import {
   ArrowRight,
   Bot,
   Braces,
+  CheckCircle2,
   CircleDollarSign,
   Clock3,
+  FlaskConical,
   GitBranch,
   MessageSquare,
   Network,
@@ -30,6 +32,13 @@ import {
 import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
+import {
+  evalPassRateLabel,
+  evalStatusLabel,
+  failedEvalCases,
+  runSupportTriageEvalSuite,
+  type EvalSuiteRun,
+} from "./utils/evals";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
 import { buildSpanFacts } from "./utils/spanFacts";
@@ -197,6 +206,8 @@ type LoadState =
       grounding: GroundingSummary;
     };
 
+type EvalRunStatus = { status: "idle" } | { status: "running" } | { status: "error"; message: string };
+
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
@@ -209,6 +220,8 @@ function App() {
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
   const [liveWorkflowRun, setLiveWorkflowRun] = useState<WorkflowRun<TraceDetail> | null>(null);
   const [liveWorkflowError, setLiveWorkflowError] = useState<string | null>(null);
+  const [evalRun, setEvalRun] = useState<EvalSuiteRun | null>(null);
+  const [evalRunStatus, setEvalRunStatus] = useState<EvalRunStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
@@ -443,6 +456,18 @@ function App() {
     }
   }
 
+  async function runEvals() {
+    setEvalRunStatus({ status: "running" });
+    try {
+      const result = await runSupportTriageEvalSuite(apiPostJson);
+      setEvalRun(result);
+      setEvalRunStatus({ status: "idle" });
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setEvalRunStatus({ status: "error", message: error instanceof Error ? error.message : "Could not run evals." });
+    }
+  }
+
   async function submitChatTurn(input: ChatInput) {
     setChatStatus({ status: "submitting" });
     try {
@@ -501,6 +526,7 @@ function App() {
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
+            <EvalDashboardPanel run={evalRun} status={evalRunStatus} onRun={runEvals} onSelectTrace={setSelectedTraceId} />
             <LiveWorkflowPanel
               run={liveWorkflowRun}
               error={liveWorkflowError}
@@ -546,6 +572,7 @@ function App() {
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
+          <EvalDashboardPanel run={evalRun} status={evalRunStatus} onRun={runEvals} onSelectTrace={setSelectedTraceId} />
           <LiveWorkflowPanel
             run={liveWorkflowRun}
             error={liveWorkflowError}
@@ -964,6 +991,60 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
         <SourceBreakdown title="Ingest format" counts={summary.source_kind_counts} labelForValue={sourceKindLabel} />
       </div>
+    </section>
+  );
+}
+
+function EvalDashboardPanel({
+  run,
+  status,
+  onRun,
+  onSelectTrace,
+}: {
+  run: EvalSuiteRun | null;
+  status: EvalRunStatus;
+  onRun: () => Promise<void>;
+  onSelectTrace: (traceId: string) => void;
+}) {
+  const failures = failedEvalCases(run);
+  const running = status.status === "running";
+
+  return (
+    <section className="evalDashboard">
+      <div className="evalDashboardHeader">
+        <div>
+          <small>Evaluation dashboard</small>
+          <h2>Support agent quality</h2>
+        </div>
+        <button type="button" onClick={() => void onRun()} disabled={running}>
+          {running ? <Activity size={15} /> : <FlaskConical size={15} />}
+          Run evals
+        </button>
+      </div>
+      <div className="evalSummaryGrid">
+        <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
+        <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
+        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? `${run.passed}/${run.total}` : "-"} />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
+      </div>
+      {status.status === "error" ? <p className="evalError">{status.message}</p> : null}
+      {run ? (
+        <div className="evalCases">
+          {(failures.length > 0 ? failures : run.results).slice(0, 4).map((result) => (
+            <button
+              type="button"
+              className={result.passed ? "passed" : "failed"}
+              key={result.case_id}
+              onClick={() => onSelectTrace(result.trace_id)}
+            >
+              <span>{result.name}</span>
+              <strong>{Math.round(result.score * 100)}%</strong>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
+      )}
     </section>
   );
 }

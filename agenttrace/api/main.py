@@ -29,6 +29,7 @@ from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
 from agenttrace.core.summary import build_dashboard_summary
+from agenttrace.evals.support_triage import list_support_triage_eval_suites, run_support_triage_eval_suite
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -130,6 +131,18 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     @app.get("/workflows")
     def list_workflows() -> list[str]:
         return sorted(trace_store.workflow_names())
+
+    @app.get("/evals")
+    def list_evals() -> dict[str, Any]:
+        return {"suites": list_support_triage_eval_suites()}
+
+    @app.post("/evals/support-triage/run")
+    def run_support_triage_evals() -> dict[str, Any]:
+        result = run_support_triage_eval_suite()
+        for case_result in result.results:
+            trace = _with_eval_metadata(case_result.trace, suite_id=result.suite_id, case_id=case_result.case.case_id)
+            trace_store.save_trace(trace)
+        return result.to_dict()
 
     @app.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
@@ -358,6 +371,26 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
 
 def _database_path() -> Path:
     return Path(os.environ.get("AGENTTRACE_DB", str(DEFAULT_DB_PATH)))
+
+
+def _with_eval_metadata(trace: Trace, *, suite_id: str, case_id: str) -> Trace:
+    metadata = {
+        **trace.metadata,
+        "eval_suite_id": suite_id,
+        "eval_case_id": case_id,
+        "source_kind": "eval_run",
+    }
+    return Trace(
+        trace_id=trace.trace_id,
+        workflow_name=trace.workflow_name,
+        group_id=trace.group_id,
+        status=trace.status,
+        metadata=metadata,
+        raw_payload=trace.raw_payload,
+        started_at=trace.started_at,
+        ended_at=trace.ended_at,
+        spans=trace.spans,
+    )
 
 
 class WorkflowRunRegistry:

@@ -41,6 +41,29 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_list_evals(self) -> None:
+        response = self.client.get("/evals")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["suites"][0]["suite_id"], "support-triage-core")
+        self.assertEqual(payload["suites"][0]["case_count"], 4)
+
+    def test_run_support_triage_evals_saves_eval_traces(self) -> None:
+        response = self.client.post("/evals/support-triage/run")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["suite_id"], "support-triage-core")
+        self.assertEqual(payload["passed"], 4)
+        self.assertEqual(payload["failed"], 0)
+        trace_response = self.client.get("/traces/trace_eval_support_triage_annual_refund_approval")
+        self.assertEqual(trace_response.status_code, 200)
+        trace = trace_response.json()
+        self.assertEqual(trace["status"], "recovered")
+        self.assertEqual(trace["metadata"]["eval_suite_id"], "support-triage-core")
+        self.assertEqual(trace["metadata"]["source_kind"], "eval_run")
+
     def test_cors_allows_local_dashboard(self) -> None:
         response = self.client.options(
             "/traces",
