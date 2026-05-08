@@ -289,6 +289,53 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(saved["input"]["customer_email"], "customer@example.com")
             self.assertEqual([item["run_id"] for item in active_runs], ["run_1"])
 
+    def test_eval_run_round_trip(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            store.save_trace(Trace(trace_id="trace_eval_case", workflow_name="support-triage", status="passed"))
+
+            saved = store.save_eval_run(
+                {
+                    "suite_id": "support-triage-core",
+                    "name": "Support triage core",
+                    "total": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "pass_rate": 1.0,
+                    "results": [
+                        {
+                            "case_id": "duplicate-charge-refund",
+                            "name": "Duplicate charge refund",
+                            "trace_id": "trace_eval_case",
+                            "passed": True,
+                            "score": 1.0,
+                            "checks": [
+                                {
+                                    "name": "trace_status",
+                                    "expected": "passed",
+                                    "actual": "passed",
+                                    "passed": True,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                run_id="eval_1",
+            )
+
+            reopened = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            reopened.initialize()
+            listed = reopened.list_eval_runs()
+            detail = reopened.get_eval_run("eval_1")
+
+            self.assertEqual(saved["status"], "passed")
+            self.assertEqual(listed["total"], 1)
+            self.assertEqual(listed["items"][0]["run_id"], "eval_1")
+            assert detail is not None
+            self.assertEqual(detail["results"][0]["case_id"], "duplicate-charge-refund")
+            self.assertEqual(detail["results"][0]["checks"][0]["name"], "trace_status")
+
     def test_trace_summary_includes_chat_metadata(self) -> None:
         with TemporaryDirectory() as temp_dir:
             store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")

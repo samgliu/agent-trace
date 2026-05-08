@@ -54,15 +54,27 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
+        self.assertIn("run_id", payload)
         self.assertEqual(payload["suite_id"], "support-triage-core")
         self.assertEqual(payload["passed"], 4)
         self.assertEqual(payload["failed"], 0)
+        history_response = self.client.get("/eval-runs")
+        detail_response = self.client.get(f"/eval-runs/{payload['run_id']}")
         trace_response = self.client.get("/traces/trace_eval_support_triage_annual_refund_approval")
+        self.assertEqual(history_response.status_code, 200)
+        self.assertEqual(history_response.json()["items"][0]["run_id"], payload["run_id"])
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["results"][0]["case_id"], "duplicate-charge-refund")
         self.assertEqual(trace_response.status_code, 200)
         trace = trace_response.json()
         self.assertEqual(trace["status"], "recovered")
         self.assertEqual(trace["metadata"]["eval_suite_id"], "support-triage-core")
         self.assertEqual(trace["metadata"]["source_kind"], "eval_run")
+
+    def test_get_missing_eval_run_returns_404(self) -> None:
+        response = self.client.get("/eval-runs/missing")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_cors_allows_local_dashboard(self) -> None:
         response = self.client.options(

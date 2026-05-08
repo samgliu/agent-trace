@@ -609,6 +609,45 @@ h2 {
   font-weight: 800;
 }
 
+.evalHistory {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1f3;
+}
+
+.evalHistory small {
+  color: #637179;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.evalHistory div {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 9px;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.evalHistory div.failed {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
+.evalHistory strong,
+.evalHistory em {
+  font-style: normal;
+  font-weight: 800;
+}
+
 .liveWorkflow {
   margin-bottom: 22px;
   padding: 16px;
@@ -1811,5 +1850,9 @@ h3 {
   .spanMeta {
     max-width: 100%;
     justify-content: flex-start;
+  }
+
+  .evalHistory div {
+    grid-template-columns: 1fr;
   }
 }

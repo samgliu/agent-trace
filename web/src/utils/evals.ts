@@ -15,19 +15,36 @@ export type EvalCaseResult = {
 };
 
 export type EvalSuiteRun = {
+  run_id: string;
   suite_id: string;
   name: string;
+  status: string;
   total: number;
   passed: number;
   failed: number;
   pass_rate: number;
+  created_at: string;
   results: EvalCaseResult[];
 };
 
+export type EvalRunSummary = Omit<EvalSuiteRun, "results">;
+
+export type EvalRunListResponse = {
+  items: EvalRunSummary[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
 export type EvalSuiteTransport = <T>(path: string, body?: unknown) => Promise<T>;
+export type EvalSuiteGetTransport = <T>(path: string) => Promise<T>;
 
 export function runSupportTriageEvalSuite(transport: EvalSuiteTransport): Promise<EvalSuiteRun> {
   return transport("/evals/support-triage/run");
+}
+
+export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunListResponse> {
+  return transport("/eval-runs?limit=5");
 }
 
 export function evalPassRateLabel(passRate: number): string {

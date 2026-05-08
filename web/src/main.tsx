@@ -36,7 +36,9 @@ import {
   evalPassRateLabel,
   evalStatusLabel,
   failedEvalCases,
+  listEvalRuns,
   runSupportTriageEvalSuite,
+  type EvalRunSummary,
   type EvalSuiteRun,
 } from "./utils/evals";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
@@ -221,6 +223,7 @@ function App() {
   const [liveWorkflowRun, setLiveWorkflowRun] = useState<WorkflowRun<TraceDetail> | null>(null);
   const [liveWorkflowError, setLiveWorkflowError] = useState<string | null>(null);
   const [evalRun, setEvalRun] = useState<EvalSuiteRun | null>(null);
+  const [evalHistory, setEvalHistory] = useState<EvalRunSummary[]>([]);
   const [evalRunStatus, setEvalRunStatus] = useState<EvalRunStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
@@ -245,6 +248,7 @@ function App() {
 
   useEffect(() => {
     loadChatSessions();
+    loadEvalRuns();
   }, []);
 
   useEffect(() => {
@@ -374,6 +378,15 @@ function App() {
     }
   }
 
+  async function loadEvalRuns() {
+    try {
+      const history = await listEvalRuns(fetchJson);
+      setEvalHistory(history.items);
+    } catch {
+      setEvalHistory([]);
+    }
+  }
+
   async function openChatSession(sessionId: string) {
     if (!sessionId) {
       startNewChatSession();
@@ -461,6 +474,7 @@ function App() {
     try {
       const result = await runSupportTriageEvalSuite(apiPostJson);
       setEvalRun(result);
+      setEvalHistory((history) => [result, ...history.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setEvalRunStatus({ status: "idle" });
       setRefreshKey((value) => value + 1);
     } catch (error) {
@@ -526,7 +540,13 @@ function App() {
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
-            <EvalDashboardPanel run={evalRun} status={evalRunStatus} onRun={runEvals} onSelectTrace={setSelectedTraceId} />
+            <EvalDashboardPanel
+              run={evalRun}
+              history={evalHistory}
+              status={evalRunStatus}
+              onRun={runEvals}
+              onSelectTrace={setSelectedTraceId}
+            />
             <LiveWorkflowPanel
               run={liveWorkflowRun}
               error={liveWorkflowError}
@@ -572,7 +592,13 @@ function App() {
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
-          <EvalDashboardPanel run={evalRun} status={evalRunStatus} onRun={runEvals} onSelectTrace={setSelectedTraceId} />
+          <EvalDashboardPanel
+            run={evalRun}
+            history={evalHistory}
+            status={evalRunStatus}
+            onRun={runEvals}
+            onSelectTrace={setSelectedTraceId}
+          />
           <LiveWorkflowPanel
             run={liveWorkflowRun}
             error={liveWorkflowError}
@@ -997,11 +1023,13 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
 
 function EvalDashboardPanel({
   run,
+  history,
   status,
   onRun,
   onSelectTrace,
 }: {
   run: EvalSuiteRun | null;
+  history: EvalRunSummary[];
   status: EvalRunStatus;
   onRun: () => Promise<void>;
   onSelectTrace: (traceId: string) => void;
@@ -1045,6 +1073,18 @@ function EvalDashboardPanel({
       ) : (
         <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
       )}
+      {history.length > 0 ? (
+        <div className="evalHistory">
+          <small>Recent eval runs</small>
+          {history.map((item) => (
+            <div className={item.failed === 0 ? "passed" : "failed"} key={item.run_id}>
+              <span>{formatShortTimestamp(item.created_at)}</span>
+              <strong>{evalPassRateLabel(item.pass_rate)}</strong>
+              <em>{item.failed === 0 ? "passing" : `${item.failed} failed`}</em>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1950,6 +1990,17 @@ function startedAfterForRange(value: string): string | null {
 
 function formatRelevance(value: number | null): string {
   return value === null ? "-" : value.toFixed(2);
+}
+
+function formatShortTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 async function postJson<T>(path: string): Promise<T> {

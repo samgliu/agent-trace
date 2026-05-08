@@ -136,13 +136,24 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def list_evals() -> dict[str, Any]:
         return {"suites": list_support_triage_eval_suites()}
 
+    @app.get("/eval-runs")
+    def list_eval_runs(limit: int = Query(10, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict[str, Any]:
+        return trace_store.list_eval_runs(limit=limit, offset=offset)
+
+    @app.get("/eval-runs/{run_id}")
+    def get_eval_run(run_id: str) -> dict[str, Any]:
+        run = trace_store.get_eval_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Eval run not found: {run_id}")
+        return run
+
     @app.post("/evals/support-triage/run")
     def run_support_triage_evals() -> dict[str, Any]:
         result = run_support_triage_eval_suite()
         for case_result in result.results:
             trace = _with_eval_metadata(case_result.trace, suite_id=result.suite_id, case_id=case_result.case.case_id)
             trace_store.save_trace(trace)
-        return result.to_dict()
+        return trace_store.save_eval_run(result.to_dict())
 
     @app.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
