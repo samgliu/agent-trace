@@ -1,4 +1,5 @@
 import unittest
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -249,6 +250,41 @@ class ApiEndpointsTest(unittest.TestCase):
         saved = self.client.get("/traces/trace_api_runner")
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["metadata"]["source_format"], "agenttrace")
+
+    def test_live_support_triage_workflow_can_be_polled_until_trace_is_ready(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_runner",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+        self.assertIn(run["status"], {"pending", "running", "completed"})
+        self.assertEqual(run["workflow_name"], "support-triage")
+
+        completed = None
+        for _ in range(20):
+            poll = self.client.get(f"/workflow-runs/{run['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            payload = poll.json()
+            if payload["status"] == "completed":
+                completed = payload
+                break
+            time.sleep(0.05)
+
+        self.assertIsNotNone(completed)
+        self.assertEqual(completed["trace_id"], "trace_api_live_runner")
+        self.assertEqual(completed["trace"]["status"], "passed")
+        self.assertTrue(any(span["span_type"] == "memory_read" for span in completed["trace"]["spans"]))
+
+    def test_live_support_triage_workflow_missing_run_returns_404(self) -> None:
+        response = self.client.get("/workflow-runs/missing")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_chat_message_runs_agent_and_links_trace(self) -> None:
         session_response = self.client.post(

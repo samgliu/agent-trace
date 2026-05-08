@@ -35,6 +35,12 @@ import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
 import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
+import {
+  getWorkflowRun,
+  isWorkflowRunActive,
+  startSupportTriageLiveRun,
+  type WorkflowRun,
+} from "./utils/workflowRuns";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -199,6 +205,8 @@ function App() {
   const [chatTraceSummaries, setChatTraceSummaries] = useState<Record<string, TraceSummary>>({});
   const [latestChatTraceId, setLatestChatTraceId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
+  const [liveWorkflowRun, setLiveWorkflowRun] = useState<WorkflowRun<TraceDetail> | null>(null);
+  const [liveWorkflowError, setLiveWorkflowError] = useState<string | null>(null);
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
@@ -223,6 +231,38 @@ function App() {
   useEffect(() => {
     loadChatSessions();
   }, []);
+
+  useEffect(() => {
+    if (liveWorkflowRun === null || !isWorkflowRunActive(liveWorkflowRun)) {
+      return;
+    }
+    const runId = liveWorkflowRun.run_id;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      getWorkflowRun<TraceDetail>(fetchJson, runId)
+        .then((run) => {
+          if (cancelled) return;
+          setLiveWorkflowRun(run);
+          if (run.status === "completed" && run.trace_id) {
+            setSelectedTraceId(run.trace_id);
+            setSelectedSpanId(run.trace?.spans[0]?.span_id ?? null);
+            setRefreshKey((value) => value + 1);
+          }
+          if (run.status === "failed") {
+            setLiveWorkflowError(run.error ?? "Workflow run failed.");
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setLiveWorkflowError(error instanceof Error ? error.message : "Could not poll workflow run.");
+          }
+        });
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [liveWorkflowRun]);
 
   useEffect(() => {
     let cancelled = false;
@@ -346,6 +386,21 @@ function App() {
     setRefreshKey((value) => value + 1);
   }
 
+  async function startLiveWorkflow(input: LiveWorkflowInput) {
+    setLiveWorkflowError(null);
+    try {
+      const run = await startSupportTriageLiveRun<TraceDetail>(apiPostJson, {
+        message: input.message,
+        customerEmail: input.customerEmail,
+        useOpenAI: input.useOpenAI,
+      });
+      setLiveWorkflowRun(run);
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not start workflow run.");
+    }
+  }
+
   async function submitChatTurn(input: ChatInput) {
     setChatStatus({ status: "submitting" });
     try {
@@ -404,6 +459,7 @@ function App() {
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
+            <LiveWorkflowPanel run={liveWorkflowRun} error={liveWorkflowError} onStart={startLiveWorkflow} />
             <ChatMonitor
               session={chatSession}
               sessions={chatSessions}
@@ -442,6 +498,7 @@ function App() {
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
+          <LiveWorkflowPanel run={liveWorkflowRun} error={liveWorkflowError} onStart={startLiveWorkflow} />
           <ChatMonitor
             session={chatSession}
             sessions={chatSessions}
@@ -581,6 +638,74 @@ type ChatInput = {
   message: string;
   useOpenAI: boolean;
 };
+
+type LiveWorkflowInput = ChatInput;
+
+function LiveWorkflowPanel({
+  run,
+  error,
+  onStart,
+}: {
+  run: WorkflowRun<TraceDetail> | null;
+  error: string | null;
+  onStart: (input: LiveWorkflowInput) => Promise<void>;
+}) {
+  const [customerEmail, setCustomerEmail] = useState("customer@example.com");
+  const [message, setMessage] = useState("I was charged twice for my Pro subscription yesterday. Can I get a refund?");
+  const [useOpenAI, setUseOpenAI] = useState(false);
+  const active = isWorkflowRunActive(run);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedEmail = customerEmail.trim();
+    const trimmedMessage = message.trim();
+    if (!trimmedEmail || !trimmedMessage || active) {
+      return;
+    }
+    await onStart({ customerEmail: trimmedEmail, message: trimmedMessage, useOpenAI });
+  }
+
+  return (
+    <section className="liveWorkflow">
+      <div className="liveWorkflowHeader">
+        <div>
+          <small>Running workflow monitor</small>
+          <h2>Support-triage live run</h2>
+        </div>
+        <span className={run?.status === "failed" ? "liveRunStatus failed" : "liveRunStatus"}>
+          {active ? <Activity size={15} /> : <GitBranch size={15} />}
+          {run?.status ?? "idle"}
+        </span>
+      </div>
+      <form className="liveWorkflowForm" onSubmit={submit}>
+        <label>
+          <span>Customer email</span>
+          <input value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} disabled={active} />
+        </label>
+        <label className="liveWorkflowMessage">
+          <span>Message</span>
+          <input value={message} onChange={(event) => setMessage(event.target.value)} disabled={active} />
+        </label>
+        <label className="chatToggle">
+          <input type="checkbox" checked={useOpenAI} onChange={(event) => setUseOpenAI(event.target.checked)} disabled={active} />
+          <span>Use OpenAI-compatible LLM</span>
+        </label>
+        <button type="submit" disabled={active || !message.trim()}>
+          {active ? <Activity size={15} /> : <Send size={15} />}
+          Run
+        </button>
+      </form>
+      {run ? (
+        <div className="liveRunDetails">
+          <span>Run: {run.run_id}</span>
+          {run.trace_id ? <span>Trace: {run.trace_id}</span> : <span>Trace pending</span>}
+          {run.completed_at ? <span>Completed: {run.completed_at}</span> : <span>Updated: {run.updated_at}</span>}
+        </div>
+      ) : null}
+      {error ? <p className="chatError">{error}</p> : null}
+    </section>
+  );
+}
 
 function ChatMonitor({
   session,

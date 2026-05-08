@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import uuid
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
@@ -49,6 +51,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     )
     trace_store = store or SQLiteTraceStore(_database_path())
     trace_store.initialize()
+    workflow_runs = WorkflowRunRegistry()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -131,6 +134,41 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         trace_store.save_trace(trace)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
+
+    @app.post("/workflows/support-triage/runs/live")
+    def start_live_support_triage_workflow(payload: SupportTriageRunRequest) -> dict[str, Any]:
+        run = workflow_runs.create(payload.trace_id)
+
+        def execute() -> None:
+            workflow_runs.mark_running(run["run_id"])
+            try:
+                trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+                    message=payload.message,
+                    customer_email=payload.customer_email,
+                    trace_id=payload.trace_id,
+                )
+                trace_store.save_trace(trace)
+                workflow_runs.mark_completed(run["run_id"], trace.trace_id)
+            except RuntimeError as exc:
+                workflow_runs.mark_failed(run["run_id"], str(exc))
+            except Exception as exc:  # pragma: no cover - defensive for background execution.
+                workflow_runs.mark_failed(run["run_id"], f"Unexpected workflow failure: {exc}")
+
+        thread = threading.Thread(target=execute, name=f"agenttrace-run-{run['run_id']}", daemon=True)
+        thread.start()
+        return workflow_runs.get(run["run_id"]) or run
+
+    @app.get("/workflow-runs/{run_id}")
+    def get_workflow_run(run_id: str) -> dict[str, Any]:
+        run = workflow_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Workflow run not found: {run_id}")
+        payload = dict(run)
+        if run["trace_id"]:
+            trace = trace_store.get_trace(run["trace_id"])
+            if trace is not None:
+                payload["trace"] = trace.to_dict()
+        return payload
 
     @app.get("/traces")
     def list_traces(
@@ -246,6 +284,52 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
 
 def _database_path() -> Path:
     return Path(os.environ.get("AGENTTRACE_DB", str(DEFAULT_DB_PATH)))
+
+
+class WorkflowRunRegistry:
+    def __init__(self) -> None:
+        self._runs: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def create(self, trace_id: str | None) -> dict[str, Any]:
+        now = _utc_now()
+        run = {
+            "run_id": f"run_{uuid.uuid4().hex[:12]}",
+            "workflow_name": "support-triage",
+            "status": "pending",
+            "trace_id": trace_id,
+            "error": None,
+            "started_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
+        with self._lock:
+            self._runs[run["run_id"]] = run
+        return dict(run)
+
+    def get(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            run = self._runs.get(run_id)
+            return dict(run) if run else None
+
+    def mark_running(self, run_id: str) -> None:
+        self._update(run_id, status="running")
+
+    def mark_completed(self, run_id: str, trace_id: str) -> None:
+        self._update(run_id, status="completed", trace_id=trace_id, completed_at=_utc_now())
+
+    def mark_failed(self, run_id: str, error: str) -> None:
+        self._update(run_id, status="failed", error=error, completed_at=_utc_now())
+
+    def _update(self, run_id: str, **updates: Any) -> None:
+        with self._lock:
+            if run_id not in self._runs:
+                return
+            self._runs[run_id] = {**self._runs[run_id], **updates, "updated_at": _utc_now()}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _require_trace(store: SQLiteTraceStore, trace_id: str) -> Trace:
