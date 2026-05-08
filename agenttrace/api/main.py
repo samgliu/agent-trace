@@ -52,7 +52,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     )
     trace_store = store or SQLiteTraceStore(_database_path())
     trace_store.initialize()
-    workflow_runs = WorkflowRunRegistry()
+    workflow_runs = WorkflowRunRegistry(trace_store)
 
     def launch_live_support_triage(payload: SupportTriageRunRequest, trace_id: str | None = None) -> dict[str, Any]:
         live_trace_id = trace_id or payload.trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
@@ -360,32 +360,20 @@ def _database_path() -> Path:
 
 
 class WorkflowRunRegistry:
-    def __init__(self) -> None:
-        self._runs: dict[str, dict[str, Any]] = {}
+    def __init__(self, store: SQLiteTraceStore) -> None:
+        self.store = store
         self._lock = threading.Lock()
 
     def create(self, trace_id: str | None, *, input_data: dict[str, Any]) -> dict[str, Any]:
-        now = _utc_now()
-        run = {
-            "run_id": f"run_{uuid.uuid4().hex[:12]}",
-            "workflow_name": "support-triage",
-            "status": "pending",
-            "trace_id": trace_id,
-            "error": None,
-            "cancel_requested": False,
-            "input": dict(input_data),
-            "started_at": now,
-            "updated_at": now,
-            "completed_at": None,
-        }
-        with self._lock:
-            self._runs[run["run_id"]] = run
-        return dict(run)
+        return self.store.create_workflow_run(
+            run_id=f"run_{uuid.uuid4().hex[:12]}",
+            workflow_name="support-triage",
+            trace_id=trace_id,
+            input_data=input_data,
+        )
 
     def get(self, run_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            run = self._runs.get(run_id)
-            return dict(run) if run else None
+        return self.store.get_workflow_run(run_id)
 
     def mark_running(self, run_id: str) -> None:
         self._update(run_id, status="running")
@@ -398,28 +386,22 @@ class WorkflowRunRegistry:
 
     def request_cancel(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:
-            run = self._runs.get(run_id)
+            run = self.store.get_workflow_run(run_id)
             if run is None:
                 return None
             if run["status"] in {"completed", "failed", "cancelled"}:
                 return dict(run)
-            updated = {**run, "status": "cancel_requested", "cancel_requested": True, "updated_at": _utc_now()}
-            self._runs[run_id] = updated
-            return dict(updated)
+            return self.store.update_workflow_run(run_id, status="cancel_requested", cancel_requested=True)
 
     def is_cancel_requested(self, run_id: str) -> bool:
-        with self._lock:
-            run = self._runs.get(run_id)
-            return bool(run and run.get("cancel_requested"))
+        run = self.store.get_workflow_run(run_id)
+        return bool(run and run.get("cancel_requested"))
 
     def mark_cancelled(self, run_id: str, message: str) -> None:
         self._update(run_id, status="cancelled", error=message, completed_at=_utc_now(), cancel_requested=True)
 
     def _update(self, run_id: str, **updates: Any) -> None:
-        with self._lock:
-            if run_id not in self._runs:
-                return
-            self._runs[run_id] = {**self._runs[run_id], **updates, "updated_at": _utc_now()}
+        self.store.update_workflow_run(run_id, **updates)
 
 
 def _utc_now() -> str:

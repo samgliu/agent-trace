@@ -355,6 +355,40 @@ class ApiEndpointsTest(unittest.TestCase):
         self.client.post(f"/workflow-runs/{response.json()['run_id']}/cancel")
         self._wait_for_run_status(response.json()["run_id"], {"cancelled", "completed"})
 
+    def test_live_support_triage_run_survives_app_recreation_for_retry(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_recreate",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+        self.client.post(f"/workflow-runs/{run['run_id']}/cancel")
+        cancelled = self._wait_for_run_status(run["run_id"], {"cancelled", "completed"})
+        self.assertEqual(cancelled["status"], "cancelled")
+
+        from agenttrace.api.main import create_app
+
+        recreated_client = TestClient(create_app(self.store))
+        saved = recreated_client.get(f"/workflow-runs/{run['run_id']}")
+        retry_response = recreated_client.post(f"/workflow-runs/{run['run_id']}/retry")
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["status"], "cancelled")
+        self.assertEqual(retry_response.status_code, 200)
+        retry = retry_response.json()
+        self.assertNotEqual(retry["run_id"], run["run_id"])
+        recreated_client.post(f"/workflow-runs/{retry['run_id']}/cancel")
+        for _ in range(20):
+            poll = recreated_client.get(f"/workflow-runs/{retry['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            if poll.json()["status"] in {"cancelled", "completed"}:
+                break
+            time.sleep(0.05)
+
     def _wait_for_run_status(self, run_id: str, statuses: set[str]) -> dict:
         for _ in range(20):
             poll = self.client.get(f"/workflow-runs/{run_id}")

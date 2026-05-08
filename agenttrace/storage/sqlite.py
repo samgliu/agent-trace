@@ -120,6 +120,23 @@ class SQLiteTraceStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_runs (
+                    run_id TEXT PRIMARY KEY,
+                    workflow_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trace_id TEXT,
+                    error TEXT,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    input_json TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
+                )
+                """
+            )
             connection.commit()
             _ensure_columns(
                 connection,
@@ -140,6 +157,85 @@ class SQLiteTraceStore:
                 },
             )
         self._backfill_trace_summaries()
+
+    def create_workflow_run(
+        self,
+        *,
+        run_id: str,
+        workflow_name: str,
+        trace_id: str | None,
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = _utc_now()
+        run = {
+            "run_id": run_id,
+            "workflow_name": workflow_name,
+            "status": "pending",
+            "trace_id": trace_id,
+            "error": None,
+            "cancel_requested": False,
+            "input": dict(input_data),
+            "started_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO workflow_runs (
+                    run_id, workflow_name, status, trace_id, error, cancel_requested,
+                    input_json, started_at, updated_at, completed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _workflow_run_row(run),
+            )
+            connection.commit()
+        return run
+
+    def get_workflow_run(self, run_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT run_id, workflow_name, status, trace_id, error, cancel_requested,
+                       input_json, started_at, updated_at, completed_at
+                FROM workflow_runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _workflow_run_from_row(row)
+
+    def update_workflow_run(self, run_id: str, **updates: Any) -> dict[str, Any] | None:
+        existing = self.get_workflow_run(run_id)
+        if existing is None:
+            return None
+        next_run = {**existing, **updates, "updated_at": _utc_now()}
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE workflow_runs
+                SET workflow_name = ?, status = ?, trace_id = ?, error = ?, cancel_requested = ?,
+                    input_json = ?, started_at = ?, updated_at = ?, completed_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    next_run["workflow_name"],
+                    next_run["status"],
+                    next_run["trace_id"],
+                    next_run["error"],
+                    1 if next_run["cancel_requested"] else 0,
+                    _to_json(next_run["input"]),
+                    next_run["started_at"],
+                    next_run["updated_at"],
+                    next_run["completed_at"],
+                    run_id,
+                ),
+            )
+            connection.commit()
+        return self.get_workflow_run(run_id)
 
     def create_chat_session(
         self,
@@ -775,6 +871,36 @@ def _chat_message_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "trace_id": row["trace_id"],
         "metadata": _from_json(row["metadata_json"]) or {},
         "created_at": row["created_at"],
+    }
+
+
+def _workflow_run_row(run: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        run["run_id"],
+        run["workflow_name"],
+        run["status"],
+        run["trace_id"],
+        run["error"],
+        1 if run["cancel_requested"] else 0,
+        _to_json(run["input"]),
+        run["started_at"],
+        run["updated_at"],
+        run["completed_at"],
+    )
+
+
+def _workflow_run_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "run_id": row["run_id"],
+        "workflow_name": row["workflow_name"],
+        "status": row["status"],
+        "trace_id": row["trace_id"],
+        "error": row["error"],
+        "cancel_requested": bool(row["cancel_requested"]),
+        "input": _from_json(row["input_json"]) or {},
+        "started_at": row["started_at"],
+        "updated_at": row["updated_at"],
+        "completed_at": row["completed_at"],
     }
 
 
