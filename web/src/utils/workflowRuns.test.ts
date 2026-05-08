@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getWorkflowRun, isWorkflowRunActive, startSupportTriageLiveRun } from "./workflowRuns";
+import {
+  cancelWorkflowRun,
+  getWorkflowRun,
+  isWorkflowRunActive,
+  retryWorkflowRun,
+  startSupportTriageLiveRun,
+} from "./workflowRuns";
 
 describe("workflow run api helpers", () => {
   it("starts a support triage live run with backend field names", async () => {
@@ -57,10 +63,34 @@ describe("workflow run api helpers", () => {
     expect(run.trace_id).toBe("trace_1");
   });
 
+  it("cancels and retries workflow runs", async () => {
+    const calls: string[] = [];
+    const transport = async <T>(path: string): Promise<T> => {
+      calls.push(path);
+      return {
+        run_id: "run_1",
+        workflow_name: "support-triage",
+        status: path.endsWith("/retry") ? "running" : "cancel_requested",
+        trace_id: "trace_1",
+        error: null,
+        started_at: "2026-05-07T00:00:00Z",
+        updated_at: "2026-05-07T00:00:01Z",
+        completed_at: null,
+      } as T;
+    };
+
+    await cancelWorkflowRun(transport, "run_1");
+    await retryWorkflowRun(transport, "run_1");
+
+    expect(calls).toEqual(["/workflow-runs/run_1/cancel", "/workflow-runs/run_1/retry"]);
+  });
+
   it("detects active workflow runs", () => {
     expect(isWorkflowRunActive(null)).toBe(false);
     expect(isWorkflowRunActive({ status: "pending" } as never)).toBe(true);
     expect(isWorkflowRunActive({ status: "running" } as never)).toBe(true);
+    expect(isWorkflowRunActive({ status: "cancel_requested" } as never)).toBe(true);
     expect(isWorkflowRunActive({ status: "completed" } as never)).toBe(false);
+    expect(isWorkflowRunActive({ status: "cancelled" } as never)).toBe(false);
   });
 });

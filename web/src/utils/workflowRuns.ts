@@ -1,4 +1,4 @@
-export type WorkflowRunStatus = "pending" | "running" | "completed" | "failed";
+export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 
 export type WorkflowRun<Trace = unknown> = {
   run_id: string;
@@ -34,6 +34,20 @@ export function getWorkflowRun<Trace>(
   return transport(`/workflow-runs/${runId}`);
 }
 
+export function cancelWorkflowRun<Trace>(
+  transport: WorkflowRunTransport,
+  runId: string,
+): Promise<WorkflowRun<Trace>> {
+  return transport(`/workflow-runs/${runId}/cancel`);
+}
+
+export function retryWorkflowRun<Trace>(
+  transport: WorkflowRunTransport,
+  runId: string,
+): Promise<WorkflowRun<Trace>> {
+  return transport(`/workflow-runs/${runId}/retry`);
+}
+
 export function isWorkflowRunActive(run: WorkflowRun | null): boolean {
-  return run?.status === "pending" || run?.status === "running";
+  return run?.status === "pending" || run?.status === "running" || run?.status === "cancel_requested";
 }

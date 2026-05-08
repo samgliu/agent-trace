@@ -54,6 +54,70 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     trace_store.initialize()
     workflow_runs = WorkflowRunRegistry()
 
+    def launch_live_support_triage(payload: SupportTriageRunRequest, trace_id: str | None = None) -> dict[str, Any]:
+        live_trace_id = trace_id or payload.trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
+        placeholder = with_source_metadata(
+            Trace(
+                trace_id=live_trace_id,
+                workflow_name="support-triage",
+                status="running",
+                started_at=datetime.now(timezone.utc),
+                metadata={
+                    "source": "agenttrace-agent-runner",
+                    "runner": "agenttrace.agents.support_triage",
+                    "live_run": True,
+                },
+            ),
+            source_format="agenttrace",
+            source_kind="agent_runner",
+        )
+        trace_store.upsert_trace(placeholder)
+        run = workflow_runs.create(
+            live_trace_id,
+            input_data={
+                "message": payload.message,
+                "customer_email": payload.customer_email,
+                "use_openai": payload.use_openai,
+                "openai_api": payload.openai_api,
+            },
+        )
+        span_delay_seconds = _live_span_delay_seconds()
+
+        def execute() -> None:
+            workflow_runs.mark_running(run["run_id"])
+            try:
+                def persist_span(span: Span) -> None:
+                    if workflow_runs.is_cancel_requested(run["run_id"]):
+                        raise WorkflowRunCancelled("Workflow run cancelled.")
+                    trace_store.upsert_span(span)
+                    if span_delay_seconds > 0:
+                        time.sleep(span_delay_seconds)
+
+                trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+                    message=payload.message,
+                    customer_email=payload.customer_email,
+                    trace_id=live_trace_id,
+                    on_span=persist_span,
+                )
+                if workflow_runs.is_cancel_requested(run["run_id"]):
+                    raise WorkflowRunCancelled("Workflow run cancelled.")
+                trace_store.save_trace(trace)
+                workflow_runs.mark_completed(run["run_id"], trace.trace_id)
+            except WorkflowRunCancelled as exc:
+                trace_store.update_trace_lifecycle(live_trace_id, status="cancelled", ended_at=_utc_now())
+                workflow_runs.mark_cancelled(run["run_id"], str(exc))
+            except RuntimeError as exc:
+                trace_store.update_trace_lifecycle(live_trace_id, status="failed", ended_at=_utc_now())
+                workflow_runs.mark_failed(run["run_id"], str(exc))
+            except Exception as exc:  # pragma: no cover - defensive for background execution.
+                trace_store.update_trace_lifecycle(live_trace_id, status="failed", ended_at=_utc_now())
+                workflow_runs.mark_failed(run["run_id"], f"Unexpected workflow failure: {exc}")
+
+        thread = threading.Thread(target=execute, name=f"agenttrace-run-{run['run_id']}", daemon=True)
+        thread.start()
+        saved_run = workflow_runs.get(run["run_id"]) or run
+        return {**saved_run, "trace": _require_trace(trace_store, live_trace_id).to_dict()}
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -138,53 +202,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
 
     @app.post("/workflows/support-triage/runs/live")
     def start_live_support_triage_workflow(payload: SupportTriageRunRequest) -> dict[str, Any]:
-        trace_id = payload.trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
-        placeholder = with_source_metadata(
-            Trace(
-                trace_id=trace_id,
-                workflow_name="support-triage",
-                status="running",
-                started_at=datetime.now(timezone.utc),
-                metadata={
-                    "source": "agenttrace-agent-runner",
-                    "runner": "agenttrace.agents.support_triage",
-                    "live_run": True,
-                },
-            ),
-            source_format="agenttrace",
-            source_kind="agent_runner",
-        )
-        trace_store.upsert_trace(placeholder)
-        run = workflow_runs.create(trace_id)
-        span_delay_seconds = _live_span_delay_seconds()
-
-        def execute() -> None:
-            workflow_runs.mark_running(run["run_id"])
-            try:
-                def persist_span(span: Span) -> None:
-                    trace_store.upsert_span(span)
-                    if span_delay_seconds > 0:
-                        time.sleep(span_delay_seconds)
-
-                trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
-                    message=payload.message,
-                    customer_email=payload.customer_email,
-                    trace_id=trace_id,
-                    on_span=persist_span,
-                )
-                trace_store.save_trace(trace)
-                workflow_runs.mark_completed(run["run_id"], trace.trace_id)
-            except RuntimeError as exc:
-                trace_store.update_trace_lifecycle(trace_id, status="failed", ended_at=_utc_now())
-                workflow_runs.mark_failed(run["run_id"], str(exc))
-            except Exception as exc:  # pragma: no cover - defensive for background execution.
-                trace_store.update_trace_lifecycle(trace_id, status="failed", ended_at=_utc_now())
-                workflow_runs.mark_failed(run["run_id"], f"Unexpected workflow failure: {exc}")
-
-        thread = threading.Thread(target=execute, name=f"agenttrace-run-{run['run_id']}", daemon=True)
-        thread.start()
-        saved_run = workflow_runs.get(run["run_id"]) or run
-        return {**saved_run, "trace": _require_trace(trace_store, trace_id).to_dict()}
+        return launch_live_support_triage(payload)
 
     @app.get("/workflow-runs/{run_id}")
     def get_workflow_run(run_id: str) -> dict[str, Any]:
@@ -197,6 +215,33 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             if trace is not None:
                 payload["trace"] = trace.to_dict()
         return payload
+
+    @app.post("/workflow-runs/{run_id}/cancel")
+    def cancel_workflow_run(run_id: str) -> dict[str, Any]:
+        run = workflow_runs.request_cancel(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Workflow run not found: {run_id}")
+        if run["status"] == "cancelled" and run["trace_id"]:
+            trace_store.update_trace_lifecycle(run["trace_id"], status="cancelled", ended_at=_utc_now())
+        return get_workflow_run(run_id)
+
+    @app.post("/workflow-runs/{run_id}/retry")
+    def retry_workflow_run(run_id: str) -> dict[str, Any]:
+        run = workflow_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Workflow run not found: {run_id}")
+        if run["status"] in {"pending", "running", "cancel_requested"}:
+            raise HTTPException(status_code=400, detail=f"Workflow run is still active: {run_id}")
+        input_data = run.get("input") or {}
+        if not input_data:
+            raise HTTPException(status_code=400, detail=f"Workflow run cannot be retried: {run_id}")
+        retry_payload = SupportTriageRunRequest(
+            message=str(input_data["message"]),
+            customer_email=str(input_data["customer_email"]),
+            use_openai=bool(input_data.get("use_openai", False)),
+            openai_api=input_data.get("openai_api", "chat_completions"),
+        )
+        return launch_live_support_triage(retry_payload, trace_id=f"{run['trace_id']}_retry_{uuid.uuid4().hex[:6]}")
 
     @app.get("/traces")
     def list_traces(
@@ -319,7 +364,7 @@ class WorkflowRunRegistry:
         self._runs: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
-    def create(self, trace_id: str | None) -> dict[str, Any]:
+    def create(self, trace_id: str | None, *, input_data: dict[str, Any]) -> dict[str, Any]:
         now = _utc_now()
         run = {
             "run_id": f"run_{uuid.uuid4().hex[:12]}",
@@ -327,6 +372,8 @@ class WorkflowRunRegistry:
             "status": "pending",
             "trace_id": trace_id,
             "error": None,
+            "cancel_requested": False,
+            "input": dict(input_data),
             "started_at": now,
             "updated_at": now,
             "completed_at": None,
@@ -349,6 +396,25 @@ class WorkflowRunRegistry:
     def mark_failed(self, run_id: str, error: str) -> None:
         self._update(run_id, status="failed", error=error, completed_at=_utc_now())
 
+    def request_cancel(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                return None
+            if run["status"] in {"completed", "failed", "cancelled"}:
+                return dict(run)
+            updated = {**run, "status": "cancel_requested", "cancel_requested": True, "updated_at": _utc_now()}
+            self._runs[run_id] = updated
+            return dict(updated)
+
+    def is_cancel_requested(self, run_id: str) -> bool:
+        with self._lock:
+            run = self._runs.get(run_id)
+            return bool(run and run.get("cancel_requested"))
+
+    def mark_cancelled(self, run_id: str, message: str) -> None:
+        self._update(run_id, status="cancelled", error=message, completed_at=_utc_now(), cancel_requested=True)
+
     def _update(self, run_id: str, **updates: Any) -> None:
         with self._lock:
             if run_id not in self._runs:
@@ -366,6 +432,10 @@ def _live_span_delay_seconds() -> float:
         return max(0.0, float(raw_value))
     except ValueError:
         return 0.15
+
+
+class WorkflowRunCancelled(RuntimeError):
+    pass
 
 
 def _require_trace(store: SQLiteTraceStore, trace_id: str) -> Trace:

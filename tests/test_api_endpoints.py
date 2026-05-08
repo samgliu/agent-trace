@@ -300,6 +300,71 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_live_support_triage_workflow_can_be_cancelled_and_retried(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_cancel",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+
+        cancel_response = self.client.post(f"/workflow-runs/{run['run_id']}/cancel")
+        self.assertEqual(cancel_response.status_code, 200)
+        self.assertIn(cancel_response.json()["status"], {"cancel_requested", "cancelled"})
+
+        cancelled = None
+        for _ in range(20):
+            poll = self.client.get(f"/workflow-runs/{run['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            payload = poll.json()
+            if payload["status"] == "cancelled":
+                cancelled = payload
+                break
+            time.sleep(0.05)
+
+        self.assertIsNotNone(cancelled)
+        self.assertEqual(cancelled["trace"]["status"], "cancelled")
+
+        retry_response = self.client.post(f"/workflow-runs/{run['run_id']}/retry")
+        self.assertEqual(retry_response.status_code, 200)
+        retry = retry_response.json()
+        self.assertNotEqual(retry["run_id"], run["run_id"])
+        self.assertTrue(retry["trace_id"].startswith("trace_api_live_cancel_retry_"))
+        self.assertEqual(retry["trace"]["status"], "running")
+        self.client.post(f"/workflow-runs/{retry['run_id']}/cancel")
+        self._wait_for_run_status(retry["run_id"], {"cancelled", "completed"})
+
+    def test_live_support_triage_retry_rejects_active_run(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_retry_active",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        retry_response = self.client.post(f"/workflow-runs/{response.json()['run_id']}/retry")
+
+        self.assertEqual(retry_response.status_code, 400)
+        self.client.post(f"/workflow-runs/{response.json()['run_id']}/cancel")
+        self._wait_for_run_status(response.json()["run_id"], {"cancelled", "completed"})
+
+    def _wait_for_run_status(self, run_id: str, statuses: set[str]) -> dict:
+        for _ in range(20):
+            poll = self.client.get(f"/workflow-runs/{run_id}")
+            self.assertEqual(poll.status_code, 200)
+            payload = poll.json()
+            if payload["status"] in statuses:
+                return payload
+            time.sleep(0.05)
+        self.fail(f"Workflow run {run_id} did not reach one of {statuses}")
+
     def test_chat_message_runs_agent_and_links_trace(self) -> None:
         session_response = self.client.post(
             "/chat/sessions",

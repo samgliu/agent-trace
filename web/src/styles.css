@@ -547,7 +547,7 @@ h2 {
 
 .liveWorkflowForm {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) minmax(260px, 1fr) auto auto;
+  grid-template-columns: minmax(180px, 250px) minmax(240px, 1fr) auto auto auto auto;
   gap: 10px;
   align-items: end;
 }
@@ -594,6 +594,18 @@ h2 {
   background: #f5f7f8;
   border-color: #dce4e8;
   cursor: not-allowed;
+}
+
+.liveWorkflowForm button.secondary {
+  color: #246b5b;
+  background: #ffffff;
+  border-color: #c7e1d8;
+}
+
+.liveWorkflowForm button.secondary:disabled {
+  color: #7f8b92;
+  background: #f5f7f8;
+  border-color: #dce4e8;
 }
 
 .liveRunDetails {

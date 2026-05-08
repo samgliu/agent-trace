@@ -36,8 +36,10 @@ import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
 import {
+  cancelWorkflowRun,
   getWorkflowRun,
   isWorkflowRunActive,
+  retryWorkflowRun,
   startSupportTriageLiveRun,
   type WorkflowRun,
 } from "./utils/workflowRuns";
@@ -409,6 +411,38 @@ function App() {
     }
   }
 
+  async function cancelLiveWorkflow() {
+    if (!liveWorkflowRun) {
+      return;
+    }
+    setLiveWorkflowError(null);
+    try {
+      const run = await cancelWorkflowRun<TraceDetail>(apiPostJson, liveWorkflowRun.run_id);
+      setLiveWorkflowRun(run);
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not cancel workflow run.");
+    }
+  }
+
+  async function retryLiveWorkflow() {
+    if (!liveWorkflowRun) {
+      return;
+    }
+    setLiveWorkflowError(null);
+    try {
+      const run = await retryWorkflowRun<TraceDetail>(apiPostJson, liveWorkflowRun.run_id);
+      setLiveWorkflowRun(run);
+      if (run.trace_id) {
+        setSelectedTraceId(run.trace_id);
+        setSelectedSpanId(run.trace?.spans[0]?.span_id ?? null);
+      }
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not retry workflow run.");
+    }
+  }
+
   async function submitChatTurn(input: ChatInput) {
     setChatStatus({ status: "submitting" });
     try {
@@ -467,7 +501,13 @@ function App() {
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
-            <LiveWorkflowPanel run={liveWorkflowRun} error={liveWorkflowError} onStart={startLiveWorkflow} />
+            <LiveWorkflowPanel
+              run={liveWorkflowRun}
+              error={liveWorkflowError}
+              onStart={startLiveWorkflow}
+              onCancel={cancelLiveWorkflow}
+              onRetry={retryLiveWorkflow}
+            />
             <ChatMonitor
               session={chatSession}
               sessions={chatSessions}
@@ -506,7 +546,13 @@ function App() {
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
-          <LiveWorkflowPanel run={liveWorkflowRun} error={liveWorkflowError} onStart={startLiveWorkflow} />
+          <LiveWorkflowPanel
+            run={liveWorkflowRun}
+            error={liveWorkflowError}
+            onStart={startLiveWorkflow}
+            onCancel={cancelLiveWorkflow}
+            onRetry={retryLiveWorkflow}
+          />
           <ChatMonitor
             session={chatSession}
             sessions={chatSessions}
@@ -653,15 +699,20 @@ function LiveWorkflowPanel({
   run,
   error,
   onStart,
+  onCancel,
+  onRetry,
 }: {
   run: WorkflowRun<TraceDetail> | null;
   error: string | null;
   onStart: (input: LiveWorkflowInput) => Promise<void>;
+  onCancel: () => Promise<void>;
+  onRetry: () => Promise<void>;
 }) {
   const [customerEmail, setCustomerEmail] = useState("customer@example.com");
   const [message, setMessage] = useState("I was charged twice for my Pro subscription yesterday. Can I get a refund?");
   const [useOpenAI, setUseOpenAI] = useState(false);
   const active = isWorkflowRunActive(run);
+  const canRetry = run?.status === "failed" || run?.status === "cancelled";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -680,7 +731,7 @@ function LiveWorkflowPanel({
           <small>Running workflow monitor</small>
           <h2>Support-triage live run</h2>
         </div>
-        <span className={run?.status === "failed" ? "liveRunStatus failed" : "liveRunStatus"}>
+        <span className={run?.status === "failed" || run?.status === "cancelled" ? "liveRunStatus failed" : "liveRunStatus"}>
           {active ? <Activity size={15} /> : <GitBranch size={15} />}
           {run?.status ?? "idle"}
         </span>
@@ -701,6 +752,13 @@ function LiveWorkflowPanel({
         <button type="submit" disabled={active || !message.trim()}>
           {active ? <Activity size={15} /> : <Send size={15} />}
           Run
+        </button>
+        <button className="secondary" type="button" disabled={!active} onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="secondary" type="button" disabled={!canRetry} onClick={onRetry}>
+          <RotateCcw size={15} />
+          Retry
         </button>
       </form>
       {run ? (
