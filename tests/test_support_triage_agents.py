@@ -82,6 +82,21 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertTrue(any(span.span_type == "generation" for span in trace.spans))
         self.assertEqual(llm.calls[0]["input_text"].count("duplicate_charge_detected"), 1)
 
+    def test_runner_can_emit_spans_incrementally(self) -> None:
+        emitted_names: list[str] = []
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_incremental",
+            on_span=lambda span: emitted_names.append(span.name),
+        )
+
+        self.assertEqual(emitted_names, [span.name for span in trace.spans])
+        self.assertEqual(emitted_names[0], "Supervisor Agent")
+        self.assertEqual(emitted_names[-1], "Customer Response Generator")
+
     def test_runner_records_memory_metadata(self) -> None:
         runner = SupportTriageRunner()
 

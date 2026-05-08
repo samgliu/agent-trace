@@ -243,9 +243,13 @@ function App() {
         .then((run) => {
           if (cancelled) return;
           setLiveWorkflowRun(run);
-          if (run.status === "completed" && run.trace_id) {
+          if (run.trace_id) {
             setSelectedTraceId(run.trace_id);
-            setSelectedSpanId(run.trace?.spans[0]?.span_id ?? null);
+            setSelectedSpanId((currentSpanId) =>
+              run.trace?.spans.some((span) => span.span_id === currentSpanId)
+                ? currentSpanId
+                : run.trace?.spans[0]?.span_id ?? null,
+            );
             setRefreshKey((value) => value + 1);
           }
           if (run.status === "failed") {
@@ -395,6 +399,10 @@ function App() {
         useOpenAI: input.useOpenAI,
       });
       setLiveWorkflowRun(run);
+      if (run.trace_id) {
+        setSelectedTraceId(run.trace_id);
+        setSelectedSpanId(run.trace?.spans[0]?.span_id ?? null);
+      }
       setRefreshKey((value) => value + 1);
     } catch (error) {
       setLiveWorkflowError(error instanceof Error ? error.message : "Could not start workflow run.");
@@ -699,6 +707,7 @@ function LiveWorkflowPanel({
         <div className="liveRunDetails">
           <span>Run: {run.run_id}</span>
           {run.trace_id ? <span>Trace: {run.trace_id}</span> : <span>Trace pending</span>}
+          {run.trace ? <span>{run.trace.spans.length} spans visible</span> : null}
           {run.completed_at ? <span>Completed: {run.completed_at}</span> : <span>Updated: {run.updated_at}</span>}
         </div>
       ) : null}

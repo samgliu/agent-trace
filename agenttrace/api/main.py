@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import threading
 import uuid
 from pathlib import Path
@@ -137,26 +138,53 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
 
     @app.post("/workflows/support-triage/runs/live")
     def start_live_support_triage_workflow(payload: SupportTriageRunRequest) -> dict[str, Any]:
-        run = workflow_runs.create(payload.trace_id)
+        trace_id = payload.trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
+        placeholder = with_source_metadata(
+            Trace(
+                trace_id=trace_id,
+                workflow_name="support-triage",
+                status="running",
+                started_at=datetime.now(timezone.utc),
+                metadata={
+                    "source": "agenttrace-agent-runner",
+                    "runner": "agenttrace.agents.support_triage",
+                    "live_run": True,
+                },
+            ),
+            source_format="agenttrace",
+            source_kind="agent_runner",
+        )
+        trace_store.upsert_trace(placeholder)
+        run = workflow_runs.create(trace_id)
+        span_delay_seconds = _live_span_delay_seconds()
 
         def execute() -> None:
             workflow_runs.mark_running(run["run_id"])
             try:
+                def persist_span(span: Span) -> None:
+                    trace_store.upsert_span(span)
+                    if span_delay_seconds > 0:
+                        time.sleep(span_delay_seconds)
+
                 trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
                     message=payload.message,
                     customer_email=payload.customer_email,
-                    trace_id=payload.trace_id,
+                    trace_id=trace_id,
+                    on_span=persist_span,
                 )
                 trace_store.save_trace(trace)
                 workflow_runs.mark_completed(run["run_id"], trace.trace_id)
             except RuntimeError as exc:
+                trace_store.update_trace_lifecycle(trace_id, status="failed", ended_at=_utc_now())
                 workflow_runs.mark_failed(run["run_id"], str(exc))
             except Exception as exc:  # pragma: no cover - defensive for background execution.
+                trace_store.update_trace_lifecycle(trace_id, status="failed", ended_at=_utc_now())
                 workflow_runs.mark_failed(run["run_id"], f"Unexpected workflow failure: {exc}")
 
         thread = threading.Thread(target=execute, name=f"agenttrace-run-{run['run_id']}", daemon=True)
         thread.start()
-        return workflow_runs.get(run["run_id"]) or run
+        saved_run = workflow_runs.get(run["run_id"]) or run
+        return {**saved_run, "trace": _require_trace(trace_store, trace_id).to_dict()}
 
     @app.get("/workflow-runs/{run_id}")
     def get_workflow_run(run_id: str) -> dict[str, Any]:
@@ -330,6 +358,14 @@ class WorkflowRunRegistry:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _live_span_delay_seconds() -> float:
+    raw_value = os.environ.get("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS", "0.15")
+    try:
+        return max(0.0, float(raw_value))
+    except ValueError:
+        return 0.15
 
 
 def _require_trace(store: SQLiteTraceStore, trace_id: str) -> Trace:

@@ -1,4 +1,5 @@
 import unittest
+import os
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,6 +17,8 @@ from agenttrace.storage.sqlite import SQLiteTraceStore
 @unittest.skipIf(TestClient is None, "FastAPI is not installed")
 class ApiEndpointsTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.previous_live_span_delay = os.environ.get("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS")
+        os.environ["AGENTTRACE_LIVE_SPAN_DELAY_SECONDS"] = "0.01"
         self.temp_dir = TemporaryDirectory()
         self.store = SQLiteTraceStore(Path(self.temp_dir.name) / "agenttrace.db")
         self.store.initialize()
@@ -26,6 +29,10 @@ class ApiEndpointsTest(unittest.TestCase):
         self.client = TestClient(create_app(self.store))
 
     def tearDown(self) -> None:
+        if self.previous_live_span_delay is None:
+            os.environ.pop("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS", None)
+        else:
+            os.environ["AGENTTRACE_LIVE_SPAN_DELAY_SECONDS"] = self.previous_live_span_delay
         self.temp_dir.cleanup()
 
     def test_health(self) -> None:
@@ -265,18 +272,25 @@ class ApiEndpointsTest(unittest.TestCase):
         run = response.json()
         self.assertIn(run["status"], {"pending", "running", "completed"})
         self.assertEqual(run["workflow_name"], "support-triage")
+        self.assertEqual(run["trace_id"], "trace_api_live_runner")
+        self.assertEqual(run["trace"]["trace_id"], "trace_api_live_runner")
+        self.assertEqual(run["trace"]["status"], "running")
 
         completed = None
+        saw_partial_trace = False
         for _ in range(20):
             poll = self.client.get(f"/workflow-runs/{run['run_id']}")
             self.assertEqual(poll.status_code, 200)
             payload = poll.json()
+            if payload["status"] == "running" and 0 < len(payload["trace"]["spans"]) < 14:
+                saw_partial_trace = True
             if payload["status"] == "completed":
                 completed = payload
                 break
             time.sleep(0.05)
 
         self.assertIsNotNone(completed)
+        self.assertTrue(saw_partial_trace)
         self.assertEqual(completed["trace_id"], "trace_api_live_runner")
         self.assertEqual(completed["trace"]["status"], "passed")
         self.assertTrue(any(span["span_type"] == "memory_read" for span in completed["trace"]["spans"]))
