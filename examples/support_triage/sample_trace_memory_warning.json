@@ -1,0 +1,81 @@
+{
+  "trace_id": "trace_support_triage_memory_warning",
+  "workflow_name": "support-triage",
+  "group_id": "demo-support-triage",
+  "status": "recovered",
+  "metadata": {
+    "scenario": "memory-warning"
+  },
+  "started_at": "2026-05-01T15:29:10Z",
+  "ended_at": "2026-05-01T15:29:14Z",
+  "spans": [
+    {
+      "span_id": "span_memory_warning_supervisor",
+      "name": "Supervisor Agent",
+      "span_type": "agent",
+      "started_at": "2026-05-01T15:29:10Z",
+      "ended_at": "2026-05-01T15:29:14Z",
+      "output": {
+        "status": "recovered"
+      }
+    },
+    {
+      "span_id": "span_memory_warning_write",
+      "parent_id": "span_memory_warning_supervisor",
+      "name": "Write Working Memory",
+      "span_type": "memory_write",
+      "started_at": "2026-05-01T15:29:10.100Z",
+      "ended_at": "2026-05-01T15:29:10.180Z",
+      "span_data": {
+        "memory_type": "short_term",
+        "memory_operation": "write",
+        "memory_store": "conversation_working_memory",
+        "memory_key": "current_customer_request"
+      },
+      "input": {
+        "message": "Can you help with my account?"
+      },
+      "output": {
+        "written": true
+      }
+    },
+    {
+      "span_id": "span_memory_warning_read",
+      "parent_id": "span_memory_warning_supervisor",
+      "name": "Read Customer Memory",
+      "span_type": "memory_read",
+      "started_at": "2026-05-01T15:29:10.200Z",
+      "ended_at": "2026-05-01T15:29:10.320Z",
+      "span_data": {
+        "memory_type": "long_term",
+        "memory_operation": "read",
+        "memory_store": "customer_profile_memory",
+        "memory_key": "unknown@example.com",
+        "retrieved_memory_count": 1,
+        "memory_relevance_score": 0.42,
+        "memory_age_seconds": 15552000,
+        "memory_used_in_response": false
+      },
+      "output": {
+        "facts": [
+          "Possible old billing profile from an unverified customer."
+        ]
+      }
+    },
+    {
+      "span_id": "span_memory_warning_validator",
+      "parent_id": "span_memory_warning_supervisor",
+      "name": "Validator Agent",
+      "span_type": "guardrail",
+      "started_at": "2026-05-01T15:29:13Z",
+      "ended_at": "2026-05-01T15:29:14Z",
+      "output": {
+        "grounded": true,
+        "recovered": true,
+        "warnings": [
+          "Ignored stale low-relevance customer memory."
+        ]
+      }
+    }
+  ]
+}

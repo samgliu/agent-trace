@@ -6,8 +6,10 @@ import {
   ArrowRight,
   Bot,
   Braces,
+  CheckCircle2,
   CircleDollarSign,
   Clock3,
+  FlaskConical,
   GitBranch,
   MessageSquare,
   Network,
@@ -30,11 +32,28 @@ import {
 import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
+import {
+  evalPassRateLabel,
+  evalStatusLabel,
+  failedEvalCases,
+  listEvalRuns,
+  runSupportTriageEvalSuite,
+  type EvalRunSummary,
+  type EvalSuiteRun,
+} from "./utils/evals";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
 import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
+import {
+  cancelWorkflowRun,
+  getWorkflowRun,
+  isWorkflowRunActive,
+  retryWorkflowRun,
+  startSupportTriageLiveRun,
+  type WorkflowRun,
+} from "./utils/workflowRuns";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -189,6 +208,8 @@ type LoadState =
       grounding: GroundingSummary;
     };
 
+type EvalRunStatus = { status: "idle" } | { status: "running" } | { status: "error"; message: string };
+
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
@@ -199,6 +220,11 @@ function App() {
   const [chatTraceSummaries, setChatTraceSummaries] = useState<Record<string, TraceSummary>>({});
   const [latestChatTraceId, setLatestChatTraceId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<ChatStatus>({ status: "idle" });
+  const [liveWorkflowRun, setLiveWorkflowRun] = useState<WorkflowRun<TraceDetail> | null>(null);
+  const [liveWorkflowError, setLiveWorkflowError] = useState<string | null>(null);
+  const [evalRun, setEvalRun] = useState<EvalSuiteRun | null>(null);
+  const [evalHistory, setEvalHistory] = useState<EvalRunSummary[]>([]);
+  const [evalRunStatus, setEvalRunStatus] = useState<EvalRunStatus>({ status: "idle" });
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
@@ -222,7 +248,44 @@ function App() {
 
   useEffect(() => {
     loadChatSessions();
+    loadEvalRuns();
   }, []);
+
+  useEffect(() => {
+    if (liveWorkflowRun === null || !isWorkflowRunActive(liveWorkflowRun)) {
+      return;
+    }
+    const runId = liveWorkflowRun.run_id;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      getWorkflowRun<TraceDetail>(fetchJson, runId)
+        .then((run) => {
+          if (cancelled) return;
+          setLiveWorkflowRun(run);
+          if (run.trace_id) {
+            setSelectedTraceId(run.trace_id);
+            setSelectedSpanId((currentSpanId) =>
+              run.trace?.spans.some((span) => span.span_id === currentSpanId)
+                ? currentSpanId
+                : run.trace?.spans[0]?.span_id ?? null,
+            );
+            setRefreshKey((value) => value + 1);
+          }
+          if (run.status === "failed") {
+            setLiveWorkflowError(run.error ?? "Workflow run failed.");
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setLiveWorkflowError(error instanceof Error ? error.message : "Could not poll workflow run.");
+          }
+        });
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [liveWorkflowRun]);
 
   useEffect(() => {
     let cancelled = false;
@@ -315,6 +378,15 @@ function App() {
     }
   }
 
+  async function loadEvalRuns() {
+    try {
+      const history = await listEvalRuns(fetchJson);
+      setEvalHistory(history.items);
+    } catch {
+      setEvalHistory([]);
+    }
+  }
+
   async function openChatSession(sessionId: string) {
     if (!sessionId) {
       startNewChatSession();
@@ -344,6 +416,70 @@ function App() {
     }
     await postJson(`/traces/${state.selectedTrace.trace_id}/approvals/${spanId}/${action}`);
     setRefreshKey((value) => value + 1);
+  }
+
+  async function startLiveWorkflow(input: LiveWorkflowInput) {
+    setLiveWorkflowError(null);
+    try {
+      const run = await startSupportTriageLiveRun<TraceDetail>(apiPostJson, {
+        message: input.message,
+        customerEmail: input.customerEmail,
+        useOpenAI: input.useOpenAI,
+      });
+      setLiveWorkflowRun(run);
+      if (run.trace_id) {
+        setSelectedTraceId(run.trace_id);
+        setSelectedSpanId(run.trace?.spans[0]?.span_id ?? null);
+      }
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not start workflow run.");
+    }
+  }
+
+  async function cancelLiveWorkflow() {
+    if (!liveWorkflowRun) {
+      return;
+    }
+    setLiveWorkflowError(null);
+    try {
+      const run = await cancelWorkflowRun<TraceDetail>(apiPostJson, liveWorkflowRun.run_id);
+      setLiveWorkflowRun(run);
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not cancel workflow run.");
+    }
+  }
+
+  async function retryLiveWorkflow() {
+    if (!liveWorkflowRun) {
+      return;
+    }
+    setLiveWorkflowError(null);
+    try {
+      const run = await retryWorkflowRun<TraceDetail>(apiPostJson, liveWorkflowRun.run_id);
+      setLiveWorkflowRun(run);
+      if (run.trace_id) {
+        setSelectedTraceId(run.trace_id);
+        setSelectedSpanId(run.trace?.spans[0]?.span_id ?? null);
+      }
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not retry workflow run.");
+    }
+  }
+
+  async function runEvals() {
+    setEvalRunStatus({ status: "running" });
+    try {
+      const result = await runSupportTriageEvalSuite(apiPostJson);
+      setEvalRun(result);
+      setEvalHistory((history) => [result, ...history.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
+      setEvalRunStatus({ status: "idle" });
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setEvalRunStatus({ status: "error", message: error instanceof Error ? error.message : "Could not run evals." });
+    }
   }
 
   async function submitChatTurn(input: ChatInput) {
@@ -404,6 +540,20 @@ function App() {
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
+            <EvalDashboardPanel
+              run={evalRun}
+              history={evalHistory}
+              status={evalRunStatus}
+              onRun={runEvals}
+              onSelectTrace={setSelectedTraceId}
+            />
+            <LiveWorkflowPanel
+              run={liveWorkflowRun}
+              error={liveWorkflowError}
+              onStart={startLiveWorkflow}
+              onCancel={cancelLiveWorkflow}
+              onRetry={retryLiveWorkflow}
+            />
             <ChatMonitor
               session={chatSession}
               sessions={chatSessions}
@@ -442,6 +592,20 @@ function App() {
 
         <main className="main">
           <DashboardSummaryPanel summary={state.dashboard} />
+          <EvalDashboardPanel
+            run={evalRun}
+            history={evalHistory}
+            status={evalRunStatus}
+            onRun={runEvals}
+            onSelectTrace={setSelectedTraceId}
+          />
+          <LiveWorkflowPanel
+            run={liveWorkflowRun}
+            error={liveWorkflowError}
+            onStart={startLiveWorkflow}
+            onCancel={cancelLiveWorkflow}
+            onRetry={retryLiveWorkflow}
+          />
           <ChatMonitor
             session={chatSession}
             sessions={chatSessions}
@@ -581,6 +745,87 @@ type ChatInput = {
   message: string;
   useOpenAI: boolean;
 };
+
+type LiveWorkflowInput = ChatInput;
+
+function LiveWorkflowPanel({
+  run,
+  error,
+  onStart,
+  onCancel,
+  onRetry,
+}: {
+  run: WorkflowRun<TraceDetail> | null;
+  error: string | null;
+  onStart: (input: LiveWorkflowInput) => Promise<void>;
+  onCancel: () => Promise<void>;
+  onRetry: () => Promise<void>;
+}) {
+  const [customerEmail, setCustomerEmail] = useState("customer@example.com");
+  const [message, setMessage] = useState("I was charged twice for my Pro subscription yesterday. Can I get a refund?");
+  const [useOpenAI, setUseOpenAI] = useState(false);
+  const active = isWorkflowRunActive(run);
+  const canRetry = run?.status === "failed" || run?.status === "cancelled";
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedEmail = customerEmail.trim();
+    const trimmedMessage = message.trim();
+    if (!trimmedEmail || !trimmedMessage || active) {
+      return;
+    }
+    await onStart({ customerEmail: trimmedEmail, message: trimmedMessage, useOpenAI });
+  }
+
+  return (
+    <section className="liveWorkflow">
+      <div className="liveWorkflowHeader">
+        <div>
+          <small>Running workflow monitor</small>
+          <h2>Support-triage live run</h2>
+        </div>
+        <span className={run?.status === "failed" || run?.status === "cancelled" ? "liveRunStatus failed" : "liveRunStatus"}>
+          {active ? <Activity size={15} /> : <GitBranch size={15} />}
+          {run?.status ?? "idle"}
+        </span>
+      </div>
+      <form className="liveWorkflowForm" onSubmit={submit}>
+        <label>
+          <span>Customer email</span>
+          <input value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} disabled={active} />
+        </label>
+        <label className="liveWorkflowMessage">
+          <span>Message</span>
+          <input value={message} onChange={(event) => setMessage(event.target.value)} disabled={active} />
+        </label>
+        <label className="chatToggle">
+          <input type="checkbox" checked={useOpenAI} onChange={(event) => setUseOpenAI(event.target.checked)} disabled={active} />
+          <span>Use OpenAI-compatible LLM</span>
+        </label>
+        <button type="submit" disabled={active || !message.trim()}>
+          {active ? <Activity size={15} /> : <Send size={15} />}
+          Run
+        </button>
+        <button className="secondary" type="button" disabled={!active} onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="secondary" type="button" disabled={!canRetry} onClick={onRetry}>
+          <RotateCcw size={15} />
+          Retry
+        </button>
+      </form>
+      {run ? (
+        <div className="liveRunDetails">
+          <span>Run: {run.run_id}</span>
+          {run.trace_id ? <span>Trace: {run.trace_id}</span> : <span>Trace pending</span>}
+          {run.trace ? <span>{run.trace.spans.length} spans visible</span> : null}
+          {run.completed_at ? <span>Completed: {run.completed_at}</span> : <span>Updated: {run.updated_at}</span>}
+        </div>
+      ) : null}
+      {error ? <p className="chatError">{error}</p> : null}
+    </section>
+  );
+}
 
 function ChatMonitor({
   session,
@@ -772,6 +1017,74 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
         <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
         <SourceBreakdown title="Ingest format" counts={summary.source_kind_counts} labelForValue={sourceKindLabel} />
       </div>
+    </section>
+  );
+}
+
+function EvalDashboardPanel({
+  run,
+  history,
+  status,
+  onRun,
+  onSelectTrace,
+}: {
+  run: EvalSuiteRun | null;
+  history: EvalRunSummary[];
+  status: EvalRunStatus;
+  onRun: () => Promise<void>;
+  onSelectTrace: (traceId: string) => void;
+}) {
+  const failures = failedEvalCases(run);
+  const running = status.status === "running";
+
+  return (
+    <section className="evalDashboard">
+      <div className="evalDashboardHeader">
+        <div>
+          <small>Evaluation dashboard</small>
+          <h2>Support agent quality</h2>
+        </div>
+        <button type="button" onClick={() => void onRun()} disabled={running}>
+          {running ? <Activity size={15} /> : <FlaskConical size={15} />}
+          Run evals
+        </button>
+      </div>
+      <div className="evalSummaryGrid">
+        <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
+        <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
+        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? `${run.passed}/${run.total}` : "-"} />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
+      </div>
+      {status.status === "error" ? <p className="evalError">{status.message}</p> : null}
+      {run ? (
+        <div className="evalCases">
+          {(failures.length > 0 ? failures : run.results).slice(0, 4).map((result) => (
+            <button
+              type="button"
+              className={result.passed ? "passed" : "failed"}
+              key={result.case_id}
+              onClick={() => onSelectTrace(result.trace_id)}
+            >
+              <span>{result.name}</span>
+              <strong>{Math.round(result.score * 100)}%</strong>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
+      )}
+      {history.length > 0 ? (
+        <div className="evalHistory">
+          <small>Recent eval runs</small>
+          {history.map((item) => (
+            <div className={item.failed === 0 ? "passed" : "failed"} key={item.run_id}>
+              <span>{formatShortTimestamp(item.created_at)}</span>
+              <strong>{evalPassRateLabel(item.pass_rate)}</strong>
+              <em>{item.failed === 0 ? "passing" : `${item.failed} failed`}</em>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1677,6 +1990,17 @@ function startedAfterForRange(value: string): string | null {
 
 function formatRelevance(value: number | null): string {
   return value === null ? "-" : value.toFixed(2);
+}
+
+function formatShortTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 async function postJson<T>(path: string): Promise<T> {

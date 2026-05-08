@@ -253,6 +253,89 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(messages[1]["message_id"], assistant_message["message_id"])
             self.assertEqual(messages[1]["trace_id"], "trace_chat_turn")
 
+    def test_workflow_run_round_trip_and_update(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+
+            run = store.create_workflow_run(
+                run_id="run_1",
+                workflow_name="support-triage",
+                trace_id="trace_run_1",
+                input_data={
+                    "message": "Refund?",
+                    "customer_email": "customer@example.com",
+                    "use_openai": False,
+                    "openai_api": "chat_completions",
+                },
+            )
+            updated = store.update_workflow_run(
+                "run_1",
+                status="cancel_requested",
+                cancel_requested=True,
+            )
+
+            reopened = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            reopened.initialize()
+            saved = reopened.get_workflow_run("run_1")
+            active_runs = reopened.list_active_workflow_runs()
+
+            self.assertEqual(run["status"], "pending")
+            self.assertIsNotNone(updated)
+            assert saved is not None
+            self.assertEqual(saved["run_id"], "run_1")
+            self.assertEqual(saved["status"], "cancel_requested")
+            self.assertTrue(saved["cancel_requested"])
+            self.assertEqual(saved["input"]["customer_email"], "customer@example.com")
+            self.assertEqual([item["run_id"] for item in active_runs], ["run_1"])
+
+    def test_eval_run_round_trip(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            store.save_trace(Trace(trace_id="trace_eval_case", workflow_name="support-triage", status="passed"))
+
+            saved = store.save_eval_run(
+                {
+                    "suite_id": "support-triage-core",
+                    "name": "Support triage core",
+                    "total": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "pass_rate": 1.0,
+                    "results": [
+                        {
+                            "case_id": "duplicate-charge-refund",
+                            "name": "Duplicate charge refund",
+                            "trace_id": "trace_eval_case",
+                            "passed": True,
+                            "score": 1.0,
+                            "checks": [
+                                {
+                                    "name": "trace_status",
+                                    "expected": "passed",
+                                    "actual": "passed",
+                                    "passed": True,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                run_id="eval_1",
+            )
+
+            reopened = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            reopened.initialize()
+            listed = reopened.list_eval_runs()
+            detail = reopened.get_eval_run("eval_1")
+
+            self.assertEqual(saved["status"], "passed")
+            self.assertEqual(listed["total"], 1)
+            self.assertEqual(listed["items"][0]["run_id"], "eval_1")
+            assert detail is not None
+            self.assertEqual(detail["results"][0]["case_id"], "duplicate-charge-refund")
+            self.assertEqual(detail["results"][0]["checks"][0]["name"], "trace_status")
+
     def test_trace_summary_includes_chat_metadata(self) -> None:
         with TemporaryDirectory() as temp_dir:
             store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")

@@ -78,6 +78,21 @@ class TraceSummaryTest(unittest.TestCase):
         self.assertEqual(summary["memory_warning_count"], 3)
         self.assertEqual(summary["memory_average_relevance"], 0.42)
 
+    def test_build_dashboard_summary_aggregates_imported_memory_fixtures(self) -> None:
+        healthy = build_trace_summary(load_trace_file(Path("examples/support_triage/sample_trace_memory_healthy.json")))
+        warning = build_trace_summary(load_trace_file(Path("examples/support_triage/sample_trace_memory_warning.json")))
+
+        summary = build_dashboard_summary([healthy, warning])
+
+        self.assertEqual(summary["total_runs"], 2)
+        self.assertEqual(summary["memory_read_count"], 2)
+        self.assertEqual(summary["memory_write_count"], 2)
+        self.assertEqual(summary["memory_retrieved_count"], 3)
+        self.assertEqual(summary["memory_ignored_count"], 1)
+        self.assertEqual(summary["memory_stale_count"], 1)
+        self.assertEqual(summary["memory_warning_count"], 3)
+        self.assertEqual(summary["memory_average_relevance"], 0.665)
+
 
 if __name__ == "__main__":
     unittest.main()

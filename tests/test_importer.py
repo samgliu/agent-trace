@@ -61,3 +61,13 @@ class ImporterTest(unittest.TestCase):
         )
 
         self.assertEqual([span.span_type for span in trace.spans], ["memory_read", "memory_write"])
+
+    def test_load_imported_memory_trace_fixture(self) -> None:
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_memory_warning.json"))
+
+        self.assertEqual(trace.trace_id, "trace_support_triage_memory_warning")
+        self.assertEqual(trace.status, "recovered")
+        memory_spans = [span for span in trace.spans if span.span_type in {"memory_read", "memory_write"}]
+        self.assertEqual([span.span_type for span in memory_spans], ["memory_write", "memory_read"])
+        self.assertEqual(memory_spans[1].span_data["memory_relevance_score"], 0.42)
+        self.assertFalse(memory_spans[1].span_data["memory_used_in_response"])

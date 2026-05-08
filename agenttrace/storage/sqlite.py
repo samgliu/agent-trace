@@ -120,6 +120,54 @@ class SQLiteTraceStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_runs (
+                    run_id TEXT PRIMARY KEY,
+                    workflow_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trace_id TEXT,
+                    error TEXT,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    input_json TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS eval_runs (
+                    run_id TEXT PRIMARY KEY,
+                    suite_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total INTEGER NOT NULL,
+                    passed INTEGER NOT NULL,
+                    failed INTEGER NOT NULL,
+                    pass_rate REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS eval_case_results (
+                    run_id TEXT NOT NULL,
+                    case_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    trace_id TEXT NOT NULL,
+                    passed INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    checks_json TEXT NOT NULL,
+                    PRIMARY KEY(run_id, case_id),
+                    FOREIGN KEY(run_id) REFERENCES eval_runs(run_id),
+                    FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
+                )
+                """
+            )
             connection.commit()
             _ensure_columns(
                 connection,
@@ -140,6 +188,182 @@ class SQLiteTraceStore:
                 },
             )
         self._backfill_trace_summaries()
+
+    def save_eval_run(self, result: dict[str, Any], *, run_id: str | None = None) -> dict[str, Any]:
+        created_at = _utc_now()
+        saved_run = {
+            "run_id": run_id or f"eval_{uuid.uuid4().hex[:12]}",
+            "suite_id": result["suite_id"],
+            "name": result["name"],
+            "status": "passed" if result["failed"] == 0 else "failed",
+            "total": result["total"],
+            "passed": result["passed"],
+            "failed": result["failed"],
+            "pass_rate": result["pass_rate"],
+            "created_at": created_at,
+            "results": result["results"],
+        }
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO eval_runs (
+                    run_id, suite_id, name, status, total, passed, failed, pass_rate, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _eval_run_row(saved_run),
+            )
+            connection.execute("DELETE FROM eval_case_results WHERE run_id = ?", (saved_run["run_id"],))
+            connection.executemany(
+                """
+                INSERT INTO eval_case_results (
+                    run_id, case_id, name, trace_id, passed, score, checks_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [_eval_case_result_row(saved_run["run_id"], case_result) for case_result in saved_run["results"]],
+            )
+            connection.commit()
+        saved = self.get_eval_run(saved_run["run_id"])
+        if saved is None:
+            raise ValueError(f"Eval run not saved: {saved_run['run_id']}")
+        return saved
+
+    def get_eval_run(self, run_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            run_row = connection.execute(
+                """
+                SELECT run_id, suite_id, name, status, total, passed, failed, pass_rate, created_at
+                FROM eval_runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if run_row is None:
+                return None
+            case_rows = connection.execute(
+                """
+                SELECT case_id, name, trace_id, passed, score, checks_json
+                FROM eval_case_results
+                WHERE run_id = ?
+                ORDER BY rowid ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return _eval_run_from_row(run_row, case_rows)
+
+    def list_eval_runs(self, *, limit: int = 10, offset: int = 0) -> dict[str, Any]:
+        limit = min(max(limit, 1), 100)
+        offset = max(offset, 0)
+        with closing(self._connect()) as connection:
+            total = connection.execute("SELECT COUNT(*) AS total FROM eval_runs").fetchone()["total"]
+            rows = connection.execute(
+                """
+                SELECT run_id, suite_id, name, status, total, passed, failed, pass_rate, created_at
+                FROM eval_runs
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return {
+            "items": [_eval_run_summary_from_row(row) for row in rows],
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+        }
+
+    def create_workflow_run(
+        self,
+        *,
+        run_id: str,
+        workflow_name: str,
+        trace_id: str | None,
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = _utc_now()
+        run = {
+            "run_id": run_id,
+            "workflow_name": workflow_name,
+            "status": "pending",
+            "trace_id": trace_id,
+            "error": None,
+            "cancel_requested": False,
+            "input": dict(input_data),
+            "started_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO workflow_runs (
+                    run_id, workflow_name, status, trace_id, error, cancel_requested,
+                    input_json, started_at, updated_at, completed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _workflow_run_row(run),
+            )
+            connection.commit()
+        return run
+
+    def get_workflow_run(self, run_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT run_id, workflow_name, status, trace_id, error, cancel_requested,
+                       input_json, started_at, updated_at, completed_at
+                FROM workflow_runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _workflow_run_from_row(row)
+
+    def list_active_workflow_runs(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT run_id, workflow_name, status, trace_id, error, cancel_requested,
+                       input_json, started_at, updated_at, completed_at
+                FROM workflow_runs
+                WHERE status IN ('pending', 'running', 'cancel_requested')
+                ORDER BY updated_at DESC
+                """
+            ).fetchall()
+        return [_workflow_run_from_row(row) for row in rows]
+
+    def update_workflow_run(self, run_id: str, **updates: Any) -> dict[str, Any] | None:
+        existing = self.get_workflow_run(run_id)
+        if existing is None:
+            return None
+        next_run = {**existing, **updates, "updated_at": _utc_now()}
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE workflow_runs
+                SET workflow_name = ?, status = ?, trace_id = ?, error = ?, cancel_requested = ?,
+                    input_json = ?, started_at = ?, updated_at = ?, completed_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    next_run["workflow_name"],
+                    next_run["status"],
+                    next_run["trace_id"],
+                    next_run["error"],
+                    1 if next_run["cancel_requested"] else 0,
+                    _to_json(next_run["input"]),
+                    next_run["started_at"],
+                    next_run["updated_at"],
+                    next_run["completed_at"],
+                    run_id,
+                ),
+            )
+            connection.commit()
+        return self.get_workflow_run(run_id)
 
     def create_chat_session(
         self,
@@ -775,6 +999,93 @@ def _chat_message_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "trace_id": row["trace_id"],
         "metadata": _from_json(row["metadata_json"]) or {},
         "created_at": row["created_at"],
+    }
+
+
+def _workflow_run_row(run: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        run["run_id"],
+        run["workflow_name"],
+        run["status"],
+        run["trace_id"],
+        run["error"],
+        1 if run["cancel_requested"] else 0,
+        _to_json(run["input"]),
+        run["started_at"],
+        run["updated_at"],
+        run["completed_at"],
+    )
+
+
+def _workflow_run_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "run_id": row["run_id"],
+        "workflow_name": row["workflow_name"],
+        "status": row["status"],
+        "trace_id": row["trace_id"],
+        "error": row["error"],
+        "cancel_requested": bool(row["cancel_requested"]),
+        "input": _from_json(row["input_json"]) or {},
+        "started_at": row["started_at"],
+        "updated_at": row["updated_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
+def _eval_run_row(run: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        run["run_id"],
+        run["suite_id"],
+        run["name"],
+        run["status"],
+        run["total"],
+        run["passed"],
+        run["failed"],
+        run["pass_rate"],
+        run["created_at"],
+    )
+
+
+def _eval_case_result_row(run_id: str, result: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        run_id,
+        result["case_id"],
+        result["name"],
+        result["trace_id"],
+        1 if result["passed"] else 0,
+        result["score"],
+        _to_json(result["checks"]),
+    )
+
+
+def _eval_run_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "run_id": row["run_id"],
+        "suite_id": row["suite_id"],
+        "name": row["name"],
+        "status": row["status"],
+        "total": row["total"],
+        "passed": row["passed"],
+        "failed": row["failed"],
+        "pass_rate": row["pass_rate"],
+        "created_at": row["created_at"],
+    }
+
+
+def _eval_run_from_row(run_row: sqlite3.Row, case_rows: list[sqlite3.Row]) -> dict[str, Any]:
+    return {
+        **_eval_run_summary_from_row(run_row),
+        "results": [
+            {
+                "case_id": row["case_id"],
+                "name": row["name"],
+                "trace_id": row["trace_id"],
+                "passed": bool(row["passed"]),
+                "score": row["score"],
+                "checks": _from_json(row["checks_json"]) or [],
+            }
+            for row in case_rows
+        ],
     }
 
 

@@ -1,4 +1,6 @@
 import unittest
+import os
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -15,6 +17,8 @@ from agenttrace.storage.sqlite import SQLiteTraceStore
 @unittest.skipIf(TestClient is None, "FastAPI is not installed")
 class ApiEndpointsTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.previous_live_span_delay = os.environ.get("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS")
+        os.environ["AGENTTRACE_LIVE_SPAN_DELAY_SECONDS"] = "0.01"
         self.temp_dir = TemporaryDirectory()
         self.store = SQLiteTraceStore(Path(self.temp_dir.name) / "agenttrace.db")
         self.store.initialize()
@@ -25,6 +29,10 @@ class ApiEndpointsTest(unittest.TestCase):
         self.client = TestClient(create_app(self.store))
 
     def tearDown(self) -> None:
+        if self.previous_live_span_delay is None:
+            os.environ.pop("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS", None)
+        else:
+            os.environ["AGENTTRACE_LIVE_SPAN_DELAY_SECONDS"] = self.previous_live_span_delay
         self.temp_dir.cleanup()
 
     def test_health(self) -> None:
@@ -32,6 +40,41 @@ class ApiEndpointsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_list_evals(self) -> None:
+        response = self.client.get("/evals")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["suites"][0]["suite_id"], "support-triage-core")
+        self.assertEqual(payload["suites"][0]["case_count"], 4)
+
+    def test_run_support_triage_evals_saves_eval_traces(self) -> None:
+        response = self.client.post("/evals/support-triage/run")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("run_id", payload)
+        self.assertEqual(payload["suite_id"], "support-triage-core")
+        self.assertEqual(payload["passed"], 4)
+        self.assertEqual(payload["failed"], 0)
+        history_response = self.client.get("/eval-runs")
+        detail_response = self.client.get(f"/eval-runs/{payload['run_id']}")
+        trace_response = self.client.get("/traces/trace_eval_support_triage_annual_refund_approval")
+        self.assertEqual(history_response.status_code, 200)
+        self.assertEqual(history_response.json()["items"][0]["run_id"], payload["run_id"])
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["results"][0]["case_id"], "duplicate-charge-refund")
+        self.assertEqual(trace_response.status_code, 200)
+        trace = trace_response.json()
+        self.assertEqual(trace["status"], "recovered")
+        self.assertEqual(trace["metadata"]["eval_suite_id"], "support-triage-core")
+        self.assertEqual(trace["metadata"]["source_kind"], "eval_run")
+
+    def test_get_missing_eval_run_returns_404(self) -> None:
+        response = self.client.get("/eval-runs/missing")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_cors_allows_local_dashboard(self) -> None:
         response = self.client.options(
@@ -249,6 +292,208 @@ class ApiEndpointsTest(unittest.TestCase):
         saved = self.client.get("/traces/trace_api_runner")
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["metadata"]["source_format"], "agenttrace")
+
+    def test_live_support_triage_workflow_can_be_polled_until_trace_is_ready(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_runner",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+        self.assertIn(run["status"], {"pending", "running", "completed"})
+        self.assertEqual(run["workflow_name"], "support-triage")
+        self.assertEqual(run["trace_id"], "trace_api_live_runner")
+        self.assertEqual(run["trace"]["trace_id"], "trace_api_live_runner")
+        self.assertEqual(run["trace"]["status"], "running")
+
+        completed = None
+        saw_partial_trace = False
+        for _ in range(20):
+            poll = self.client.get(f"/workflow-runs/{run['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            payload = poll.json()
+            if payload["status"] == "running" and 0 < len(payload["trace"]["spans"]) < 14:
+                saw_partial_trace = True
+            if payload["status"] == "completed":
+                completed = payload
+                break
+            time.sleep(0.05)
+
+        self.assertIsNotNone(completed)
+        self.assertTrue(saw_partial_trace)
+        self.assertEqual(completed["trace_id"], "trace_api_live_runner")
+        self.assertEqual(completed["trace"]["status"], "passed")
+        self.assertTrue(any(span["span_type"] == "memory_read" for span in completed["trace"]["spans"]))
+
+    def test_live_support_triage_workflow_missing_run_returns_404(self) -> None:
+        response = self.client.get("/workflow-runs/missing")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_live_support_triage_workflow_can_be_cancelled_and_retried(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_cancel",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+
+        cancel_response = self.client.post(f"/workflow-runs/{run['run_id']}/cancel")
+        self.assertEqual(cancel_response.status_code, 200)
+        self.assertIn(cancel_response.json()["status"], {"cancel_requested", "cancelled"})
+
+        cancelled = None
+        for _ in range(20):
+            poll = self.client.get(f"/workflow-runs/{run['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            payload = poll.json()
+            if payload["status"] == "cancelled":
+                cancelled = payload
+                break
+            time.sleep(0.05)
+
+        self.assertIsNotNone(cancelled)
+        self.assertEqual(cancelled["trace"]["status"], "cancelled")
+
+        retry_response = self.client.post(f"/workflow-runs/{run['run_id']}/retry")
+        self.assertEqual(retry_response.status_code, 200)
+        retry = retry_response.json()
+        self.assertNotEqual(retry["run_id"], run["run_id"])
+        self.assertTrue(retry["trace_id"].startswith("trace_api_live_cancel_retry_"))
+        self.assertEqual(retry["trace"]["status"], "running")
+        self.client.post(f"/workflow-runs/{retry['run_id']}/cancel")
+        self._wait_for_run_status(retry["run_id"], {"cancelled", "completed"})
+
+    def test_live_support_triage_retry_rejects_active_run(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_retry_active",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        retry_response = self.client.post(f"/workflow-runs/{response.json()['run_id']}/retry")
+
+        self.assertEqual(retry_response.status_code, 400)
+        self.client.post(f"/workflow-runs/{response.json()['run_id']}/cancel")
+        self._wait_for_run_status(response.json()["run_id"], {"cancelled", "completed"})
+
+    def test_live_support_triage_run_survives_app_recreation_for_retry(self) -> None:
+        response = self.client.post(
+            "/workflows/support-triage/runs/live",
+            json={
+                "trace_id": "trace_api_live_recreate",
+                "message": "I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+                "customer_email": "customer@example.com",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+        self.client.post(f"/workflow-runs/{run['run_id']}/cancel")
+        cancelled = self._wait_for_run_status(run["run_id"], {"cancelled", "completed"})
+        self.assertEqual(cancelled["status"], "cancelled")
+
+        from agenttrace.api.main import create_app
+
+        recreated_client = TestClient(create_app(self.store))
+        saved = recreated_client.get(f"/workflow-runs/{run['run_id']}")
+        retry_response = recreated_client.post(f"/workflow-runs/{run['run_id']}/retry")
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["status"], "cancelled")
+        self.assertEqual(retry_response.status_code, 200)
+        retry = retry_response.json()
+        self.assertNotEqual(retry["run_id"], run["run_id"])
+        recreated_client.post(f"/workflow-runs/{retry['run_id']}/cancel")
+        for _ in range(20):
+            poll = recreated_client.get(f"/workflow-runs/{retry['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            if poll.json()["status"] in {"cancelled", "completed"}:
+                break
+            time.sleep(0.05)
+
+    def test_startup_reconciles_stale_running_workflow_run(self) -> None:
+        self.store.save_trace(Trace(trace_id="trace_stale_running", workflow_name="support-triage", status="running"))
+        run = self.store.create_workflow_run(
+            run_id="run_stale_running",
+            workflow_name="support-triage",
+            trace_id="trace_stale_running",
+            input_data={
+                "message": "Refund?",
+                "customer_email": "customer@example.com",
+                "use_openai": False,
+                "openai_api": "chat_completions",
+            },
+        )
+        self.store.update_workflow_run(run["run_id"], status="running")
+
+        from agenttrace.api.main import create_app
+
+        recreated_client = TestClient(create_app(self.store))
+        saved_run = recreated_client.get(f"/workflow-runs/{run['run_id']}")
+        saved_trace = recreated_client.get("/traces/trace_stale_running")
+
+        self.assertEqual(saved_run.status_code, 200)
+        self.assertEqual(saved_run.json()["status"], "failed")
+        self.assertEqual(saved_run.json()["error"], "API restarted before workflow completed.")
+        self.assertEqual(saved_trace.json()["status"], "failed")
+
+    def test_startup_reconciles_stale_cancel_requested_workflow_run(self) -> None:
+        self.store.save_trace(Trace(trace_id="trace_stale_cancel", workflow_name="support-triage", status="running"))
+        run = self.store.create_workflow_run(
+            run_id="run_stale_cancel",
+            workflow_name="support-triage",
+            trace_id="trace_stale_cancel",
+            input_data={
+                "message": "Refund?",
+                "customer_email": "customer@example.com",
+                "use_openai": False,
+                "openai_api": "chat_completions",
+            },
+        )
+        self.store.update_workflow_run(run["run_id"], status="cancel_requested", cancel_requested=True)
+
+        from agenttrace.api.main import create_app
+
+        recreated_client = TestClient(create_app(self.store))
+        saved_run = recreated_client.get(f"/workflow-runs/{run['run_id']}")
+        saved_trace = recreated_client.get("/traces/trace_stale_cancel")
+        retry_response = recreated_client.post(f"/workflow-runs/{run['run_id']}/retry")
+
+        self.assertEqual(saved_run.status_code, 200)
+        self.assertEqual(saved_run.json()["status"], "cancelled")
+        self.assertEqual(saved_trace.json()["status"], "cancelled")
+        self.assertEqual(retry_response.status_code, 200)
+        retry = retry_response.json()
+        recreated_client.post(f"/workflow-runs/{retry['run_id']}/cancel")
+        for _ in range(20):
+            poll = recreated_client.get(f"/workflow-runs/{retry['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            if poll.json()["status"] in {"cancelled", "completed"}:
+                break
+            time.sleep(0.05)
+
+    def _wait_for_run_status(self, run_id: str, statuses: set[str]) -> dict:
+        for _ in range(20):
+            poll = self.client.get(f"/workflow-runs/{run_id}")
+            self.assertEqual(poll.status_code, 200)
+            payload = poll.json()
+            if payload["status"] in statuses:
+                return payload
+            time.sleep(0.05)
+        self.fail(f"Workflow run {run_id} did not reach one of {statuses}")
 
     def test_chat_message_runs_agent_and_links_trace(self) -> None:
         session_response = self.client.post(

@@ -234,10 +234,26 @@ class SupportTriageRunner:
         self.llm_client = llm_client or StaticLLMClient()
         self.tools_client = tools_client or LocalSupportToolsClient()
 
-    def run(self, *, message: str, customer_email: str, trace_id: str | None = None) -> Trace:
+    def run(
+        self,
+        *,
+        message: str,
+        customer_email: str,
+        trace_id: str | None = None,
+        on_span: Callable[[Span], None] | None = None,
+    ) -> Trace:
         trace_id = trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
         clock = _SpanClock(datetime.now(timezone.utc))
         spans: list[Span] = []
+        emitted_span_ids: set[str] = set()
+
+        def emit(span: Span) -> Span:
+            spans.append(span)
+            if on_span is not None and span.span_id not in emitted_span_ids:
+                emitted_span_ids.add(span.span_id)
+                on_span(span)
+            return span
+
         span_ids = {
             "supervisor": _span_id(trace_id, "supervisor"),
             "handoff_triage": _span_id(trace_id, "handoff_triage"),
@@ -266,8 +282,8 @@ class SupportTriageRunner:
             output={"route": "triage"},
             span_data={"agent_role": "supervisor"},
         )
-        spans.append(supervisor)
-        spans.append(
+        emit(supervisor)
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["handoff_triage"],
@@ -281,7 +297,7 @@ class SupportTriageRunner:
         )
 
         triage = _triage(message)
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["triage"],
@@ -296,7 +312,7 @@ class SupportTriageRunner:
             )
         )
         working_memory = _working_memory(message, customer_email, triage)
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["working_memory_write"],
@@ -320,7 +336,7 @@ class SupportTriageRunner:
         try:
             customer = self.tools_client.lookup_customer(customer_email)
         except Exception as exc:
-            spans.append(
+            emit(
                 _span(
                     trace_id=trace_id,
                     span_id=span_ids["lookup_customer"],
@@ -343,7 +359,7 @@ class SupportTriageRunner:
                 llm_provider=self.llm_client.provider_name,
             )
 
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["lookup_customer"],
@@ -357,7 +373,7 @@ class SupportTriageRunner:
                 span_data=_mcp_span_data("lookup_customer_tool"),
             )
         )
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["handoff_policy"],
@@ -371,7 +387,7 @@ class SupportTriageRunner:
         )
 
         policy_topic = _policy_topic(triage, customer)
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["policy_agent"],
@@ -386,7 +402,7 @@ class SupportTriageRunner:
             )
         )
         policy = self.tools_client.retrieve_policy(policy_topic)
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["retrieve_policy"],
@@ -401,7 +417,7 @@ class SupportTriageRunner:
             )
         )
         customer_memory = _customer_memory(customer)
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["customer_memory_read"],
@@ -427,7 +443,7 @@ class SupportTriageRunner:
 
         action_type = _action_type(triage, customer)
         action_reason = _action_reason(triage, customer, policy, customer_memory)
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["action_agent"],
@@ -446,7 +462,7 @@ class SupportTriageRunner:
             action_type,
             action_reason,
         )
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["create_action"],
@@ -467,7 +483,7 @@ class SupportTriageRunner:
             "approval_required": requires_approval,
             "evidence": [customer.get("customer_id"), policy.get("policy_id"), action.get("action_id")],
         }
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["validator"],
@@ -482,7 +498,7 @@ class SupportTriageRunner:
             )
         )
         if requires_approval:
-            spans.append(
+            emit(
                 _span(
                     trace_id=trace_id,
                     span_id=span_ids["approval_required"],
@@ -506,7 +522,7 @@ class SupportTriageRunner:
             instructions=_customer_response_instructions(),
             input_text=_customer_response_input(message, customer, policy, action, validation, working_memory, customer_memory),
         )
-        spans.append(
+        emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["customer_response"],
