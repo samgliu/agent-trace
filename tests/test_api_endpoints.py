@@ -389,6 +389,67 @@ class ApiEndpointsTest(unittest.TestCase):
                 break
             time.sleep(0.05)
 
+    def test_startup_reconciles_stale_running_workflow_run(self) -> None:
+        self.store.save_trace(Trace(trace_id="trace_stale_running", workflow_name="support-triage", status="running"))
+        run = self.store.create_workflow_run(
+            run_id="run_stale_running",
+            workflow_name="support-triage",
+            trace_id="trace_stale_running",
+            input_data={
+                "message": "Refund?",
+                "customer_email": "customer@example.com",
+                "use_openai": False,
+                "openai_api": "chat_completions",
+            },
+        )
+        self.store.update_workflow_run(run["run_id"], status="running")
+
+        from agenttrace.api.main import create_app
+
+        recreated_client = TestClient(create_app(self.store))
+        saved_run = recreated_client.get(f"/workflow-runs/{run['run_id']}")
+        saved_trace = recreated_client.get("/traces/trace_stale_running")
+
+        self.assertEqual(saved_run.status_code, 200)
+        self.assertEqual(saved_run.json()["status"], "failed")
+        self.assertEqual(saved_run.json()["error"], "API restarted before workflow completed.")
+        self.assertEqual(saved_trace.json()["status"], "failed")
+
+    def test_startup_reconciles_stale_cancel_requested_workflow_run(self) -> None:
+        self.store.save_trace(Trace(trace_id="trace_stale_cancel", workflow_name="support-triage", status="running"))
+        run = self.store.create_workflow_run(
+            run_id="run_stale_cancel",
+            workflow_name="support-triage",
+            trace_id="trace_stale_cancel",
+            input_data={
+                "message": "Refund?",
+                "customer_email": "customer@example.com",
+                "use_openai": False,
+                "openai_api": "chat_completions",
+            },
+        )
+        self.store.update_workflow_run(run["run_id"], status="cancel_requested", cancel_requested=True)
+
+        from agenttrace.api.main import create_app
+
+        recreated_client = TestClient(create_app(self.store))
+        saved_run = recreated_client.get(f"/workflow-runs/{run['run_id']}")
+        saved_trace = recreated_client.get("/traces/trace_stale_cancel")
+        retry_response = recreated_client.post(f"/workflow-runs/{run['run_id']}/retry")
+
+        self.assertEqual(saved_run.status_code, 200)
+        self.assertEqual(saved_run.json()["status"], "cancelled")
+        self.assertEqual(saved_trace.json()["status"], "cancelled")
+        self.assertEqual(retry_response.status_code, 200)
+        retry = retry_response.json()
+        recreated_client.post(f"/workflow-runs/{retry['run_id']}/cancel")
+        for _ in range(20):
+            poll = recreated_client.get(f"/workflow-runs/{retry['run_id']}")
+            self.assertEqual(poll.status_code, 200)
+            if poll.json()["status"] in {"cancelled", "completed"}:
+                break
+            time.sleep(0.05)
+
     def _wait_for_run_status(self, run_id: str, statuses: set[str]) -> dict:
         for _ in range(20):
             poll = self.client.get(f"/workflow-runs/{run_id}")

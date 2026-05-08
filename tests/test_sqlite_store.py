@@ -278,6 +278,7 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             reopened = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
             reopened.initialize()
             saved = reopened.get_workflow_run("run_1")
+            active_runs = reopened.list_active_workflow_runs()
 
             self.assertEqual(run["status"], "pending")
             self.assertIsNotNone(updated)
@@ -286,6 +287,7 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(saved["status"], "cancel_requested")
             self.assertTrue(saved["cancel_requested"])
             self.assertEqual(saved["input"]["customer_email"], "customer@example.com")
+            self.assertEqual([item["run_id"] for item in active_runs], ["run_1"])
 
     def test_trace_summary_includes_chat_metadata(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -53,6 +53,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     trace_store = store or SQLiteTraceStore(_database_path())
     trace_store.initialize()
     workflow_runs = WorkflowRunRegistry(trace_store)
+    _reconcile_stale_workflow_runs(trace_store, workflow_runs)
 
     def launch_live_support_triage(payload: SupportTriageRunRequest, trace_id: str | None = None) -> dict[str, Any]:
         live_trace_id = trace_id or payload.trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
@@ -418,6 +419,19 @@ def _live_span_delay_seconds() -> float:
 
 class WorkflowRunCancelled(RuntimeError):
     pass
+
+
+def _reconcile_stale_workflow_runs(store: SQLiteTraceStore, workflow_runs: WorkflowRunRegistry) -> None:
+    for run in store.list_active_workflow_runs():
+        trace_id = run["trace_id"]
+        if run["status"] == "cancel_requested":
+            if trace_id:
+                store.update_trace_lifecycle(trace_id, status="cancelled", ended_at=_utc_now())
+            workflow_runs.mark_cancelled(run["run_id"], "Workflow run cancelled during API startup reconciliation.")
+            continue
+        if trace_id:
+            store.update_trace_lifecycle(trace_id, status="failed", ended_at=_utc_now())
+        workflow_runs.mark_failed(run["run_id"], "API restarted before workflow completed.")
 
 
 def _require_trace(store: SQLiteTraceStore, trace_id: str) -> Trace:

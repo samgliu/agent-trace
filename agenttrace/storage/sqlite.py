@@ -208,6 +208,19 @@ class SQLiteTraceStore:
             return None
         return _workflow_run_from_row(row)
 
+    def list_active_workflow_runs(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT run_id, workflow_name, status, trace_id, error, cancel_requested,
+                       input_json, started_at, updated_at, completed_at
+                FROM workflow_runs
+                WHERE status IN ('pending', 'running', 'cancel_requested')
+                ORDER BY updated_at DESC
+                """
+            ).fetchall()
+        return [_workflow_run_from_row(row) for row in rows]
+
     def update_workflow_run(self, run_id: str, **updates: Any) -> dict[str, Any] | None:
         existing = self.get_workflow_run(run_id)
         if existing is None:
