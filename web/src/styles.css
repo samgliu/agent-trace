@@ -714,7 +714,8 @@ h2 {
   text-transform: uppercase;
 }
 
-.liveWorkflowForm input {
+.liveWorkflowForm input,
+.liveWorkflowForm select {
   width: 100%;
   min-height: 36px;
   padding: 7px 9px;
@@ -855,7 +856,8 @@ h2 {
 }
 
 .chatComposer input,
-.chatComposer textarea {
+.chatComposer textarea,
+.chatComposer select {
   width: 100%;
   color: #172026;
   background: #ffffff;
@@ -863,7 +865,8 @@ h2 {
   border-radius: 5px;
 }
 
-.chatComposer input {
+.chatComposer input,
+.chatComposer select {
   min-height: 36px;
   padding: 7px 9px;
 }

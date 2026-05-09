@@ -28,6 +28,7 @@ import {
   sendChatMessage,
   type ChatMessage,
   type ChatSession,
+  type LLMProvider,
 } from "./utils/chat";
 import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
@@ -424,7 +425,7 @@ function App() {
       const run = await startSupportTriageLiveRun<TraceDetail>(apiPostJson, {
         message: input.message,
         customerEmail: input.customerEmail,
-        useOpenAI: input.useOpenAI,
+        llmProvider: input.llmProvider,
       });
       setLiveWorkflowRun(run);
       if (run.trace_id) {
@@ -497,7 +498,7 @@ function App() {
       }
       const result = await sendChatMessage<TraceDetail>(apiPostJson, session.session_id, {
         content: input.message,
-        useOpenAI: input.useOpenAI,
+        llmProvider: input.llmProvider,
       });
       setChatSession(result.session);
       setChatSessions((sessions) => upsertChatSession(sessions, result.session));
@@ -743,7 +744,7 @@ type ChatStatus = { status: "idle" } | { status: "submitting" } | { status: "err
 type ChatInput = {
   customerEmail: string;
   message: string;
-  useOpenAI: boolean;
+  llmProvider: LLMProvider;
 };
 
 type LiveWorkflowInput = ChatInput;
@@ -763,7 +764,7 @@ function LiveWorkflowPanel({
 }) {
   const [customerEmail, setCustomerEmail] = useState("customer@example.com");
   const [message, setMessage] = useState("I was charged twice for my Pro subscription yesterday. Can I get a refund?");
-  const [useOpenAI, setUseOpenAI] = useState(false);
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>("deterministic");
   const active = isWorkflowRunActive(run);
   const canRetry = run?.status === "failed" || run?.status === "cancelled";
 
@@ -774,7 +775,7 @@ function LiveWorkflowPanel({
     if (!trimmedEmail || !trimmedMessage || active) {
       return;
     }
-    await onStart({ customerEmail: trimmedEmail, message: trimmedMessage, useOpenAI });
+    await onStart({ customerEmail: trimmedEmail, message: trimmedMessage, llmProvider });
   }
 
   return (
@@ -798,9 +799,12 @@ function LiveWorkflowPanel({
           <span>Message</span>
           <input value={message} onChange={(event) => setMessage(event.target.value)} disabled={active} />
         </label>
-        <label className="chatToggle">
-          <input type="checkbox" checked={useOpenAI} onChange={(event) => setUseOpenAI(event.target.checked)} disabled={active} />
-          <span>Use OpenAI-compatible LLM</span>
+        <label>
+          <span>LLM provider</span>
+          <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)} disabled={active}>
+            <option value="deterministic">Deterministic</option>
+            <option value="openai_compatible">OpenAI-compatible</option>
+          </select>
         </label>
         <button type="submit" disabled={active || !message.trim()}>
           {active ? <Activity size={15} /> : <Send size={15} />}
@@ -852,7 +856,7 @@ function ChatMonitor({
 }) {
   const [customerEmail, setCustomerEmail] = useState("customer@example.com");
   const [message, setMessage] = useState("I was charged twice for my Pro subscription yesterday. Can I get a refund?");
-  const [useOpenAI, setUseOpenAI] = useState(false);
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>("deterministic");
   const isSubmitting = status.status === "submitting";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -862,7 +866,7 @@ function ChatMonitor({
     if (!trimmedMessage || !trimmedEmail || isSubmitting) {
       return;
     }
-    await onSubmit({ customerEmail: trimmedEmail, message: trimmedMessage, useOpenAI });
+    await onSubmit({ customerEmail: trimmedEmail, message: trimmedMessage, llmProvider });
     setMessage("");
   }
 
@@ -901,9 +905,12 @@ function ChatMonitor({
             <span>Message</span>
             <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={isSubmitting} />
           </label>
-          <label className="chatToggle">
-            <input type="checkbox" checked={useOpenAI} onChange={(event) => setUseOpenAI(event.target.checked)} />
-            <span>Use OpenAI-compatible LLM</span>
+          <label>
+            <span>LLM provider</span>
+            <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)}>
+              <option value="deterministic">Deterministic</option>
+              <option value="openai_compatible">OpenAI-compatible</option>
+            </select>
           </label>
           <button type="submit" disabled={isSubmitting || !message.trim()}>
             {isSubmitting ? <Activity size={15} /> : <Send size={15} />}
