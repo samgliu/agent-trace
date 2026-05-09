@@ -1436,6 +1436,7 @@ function SpanRow({
 }) {
   const span = node.span;
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
+  const decisionSource = formatDecisionSource(span.span_data.decision_source);
   const rowClassName = [
     "spanRow",
     span.span_id === selectedSpanId ? "selected" : "",
@@ -1459,6 +1460,7 @@ function SpanRow({
         <div className="spanMeta">
           {approvalStatus?.isPending ? <span className="approvalBadge">Needs approval</span> : null}
           {span.error ? <span className="errorBadge">Error</span> : null}
+          {decisionSource ? <span className={`decisionBadge ${decisionSource.className}`}>{decisionSource.label}</span> : null}
           <span>{formatDuration(span.duration_ms)}</span>
           {span.input_tokens || span.output_tokens ? <span>{formatTokens(span.input_tokens ?? 0, span.output_tokens ?? 0)}</span> : null}
           {span.estimated_cost ? <span>{formatCost(span.estimated_cost)}</span> : null}
@@ -1476,6 +1478,22 @@ function SpanRow({
       ))}
     </>
   );
+}
+
+function formatDecisionSource(value: unknown): { label: string; className: string } | null {
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+  if (value === "llm") {
+    return { label: "LLM decision", className: "llm" };
+  }
+  if (value === "fallback") {
+    return { label: "Fallback decision", className: "fallback" };
+  }
+  if (value === "deterministic") {
+    return { label: "Deterministic", className: "deterministic" };
+  }
+  return { label: value.replaceAll("_", " "), className: "unknown" };
 }
 
 function AnalysisPanel({

@@ -12,7 +12,7 @@ from typing import Any, Callable, Awaitable
 
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
-from agenttrace.mcp_tools.tools import create_support_action, lookup_customer, retrieve_policy
+from agenttrace.mcp_tools.tools import VALID_ACTIONS, create_support_action, lookup_customer, retrieve_policy
 
 PostJson = Any
 AsyncToolCall = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -290,7 +290,11 @@ class SupportTriageRunner:
             duration_ms=250,
             input={"message": message, "customer_email": customer_email},
             output=supervisor_decision,
-            span_data={"agent_role": "supervisor", **_agent_decision_span_data(supervisor_llm)},
+            span_data={
+                "agent_role": "supervisor",
+                "model_provider": self.llm_client.provider_name,
+                **_agent_decision_span_data(supervisor_llm),
+            },
             input_tokens=supervisor_llm.input_tokens,
             output_tokens=supervisor_llm.output_tokens,
             estimated_cost=supervisor_llm.estimated_cost,
@@ -327,7 +331,11 @@ class SupportTriageRunner:
                 duration_ms=400,
                 input={"message": message},
                 output=triage,
-                span_data={"agent_role": "triage", **_agent_decision_span_data(triage_llm)},
+                span_data={
+                    "agent_role": "triage",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(triage_llm),
+                },
                 input_tokens=triage_llm.input_tokens,
                 output_tokens=triage_llm.output_tokens,
                 estimated_cost=triage_llm.estimated_cost,
@@ -431,7 +439,11 @@ class SupportTriageRunner:
                 duration_ms=350,
                 input={"topic": policy_topic},
                 output=policy_plan,
-                span_data={"agent_role": "policy", **_agent_decision_span_data(policy_llm)},
+                span_data={
+                    "agent_role": "policy",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(policy_llm),
+                },
                 input_tokens=policy_llm.input_tokens,
                 output_tokens=policy_llm.output_tokens,
                 estimated_cost=policy_llm.estimated_cost,
@@ -490,6 +502,10 @@ class SupportTriageRunner:
         )
         action_type = str(action_decision.get("action_type") or fallback_action["action_type"])
         action_reason = str(action_decision.get("reason") or fallback_action["reason"])
+        action_safety = _action_safety(action_type)
+        if action_safety:
+            action_type = fallback_action["action_type"]
+            action_reason = fallback_action["reason"]
         emit(
             _span(
                 trace_id=trace_id,
@@ -501,7 +517,12 @@ class SupportTriageRunner:
                 duration_ms=450,
                 input={"issue_type": triage["issue_type"], "policy": policy, "memory": customer_memory},
                 output={"action_type": action_type, "reason": action_reason},
-                span_data={"agent_role": "action", **_agent_decision_span_data(action_llm)},
+                span_data={
+                    "agent_role": "action",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(action_llm),
+                    **action_safety,
+                },
                 input_tokens=action_llm.input_tokens,
                 output_tokens=action_llm.output_tokens,
                 estimated_cost=action_llm.estimated_cost,
@@ -540,8 +561,7 @@ class SupportTriageRunner:
             fallback=validation_fallback,
             allowed_keys={"grounding_status", "approval_required", "evidence", "unsupported_claims"},
         )
-        validation["approval_required"] = bool(validation.get("approval_required"))
-        validation["grounding_status"] = str(validation.get("grounding_status") or validation_fallback["grounding_status"])
+        validation = _enforce_validation(policy, action, validation, validation_fallback)
         emit(
             _span(
                 trace_id=trace_id,
@@ -553,7 +573,12 @@ class SupportTriageRunner:
                 duration_ms=300,
                 input={"customer": customer, "policy": policy, "action": action},
                 output=validation,
-                span_data={"agent_role": "validator", **validation, **_agent_decision_span_data(validation_llm)},
+                span_data={
+                    "agent_role": "validator",
+                    "model_provider": self.llm_client.provider_name,
+                    **validation,
+                    **_agent_decision_span_data(validation_llm),
+                },
                 input_tokens=validation_llm.input_tokens,
                 output_tokens=validation_llm.output_tokens,
                 estimated_cost=validation_llm.estimated_cost,
@@ -813,6 +838,45 @@ def _action_reason(
         f"{triage['issue_type']} for {customer.get('customer_id', 'unknown customer')} "
         f"under {policy.get('policy_id', 'missing policy')}.{memory_note}"
     )
+
+
+def _action_safety(action_type: str) -> dict[str, Any]:
+    if action_type.strip().lower() in VALID_ACTIONS:
+        return {}
+    return {
+        "decision_source": "fallback",
+        "fallback_reason": "unsupported_action_type",
+        "rejected_action_type": action_type,
+    }
+
+
+def _enforce_validation(
+    policy: dict[str, Any],
+    action: dict[str, Any],
+    validation: dict[str, Any],
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    enforced = {**fallback, **validation}
+    enforced["approval_required"] = bool(enforced.get("approval_required"))
+    enforced["grounding_status"] = str(enforced.get("grounding_status") or fallback["grounding_status"])
+
+    evidence = enforced.get("evidence")
+    if not isinstance(evidence, list):
+        enforced["evidence"] = fallback["evidence"]
+
+    corrections = []
+    if policy.get("requires_approval") and not enforced["approval_required"]:
+        enforced["approval_required"] = True
+        enforced["grounding_status"] = "recovered"
+        corrections.append("required_approval_enforced")
+
+    if action.get("status") != "created":
+        enforced["grounding_status"] = "failed"
+        corrections.append("action_not_created")
+
+    if corrections:
+        enforced["validator_corrections"] = corrections
+    return enforced
 
 
 def _mcp_span_data(tool_name: str) -> dict[str, Any]:

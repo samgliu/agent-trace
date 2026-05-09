@@ -155,6 +155,13 @@ small {
   font-size: 11px;
 }
 
+.filterHeader button {
+  justify-self: end;
+  min-width: 64px;
+  margin-left: 8px;
+  padding: 0 12px;
+}
+
 .filterGroup {
   border: 1px solid #edf1f3;
   border-radius: 6px;
@@ -210,6 +217,7 @@ small {
 
 .traceFilters button {
   min-height: 32px;
+  padding: 0 10px;
   color: #246b5b;
   background: #e8f4f0;
   border: 1px solid #c7e1d8;
@@ -384,6 +392,28 @@ h2 {
   background: #fff0ed;
   border-color: #e9a7a0;
   font-weight: 800;
+}
+
+.spanMeta .decisionBadge {
+  font-weight: 800;
+}
+
+.spanMeta .decisionBadge.llm {
+  color: #1f5f4f;
+  background: #e8f4f0;
+  border-color: #b7d9ce;
+}
+
+.spanMeta .decisionBadge.fallback {
+  color: #7b4d12;
+  background: #fff4dc;
+  border-color: #ebcf91;
+}
+
+.spanMeta .decisionBadge.deterministic {
+  color: #315f99;
+  background: #e9f1fb;
+  border-color: #bfd4ee;
 }
 
 .metricGrid {
