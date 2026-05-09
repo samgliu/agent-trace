@@ -57,4 +57,29 @@ describe("buildSpanFacts", () => {
       { label: "Used in response", value: "yes" },
     ]);
   });
+
+  it("summarizes agent decision provenance", () => {
+    expect(
+      buildSpanFacts({
+        duration_ms: 450,
+        input_tokens: 22,
+        output_tokens: 9,
+        estimated_cost: 0.0002,
+        span_data: {
+          decision_source: "fallback",
+          prompt_version: "support-triage-v1",
+          fallback_reason: "invalid_json",
+          model_provider: "openai-compatible-chat-completions",
+        },
+      }),
+    ).toEqual([
+      { label: "Duration", value: "450ms" },
+      { label: "Tokens", value: "22/9" },
+      { label: "Cost", value: "$0.0002" },
+      { label: "Decision", value: "fallback" },
+      { label: "Prompt", value: "support-triage-v1" },
+      { label: "Fallback", value: "invalid json" },
+      { label: "Provider", value: "openai-compatible-chat-completions" },
+    ]);
+  });
 });

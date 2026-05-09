@@ -53,6 +53,26 @@ describe("chat api helpers", () => {
     ]);
   });
 
+  it("sends chat messages with OpenAI-compatible provider", async () => {
+    const calls: Array<{ path: string; body?: unknown }> = [];
+    const transport: ChatTransport = async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return {
+        session: { session_id: "chat_1" },
+        user_message: { role: "user" },
+        assistant_message: { role: "assistant", trace_id: "trace_1" },
+        trace: { trace_id: "trace_1" },
+      } as T;
+    };
+
+    await sendChatMessage(transport, "chat_1", { content: "Refund?", llmProvider: "openai_compatible" });
+
+    expect(calls[0]).toEqual({
+      path: "/chat/sessions/chat_1/messages",
+      body: { content: "Refund?", use_openai: true, openai_api: "chat_completions" },
+    });
+  });
+
   it("loads chat sessions and session details", async () => {
     const calls: string[] = [];
     const transport: ChatGetTransport = async <T>(path: string): Promise<T> => {

@@ -5,13 +5,14 @@ from __future__ import annotations
 import os
 import uuid
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Awaitable
 
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
-from agenttrace.mcp_tools.tools import create_support_action, lookup_customer, retrieve_policy
+from agenttrace.mcp_tools.tools import VALID_ACTIONS, create_support_action, lookup_customer, retrieve_policy
 
 PostJson = Any
 AsyncToolCall = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -31,6 +32,14 @@ class LLMClient:
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    provider: str
+    api_key: str | None
+    model: str
+    base_url: str
 
 
 class StaticLLMClient(LLMClient):
@@ -64,17 +73,17 @@ class OpenAIChatCompletionsClient(LLMClient):
         timeout_seconds: float = 30.0,
         post_json: PostJson | None = None,
     ) -> None:
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.model = model or os.environ.get("AGENTTRACE_OPENAI_MODEL", "gpt-5")
-        self.base_url = (base_url or os.environ.get("AGENTTRACE_OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip(
-            "/"
-        )
+        config = resolve_model_config(api_key=api_key, model=model, base_url=base_url)
+        self.provider_name = f"{config.provider}-chat-completions"
+        self.api_key = config.api_key
+        self.model = config.model
+        self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for OpenAIChatCompletionsClient")
+            raise RuntimeError("LLM API key is required. Set the provider-specific API key or LLM_API_KEY.")
 
         payload = self._post_json(
             f"{self.base_url}/chat/completions",
@@ -114,17 +123,17 @@ class OpenAIResponsesClient(LLMClient):
         timeout_seconds: float = 30.0,
         post_json: PostJson | None = None,
     ) -> None:
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.model = model or os.environ.get("AGENTTRACE_OPENAI_MODEL", "gpt-5")
-        self.base_url = (base_url or os.environ.get("AGENTTRACE_OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip(
-            "/"
-        )
+        config = resolve_model_config(api_key=api_key, model=model, base_url=base_url, default_provider="openai")
+        self.provider_name = f"{config.provider}-responses"
+        self.api_key = config.api_key
+        self.model = config.model
+        self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for OpenAIResponsesClient")
+            raise RuntimeError("LLM API key is required. Set OPENAI_API_KEY or LLM_API_KEY.")
 
         payload = self._post_json(
             f"{self.base_url}/responses",
@@ -230,9 +239,11 @@ class SupportTriageRunner:
         *,
         llm_client: LLMClient | None = None,
         tools_client: SupportToolsClient | None = None,
+        use_llm_agents: bool = False,
     ) -> None:
         self.llm_client = llm_client or StaticLLMClient()
         self.tools_client = tools_client or LocalSupportToolsClient()
+        self.use_llm_agents = use_llm_agents
 
     def run(
         self,
@@ -271,6 +282,13 @@ class SupportTriageRunner:
             "customer_response": _span_id(trace_id, "customer_response"),
         }
 
+        supervisor_decision, supervisor_llm = self._agent_decision(
+            agent_name="Supervisor Agent",
+            instructions=_supervisor_instructions(),
+            input_data={"message": message, "customer_email": customer_email},
+            fallback={"route": "triage", "handoff_reason": "Initial customer request requires triage."},
+            allowed_keys={"route", "handoff_reason"},
+        )
         supervisor = _span(
             trace_id=trace_id,
             span_id=span_ids["supervisor"],
@@ -279,8 +297,15 @@ class SupportTriageRunner:
             clock=clock,
             duration_ms=250,
             input={"message": message, "customer_email": customer_email},
-            output={"route": "triage"},
-            span_data={"agent_role": "supervisor"},
+            output=supervisor_decision,
+            span_data={
+                "agent_role": "supervisor",
+                "model_provider": self.llm_client.provider_name,
+                **_agent_decision_span_data(supervisor_llm),
+            },
+            input_tokens=supervisor_llm.input_tokens,
+            output_tokens=supervisor_llm.output_tokens,
+            estimated_cost=supervisor_llm.estimated_cost,
         )
         emit(supervisor)
         emit(
@@ -296,7 +321,13 @@ class SupportTriageRunner:
             )
         )
 
-        triage = _triage(message)
+        triage, triage_llm = self._agent_decision(
+            agent_name="Triage Agent",
+            instructions=_triage_instructions(),
+            input_data={"message": message},
+            fallback=_triage(message),
+            allowed_keys={"issue_type", "urgency", "sentiment", "missing_information"},
+        )
         emit(
             _span(
                 trace_id=trace_id,
@@ -308,7 +339,14 @@ class SupportTriageRunner:
                 duration_ms=400,
                 input={"message": message},
                 output=triage,
-                span_data={"agent_role": "triage"},
+                span_data={
+                    "agent_role": "triage",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(triage_llm),
+                },
+                input_tokens=triage_llm.input_tokens,
+                output_tokens=triage_llm.output_tokens,
+                estimated_cost=triage_llm.estimated_cost,
             )
         )
         working_memory = _working_memory(message, customer_email, triage)
@@ -357,6 +395,7 @@ class SupportTriageRunner:
                 ended_at=spans[-1].ended_at,
                 spans=spans,
                 llm_provider=self.llm_client.provider_name,
+                agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
             )
 
         emit(
@@ -386,7 +425,17 @@ class SupportTriageRunner:
             )
         )
 
-        policy_topic = _policy_topic(triage, customer)
+        policy_plan, policy_llm = self._agent_decision(
+            agent_name="Policy Agent",
+            instructions=_policy_agent_instructions(),
+            input_data={"triage": triage, "customer": customer},
+            fallback={
+                "retrieval_query": _policy_topic(triage, customer),
+                "reason": "Deterministic policy routing selected the retrieval topic.",
+            },
+            allowed_keys={"retrieval_query", "reason"},
+        )
+        policy_topic = str(policy_plan.get("retrieval_query") or _policy_topic(triage, customer))
         emit(
             _span(
                 trace_id=trace_id,
@@ -397,8 +446,15 @@ class SupportTriageRunner:
                 clock=clock,
                 duration_ms=350,
                 input={"topic": policy_topic},
-                output={"retrieval_query": policy_topic},
-                span_data={"agent_role": "policy"},
+                output=policy_plan,
+                span_data={
+                    "agent_role": "policy",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(policy_llm),
+                },
+                input_tokens=policy_llm.input_tokens,
+                output_tokens=policy_llm.output_tokens,
+                estimated_cost=policy_llm.estimated_cost,
             )
         )
         policy = self.tools_client.retrieve_policy(policy_topic)
@@ -441,8 +497,23 @@ class SupportTriageRunner:
             )
         )
 
-        action_type = _action_type(triage, customer)
-        action_reason = _action_reason(triage, customer, policy, customer_memory)
+        fallback_action = {
+            "action_type": _action_type(triage, customer),
+            "reason": _action_reason(triage, customer, policy, customer_memory),
+        }
+        action_decision, action_llm = self._agent_decision(
+            agent_name="Action Agent",
+            instructions=_action_agent_instructions(),
+            input_data={"triage": triage, "customer": customer, "policy": policy, "memory": customer_memory},
+            fallback=fallback_action,
+            allowed_keys={"action_type", "reason"},
+        )
+        action_type = str(action_decision.get("action_type") or fallback_action["action_type"])
+        action_reason = str(action_decision.get("reason") or fallback_action["reason"])
+        action_safety = _action_safety(action_type)
+        if action_safety:
+            action_type = fallback_action["action_type"]
+            action_reason = fallback_action["reason"]
         emit(
             _span(
                 trace_id=trace_id,
@@ -454,7 +525,15 @@ class SupportTriageRunner:
                 duration_ms=450,
                 input={"issue_type": triage["issue_type"], "policy": policy, "memory": customer_memory},
                 output={"action_type": action_type, "reason": action_reason},
-                span_data={"agent_role": "action"},
+                span_data={
+                    "agent_role": "action",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(action_llm),
+                    **action_safety,
+                },
+                input_tokens=action_llm.input_tokens,
+                output_tokens=action_llm.output_tokens,
+                estimated_cost=action_llm.estimated_cost,
             )
         )
         action = self.tools_client.create_support_action(
@@ -478,11 +557,19 @@ class SupportTriageRunner:
         )
 
         requires_approval = bool(policy.get("requires_approval"))
-        validation = {
+        validation_fallback = {
             "grounding_status": "recovered" if requires_approval else "grounded",
             "approval_required": requires_approval,
             "evidence": [customer.get("customer_id"), policy.get("policy_id"), action.get("action_id")],
         }
+        validation, validation_llm = self._agent_decision(
+            agent_name="Validator Agent",
+            instructions=_validator_agent_instructions(),
+            input_data={"customer": customer, "policy": policy, "action": action, "fallback": validation_fallback},
+            fallback=validation_fallback,
+            allowed_keys={"grounding_status", "approval_required", "evidence", "unsupported_claims"},
+        )
+        validation = _enforce_validation(policy, action, validation, validation_fallback)
         emit(
             _span(
                 trace_id=trace_id,
@@ -494,10 +581,18 @@ class SupportTriageRunner:
                 duration_ms=300,
                 input={"customer": customer, "policy": policy, "action": action},
                 output=validation,
-                span_data={"agent_role": "validator", **validation},
+                span_data={
+                    "agent_role": "validator",
+                    "model_provider": self.llm_client.provider_name,
+                    **validation,
+                    **_agent_decision_span_data(validation_llm),
+                },
+                input_tokens=validation_llm.input_tokens,
+                output_tokens=validation_llm.output_tokens,
+                estimated_cost=validation_llm.estimated_cost,
             )
         )
-        if requires_approval:
+        if validation["approval_required"]:
             emit(
                 _span(
                     trace_id=trace_id,
@@ -547,6 +642,49 @@ class SupportTriageRunner:
             ended_at=spans[-1].ended_at,
             spans=spans,
             llm_provider=self.llm_client.provider_name,
+            agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
+        )
+
+    def _agent_decision(
+        self,
+        *,
+        agent_name: str,
+        instructions: str,
+        input_data: dict[str, Any],
+        fallback: dict[str, Any],
+        allowed_keys: set[str],
+    ) -> tuple[dict[str, Any], LLMResponse]:
+        if not self.use_llm_agents:
+            return fallback, _deterministic_decision_response(fallback)
+        response = self.llm_client.generate(
+            instructions=instructions,
+            input_text=_json_for_prompt(input_data),
+        )
+        parsed = _parse_agent_json(response.output_text)
+        if parsed is None:
+            return fallback, LLMResponse(
+                output_text=response.output_text,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                estimated_cost=response.estimated_cost,
+                raw_response={
+                    "agent": agent_name,
+                    "decision_source": "fallback",
+                    "fallback_reason": "invalid_json",
+                    "raw_response": response.raw_response,
+                },
+            )
+        decision = {key: parsed[key] for key in allowed_keys if key in parsed}
+        return {**fallback, **decision}, LLMResponse(
+            output_text=response.output_text,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            estimated_cost=response.estimated_cost,
+            raw_response={
+                "agent": agent_name,
+                "decision_source": "llm",
+                "raw_response": response.raw_response,
+            },
         )
 
 
@@ -562,7 +700,63 @@ def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_co
         tools_client = McpSupportToolsClient()
     else:
         tools_client = LocalSupportToolsClient()
-    return SupportTriageRunner(llm_client=llm_client, tools_client=tools_client)
+    return SupportTriageRunner(llm_client=llm_client, tools_client=tools_client, use_llm_agents=use_openai)
+
+
+def resolve_model_config(
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    default_provider: str | None = None,
+) -> ModelConfig:
+    provider = _configured_provider(default_provider)
+    env_prefix = provider.upper().replace("-", "_")
+    return ModelConfig(
+        provider=provider,
+        api_key=api_key or _first_env(f"{env_prefix}_API_KEY", "LLM_API_KEY", "AGENTTRACE_MODEL_API_KEY", "OPENAI_API_KEY"),
+        model=model or _configured_model(env_prefix, provider),
+        base_url=base_url or _configured_base_url(env_prefix, provider),
+    )
+
+
+def _configured_provider(default_provider: str | None) -> str:
+    provider = os.environ.get("LLM_PROVIDER") or os.environ.get("AGENTTRACE_LLM_PROVIDER") or default_provider or "openai"
+    return provider.strip().lower().replace("_", "-")
+
+
+def _configured_model(env_prefix: str, provider: str) -> str:
+    configured = _first_env(f"{env_prefix}_MODEL", "LLM_MODEL", "AGENTTRACE_MODEL_NAME", "AGENTTRACE_OPENAI_MODEL", "OPENAI_MODEL")
+    if configured:
+        return configured
+    defaults = {
+        "openai": "gpt-5",
+        "openai-compatible": "gpt-5",
+        "gemini": "gemini-2.5-flash",
+        "local": "local-model",
+    }
+    return defaults.get(provider, "gpt-5")
+
+
+def _configured_base_url(env_prefix: str, provider: str) -> str:
+    configured = _first_env(f"{env_prefix}_BASE_URL", "LLM_BASE_URL", "AGENTTRACE_MODEL_BASE_URL", "AGENTTRACE_OPENAI_BASE_URL")
+    if configured:
+        return configured
+    defaults = {
+        "openai": "https://api.openai.com/v1",
+        "openai-compatible": "https://api.openai.com/v1",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "local": "http://localhost:8001/v1",
+    }
+    return defaults.get(provider, "https://api.openai.com/v1")
+
+
+def _first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
 
 
 def _trace(
@@ -573,6 +767,7 @@ def _trace(
     ended_at: datetime | None,
     spans: list[Span],
     llm_provider: str,
+    agent_decision_mode: str,
 ) -> Trace:
     trace = Trace(
         trace_id=trace_id,
@@ -582,6 +777,7 @@ def _trace(
             "source": "agenttrace-agent-runner",
             "runner": "agenttrace.agents.support_triage",
             "llm_provider": llm_provider,
+            "agent_decision_mode": agent_decision_mode,
         },
         raw_payload=None,
         started_at=started_at,
@@ -708,8 +904,120 @@ def _action_reason(
     )
 
 
+def _action_safety(action_type: str) -> dict[str, Any]:
+    if action_type.strip().lower() in VALID_ACTIONS:
+        return {}
+    return {
+        "decision_source": "fallback",
+        "fallback_reason": "unsupported_action_type",
+        "rejected_action_type": action_type,
+    }
+
+
+def _enforce_validation(
+    policy: dict[str, Any],
+    action: dict[str, Any],
+    validation: dict[str, Any],
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    enforced = {**fallback, **validation}
+    enforced["approval_required"] = bool(enforced.get("approval_required"))
+    enforced["grounding_status"] = str(enforced.get("grounding_status") or fallback["grounding_status"])
+
+    evidence = enforced.get("evidence")
+    if not isinstance(evidence, list):
+        enforced["evidence"] = fallback["evidence"]
+
+    corrections = []
+    if policy.get("requires_approval") and not enforced["approval_required"]:
+        enforced["approval_required"] = True
+        enforced["grounding_status"] = "recovered"
+        corrections.append("required_approval_enforced")
+
+    if action.get("status") != "created":
+        enforced["grounding_status"] = "failed"
+        corrections.append("action_not_created")
+
+    if corrections:
+        enforced["validator_corrections"] = corrections
+    return enforced
+
+
 def _mcp_span_data(tool_name: str) -> dict[str, Any]:
     return {"tool_protocol": "mcp", "tool_server": "mcp-tools", "tool_name": tool_name}
+
+
+PROMPT_VERSION = "support-triage-v1"
+
+
+def _supervisor_instructions() -> str:
+    return (
+        "You are the Supervisor Agent in a customer-service multi-agent workflow. "
+        "Return only JSON with route and handoff_reason. Route should be triage unless the request is unsafe."
+    )
+
+
+def _triage_instructions() -> str:
+    return (
+        "You are the Triage Agent. Classify the customer message. Return only JSON with "
+        "issue_type, urgency, sentiment, and optional missing_information."
+    )
+
+
+def _policy_agent_instructions() -> str:
+    return (
+        "You are the Policy Agent. Choose the policy retrieval topic for the customer issue. "
+        "Return only JSON with retrieval_query and reason."
+    )
+
+
+def _action_agent_instructions() -> str:
+    return (
+        "You are the Action Agent. Choose the next support action based on customer, policy, "
+        "and memory context. Return only JSON with action_type and reason."
+    )
+
+
+def _validator_agent_instructions() -> str:
+    return (
+        "You are the Validator Agent. Check grounding, policy compliance, and approval needs. "
+        "Return only JSON with grounding_status, approval_required, evidence, and optional unsupported_claims."
+    )
+
+
+def _deterministic_decision_response(decision: dict[str, Any]) -> LLMResponse:
+    return LLMResponse(
+        output_text=_json_for_prompt(decision),
+        input_tokens=None,
+        output_tokens=None,
+        estimated_cost=None,
+        raw_response={"decision_source": "deterministic"},
+    )
+
+
+def _agent_decision_span_data(response: LLMResponse) -> dict[str, Any]:
+    raw_response = response.raw_response or {}
+    decision_source = str(raw_response.get("decision_source") or "deterministic")
+    span_data = {
+        "decision_source": decision_source,
+        "prompt_version": PROMPT_VERSION,
+    }
+    fallback_reason = raw_response.get("fallback_reason")
+    if fallback_reason:
+        span_data["fallback_reason"] = fallback_reason
+    return span_data
+
+
+def _parse_agent_json(text: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _json_for_prompt(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True)
 
 
 def _customer_response_instructions() -> str:

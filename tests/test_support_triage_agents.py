@@ -11,6 +11,7 @@ from agenttrace.agents.support_triage import (
     SupportTriageRunner,
     SupportToolsClient,
     build_default_runner,
+    resolve_model_config,
 )
 
 
@@ -41,6 +42,24 @@ class RecordingLLMClient(StaticLLMClient):
         )
 
 
+class QueueLLMClient(StaticLLMClient):
+    def __init__(self, outputs: list[str]) -> None:
+        super().__init__()
+        self.outputs = list(outputs)
+        self.calls: list[dict] = []
+
+    def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
+        self.calls.append({"instructions": instructions, "input_text": input_text})
+        output = self.outputs.pop(0)
+        return LLMResponse(
+            output_text=output,
+            input_tokens=11,
+            output_tokens=7,
+            estimated_cost=0.0001,
+            raw_response={"output": output},
+        )
+
+
 class SupportTriageAgentsTest(unittest.TestCase):
     def test_runner_emits_multi_agent_trace_with_llm_generation(self) -> None:
         llm = RecordingLLMClient()
@@ -57,6 +76,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(trace.status, "passed")
         self.assertEqual(trace.metadata["source_kind"], "agent_runner")
         self.assertEqual(trace.metadata["llm_provider"], "static")
+        self.assertEqual(trace.metadata["agent_decision_mode"], "deterministic")
         self.assertEqual(
             [span.name for span in trace.spans],
             [
@@ -81,6 +101,123 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertTrue(any(span.span_type == "memory_read" for span in trace.spans))
         self.assertTrue(any(span.span_type == "generation" for span in trace.spans))
         self.assertEqual(llm.calls[0]["input_text"].count("duplicate_charge_detected"), 1)
+
+    def test_runner_can_use_llm_backed_specialist_agent_decisions(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Verified duplicate charge and policy allows refund review."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_llm_agents",
+        )
+
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(trace.metadata["agent_decision_mode"], "llm")
+        self.assertEqual(len(llm.calls), 6)
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        policy = next(span for span in trace.spans if span.name == "Policy Agent")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(triage.output["issue_type"], "billing_duplicate_charge")
+        self.assertEqual(policy.output["retrieval_query"], "duplicate_charge_refund")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(validator.output["grounding_status"], "grounded")
+        self.assertEqual(triage.span_data["decision_source"], "llm")
+        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v1")
+        self.assertEqual(triage.span_data["model_provider"], "static")
+        self.assertEqual(action.input_tokens, 11)
+
+    def test_llm_agent_action_falls_back_when_action_type_is_unsupported(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"wire_money","reason":"Unsupported action selected by model."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_invalid_action",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        create_action = next(span for span in trace.spans if span.name == "create_support_action")
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(action.span_data["decision_source"], "fallback")
+        self.assertEqual(action.span_data["fallback_reason"], "unsupported_action_type")
+        self.assertEqual(action.span_data["rejected_action_type"], "wire_money")
+        self.assertEqual(create_action.output["status"], "created")
+
+    def test_validator_enforces_policy_required_approval(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"annual refund needs triage"}',
+                '{"issue_type":"annual_plan_refund","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"annual_plan_refund","reason":"annual refund policy applies"}',
+                '{"action_type":"refund_review","reason":"Review annual refund."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_annual_800"]}',
+                "I created a refund review pending approval.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Can you refund my annual plan?",
+            customer_email="annual@example.com",
+            trace_id="trace_runner_approval_enforced",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        approval_spans = [span for span in trace.spans if span.span_type == "approval"]
+        self.assertEqual(trace.status, "recovered")
+        self.assertTrue(validator.output["approval_required"])
+        self.assertEqual(validator.output["grounding_status"], "recovered")
+        self.assertEqual(validator.output["validator_corrections"], ["required_approval_enforced"])
+        self.assertEqual(len(approval_spans), 1)
+
+    def test_llm_agent_decisions_fall_back_when_json_is_invalid(self) -> None:
+        llm = QueueLLMClient(
+            [
+                "not json",
+                "not json",
+                "not json",
+                "not json",
+                "not json",
+                "Fallback customer response.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Can you refund my annual plan?",
+            customer_email="annual@example.com",
+            trace_id="trace_runner_llm_fallback",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        self.assertEqual(trace.status, "recovered")
+        self.assertEqual(triage.output["issue_type"], "annual_plan_refund")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(triage.span_data["decision_source"], "fallback")
+        self.assertEqual(triage.span_data["fallback_reason"], "invalid_json")
 
     def test_runner_can_emit_spans_incrementally(self) -> None:
         emitted_names: list[str] = []
@@ -191,15 +328,89 @@ class SupportTriageAgentsTest(unittest.TestCase):
             ],
         )
 
+    def test_model_config_uses_provider_specific_credentials(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "gemini",
+                "GEMINI_API_KEY": "gemini-key",
+                "GEMINI_MODEL": "gemini-test",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "gemini")
+        self.assertEqual(config.api_key, "gemini-key")
+        self.assertEqual(config.model, "gemini-test")
+        self.assertEqual(config.base_url, "https://generativelanguage.googleapis.com/v1beta/openai")
+
+    def test_model_config_uses_provider_specific_base_url_before_generic_gateway_settings(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "anthropic",
+                "ANTHROPIC_API_KEY": "anthropic-key",
+                "ANTHROPIC_MODEL": "claude-test",
+                "ANTHROPIC_BASE_URL": "http://anthropic-gateway.test/v1",
+                "LLM_BASE_URL": "http://generic-gateway.test/v1",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "anthropic")
+        self.assertEqual(config.api_key, "anthropic-key")
+        self.assertEqual(config.model, "claude-test")
+        self.assertEqual(config.base_url, "http://anthropic-gateway.test/v1")
+
+    def test_model_config_uses_generic_llm_settings_as_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "openai-compatible",
+                "LLM_API_KEY": "generic-key",
+                "LLM_MODEL": "gateway-model",
+                "LLM_BASE_URL": "http://gateway.test/v1",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "openai-compatible")
+        self.assertEqual(config.api_key, "generic-key")
+        self.assertEqual(config.model, "gateway-model")
+        self.assertEqual(config.base_url, "http://gateway.test/v1")
+
+    def test_model_config_keeps_legacy_openai_env_as_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENAI_API_KEY": "legacy-key",
+                "AGENTTRACE_OPENAI_MODEL": "legacy-model",
+                "AGENTTRACE_OPENAI_BASE_URL": "http://legacy.test/v1",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "openai")
+        self.assertEqual(config.api_key, "legacy-key")
+        self.assertEqual(config.model, "legacy-model")
+        self.assertEqual(config.base_url, "http://legacy.test/v1")
+
     def test_default_openai_runner_uses_chat_completions_for_generic_compatibility(self) -> None:
         runner = build_default_runner(use_openai=True)
 
         self.assertIsInstance(runner.llm_client, OpenAIChatCompletionsClient)
+        self.assertTrue(runner.use_llm_agents)
+        self.assertEqual(runner.llm_client.provider_name, "openai-chat-completions")
 
     def test_default_openai_runner_can_select_responses_api(self) -> None:
         runner = build_default_runner(use_openai=True, openai_api="responses")
 
         self.assertIsInstance(runner.llm_client, OpenAIResponsesClient)
+        self.assertTrue(runner.use_llm_agents)
 
     def test_mcp_support_tools_client_calls_expected_tool_names(self) -> None:
         calls: list[dict] = []

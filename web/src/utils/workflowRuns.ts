@@ -1,3 +1,5 @@
+import type { LLMProvider } from "./chat";
+
 export type WorkflowRunStatus = "pending" | "running" | "cancel_requested" | "completed" | "failed" | "cancelled";
 
 export type WorkflowRun<Trace = unknown> = {
@@ -17,12 +19,13 @@ export type WorkflowRunGetTransport = <T>(path: string) => Promise<T>;
 
 export function startSupportTriageLiveRun<Trace>(
   transport: WorkflowRunTransport,
-  input: { message: string; customerEmail: string; useOpenAI?: boolean },
+  input: { message: string; customerEmail: string; llmProvider?: LLMProvider },
 ): Promise<WorkflowRun<Trace>> {
+  const provider = input.llmProvider ?? "deterministic";
   return transport("/workflows/support-triage/runs/live", {
     message: input.message,
     customer_email: input.customerEmail,
-    use_openai: input.useOpenAI ?? false,
+    use_openai: provider === "openai_compatible",
     openai_api: "chat_completions",
   });
 }

@@ -17,6 +17,37 @@ It currently supports:
 - an executable `agents/` support-triage workflow runner with optional
   OpenAI-compatible chat completions generation
 
+## Architecture
+
+AgentTrace treats the customer-service agent and the model provider as separate
+concerns. The agent talks to a stable model client interface, and provider
+routing belongs behind an OpenAI-compatible model gateway:
+
+```text
+Customer Service App / Workflow UI
+        |
+Multi-Agent Orchestrator
+   |-- MCP tools
+   |-- short-term and long-term memory
+   |-- retrieval
+   |-- approval gates
+   `-- Model Client Interface
+            |
+      OpenAI-Compatible Model Gateway
+            |
+      Provider Adapters
+        OpenAI | Anthropic | Gemini | Local LLM
+
+AgentTrace observes the orchestrator, model calls, tool calls, retrieval,
+memory, approvals, evals, latency, tokens, cost, and failures.
+```
+
+The repo currently uses deterministic mode by default for repeatable tests and
+demos. Real model calls use OpenAI-compatible `/v1/chat/completions` unless the
+OpenAI-native Responses API is explicitly selected. This keeps the agent code
+provider-agnostic: OpenAI, Gemini, Anthropic, local vLLM, or other models should
+be swapped through gateway configuration instead of custom agent branches.
+
 ## Quick Start
 
 ```bash
@@ -202,9 +233,35 @@ curl -X POST http://localhost:8000/workflows/support-triage/runs \
 ```
 
 By default the workflow uses a deterministic local response generator so tests
-and demos do not require credentials. To call a generic OpenAI-compatible
-`/v1/chat/completions` provider for the customer response generation span, set
-`OPENAI_API_KEY` on the API service and send:
+and demos do not require credentials. To call an OpenAI-compatible model
+provider or gateway for specialist agent decisions and the customer response
+generation span, choose the provider and configure that provider's key/model:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+```
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5
+OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+For a gateway such as LiteLLM, OpenRouter, vLLM, or another
+OpenAI-compatible proxy, use the generic fallback names:
+
+```env
+LLM_PROVIDER=openai-compatible
+LLM_API_KEY=...
+LLM_MODEL=...
+LLM_BASE_URL=http://gateway.example/v1
+```
+
+Then send:
 
 ```json
 {
@@ -215,9 +272,10 @@ and demos do not require credentials. To call a generic OpenAI-compatible
 ```
 
 The default real LLM protocol is `/v1/chat/completions` because it is widely
-supported by OpenAI-compatible providers. Set `AGENTTRACE_OPENAI_BASE_URL` for
-local or third-party providers. OpenAI-native `/v1/responses` can be selected
-explicitly:
+supported by model gateways and OpenAI-compatible providers. Runtime
+configuration precedence is explicit constructor args, then provider-specific
+env vars, then generic `LLM_*` env vars, then legacy AgentTrace/OpenAI-compatible
+env vars. OpenAI-native `/v1/responses` can be selected explicitly:
 
 ```json
 {

@@ -26,6 +26,7 @@ export type ChatTurnResponse<Trace = unknown> = {
 
 export type ChatTransport = <T>(path: string, body?: unknown) => Promise<T>;
 export type ChatGetTransport = <T>(path: string) => Promise<T>;
+export type LLMProvider = "deterministic" | "openai_compatible";
 
 export type ChatSessionDetail = ChatSession & {
   messages: ChatMessage[];
@@ -52,11 +53,11 @@ export function createChatSession(
 export function sendChatMessage<Trace>(
   transport: ChatTransport,
   sessionId: string,
-  input: { content: string; useOpenAI?: boolean; openaiApi?: "chat_completions" | "responses" },
+  input: { content: string; llmProvider?: LLMProvider; openaiApi?: "chat_completions" | "responses" },
 ): Promise<ChatTurnResponse<Trace>> {
   return transport(`/chat/sessions/${sessionId}/messages`, {
     content: input.content,
-    use_openai: input.useOpenAI ?? false,
+    use_openai: input.llmProvider === "openai_compatible",
     openai_api: input.openaiApi ?? "chat_completions",
   });
 }

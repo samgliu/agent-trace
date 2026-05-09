@@ -24,6 +24,26 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
     facts.push({ label: "Cost", value: formatCost(span.estimated_cost) });
   }
 
+  const decisionSource = stringValue(span.span_data.decision_source);
+  if (decisionSource) {
+    facts.push({ label: "Decision", value: formatDecisionSource(decisionSource) });
+  }
+
+  const promptVersion = stringValue(span.span_data.prompt_version);
+  if (promptVersion) {
+    facts.push({ label: "Prompt", value: promptVersion });
+  }
+
+  const fallbackReason = stringValue(span.span_data.fallback_reason);
+  if (fallbackReason) {
+    facts.push({ label: "Fallback", value: formatFallbackReason(fallbackReason) });
+  }
+
+  const provider = stringValue(span.span_data.model_provider);
+  if (provider) {
+    facts.push({ label: "Provider", value: provider });
+  }
+
   const model = stringValue(span.span_data.model);
   if (model) {
     facts.push({ label: "Model", value: model });
@@ -64,4 +84,15 @@ function numberValue(value: unknown): number | null {
 
 function booleanValue(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function formatDecisionSource(value: string): string {
+  if (value === "llm") {
+    return "LLM";
+  }
+  return value.replaceAll("_", " ");
+}
+
+function formatFallbackReason(value: string): string {
+  return value.replaceAll("_", " ");
 }

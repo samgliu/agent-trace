@@ -43,6 +43,39 @@ describe("workflow run api helpers", () => {
     ]);
   });
 
+  it("can start a support triage live run with OpenAI-compatible provider", async () => {
+    const calls: unknown[] = [];
+    const transport = async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return {
+        run_id: "run_1",
+        workflow_name: "support-triage",
+        status: "running",
+        trace_id: null,
+        error: null,
+        started_at: "2026-05-07T00:00:00Z",
+        updated_at: "2026-05-07T00:00:00Z",
+        completed_at: null,
+      } as T;
+    };
+
+    await startSupportTriageLiveRun(transport, {
+      message: "Refund?",
+      customerEmail: "customer@example.com",
+      llmProvider: "openai_compatible",
+    });
+
+    expect(calls[0]).toEqual({
+      path: "/workflows/support-triage/runs/live",
+      body: {
+        message: "Refund?",
+        customer_email: "customer@example.com",
+        use_openai: true,
+        openai_api: "chat_completions",
+      },
+    });
+  });
+
   it("polls workflow run status", async () => {
     const run = await getWorkflowRun(
       async <T>(path: string): Promise<T> =>
