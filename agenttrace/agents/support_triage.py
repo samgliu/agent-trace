@@ -34,6 +34,14 @@ class LLMClient:
         raise NotImplementedError
 
 
+@dataclass(frozen=True)
+class ModelConfig:
+    provider: str
+    api_key: str | None
+    model: str
+    base_url: str
+
+
 class StaticLLMClient(LLMClient):
     provider_name = "static"
 
@@ -65,17 +73,17 @@ class OpenAIChatCompletionsClient(LLMClient):
         timeout_seconds: float = 30.0,
         post_json: PostJson | None = None,
     ) -> None:
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.model = model or os.environ.get("AGENTTRACE_OPENAI_MODEL", "gpt-5")
-        self.base_url = (base_url or os.environ.get("AGENTTRACE_OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip(
-            "/"
-        )
+        config = resolve_model_config(api_key=api_key, model=model, base_url=base_url)
+        self.provider_name = f"{config.provider}-chat-completions"
+        self.api_key = config.api_key
+        self.model = config.model
+        self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for OpenAIChatCompletionsClient")
+            raise RuntimeError("LLM API key is required. Set the provider-specific API key or LLM_API_KEY.")
 
         payload = self._post_json(
             f"{self.base_url}/chat/completions",
@@ -115,17 +123,17 @@ class OpenAIResponsesClient(LLMClient):
         timeout_seconds: float = 30.0,
         post_json: PostJson | None = None,
     ) -> None:
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.model = model or os.environ.get("AGENTTRACE_OPENAI_MODEL", "gpt-5")
-        self.base_url = (base_url or os.environ.get("AGENTTRACE_OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip(
-            "/"
-        )
+        config = resolve_model_config(api_key=api_key, model=model, base_url=base_url, default_provider="openai")
+        self.provider_name = f"{config.provider}-responses"
+        self.api_key = config.api_key
+        self.model = config.model
+        self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for OpenAIResponsesClient")
+            raise RuntimeError("LLM API key is required. Set OPENAI_API_KEY or LLM_API_KEY.")
 
         payload = self._post_json(
             f"{self.base_url}/responses",
@@ -693,6 +701,62 @@ def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_co
     else:
         tools_client = LocalSupportToolsClient()
     return SupportTriageRunner(llm_client=llm_client, tools_client=tools_client, use_llm_agents=use_openai)
+
+
+def resolve_model_config(
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    default_provider: str | None = None,
+) -> ModelConfig:
+    provider = _configured_provider(default_provider)
+    env_prefix = provider.upper().replace("-", "_")
+    return ModelConfig(
+        provider=provider,
+        api_key=api_key or _first_env(f"{env_prefix}_API_KEY", "LLM_API_KEY", "AGENTTRACE_MODEL_API_KEY", "OPENAI_API_KEY"),
+        model=model or _configured_model(env_prefix, provider),
+        base_url=base_url or _configured_base_url(env_prefix, provider),
+    )
+
+
+def _configured_provider(default_provider: str | None) -> str:
+    provider = os.environ.get("LLM_PROVIDER") or os.environ.get("AGENTTRACE_LLM_PROVIDER") or default_provider or "openai"
+    return provider.strip().lower().replace("_", "-")
+
+
+def _configured_model(env_prefix: str, provider: str) -> str:
+    configured = _first_env(f"{env_prefix}_MODEL", "LLM_MODEL", "AGENTTRACE_MODEL_NAME", "AGENTTRACE_OPENAI_MODEL", "OPENAI_MODEL")
+    if configured:
+        return configured
+    defaults = {
+        "openai": "gpt-5",
+        "openai-compatible": "gpt-5",
+        "gemini": "gemini-2.5-flash",
+        "local": "local-model",
+    }
+    return defaults.get(provider, "gpt-5")
+
+
+def _configured_base_url(env_prefix: str, provider: str) -> str:
+    configured = _first_env(f"{env_prefix}_BASE_URL", "LLM_BASE_URL", "AGENTTRACE_MODEL_BASE_URL", "AGENTTRACE_OPENAI_BASE_URL")
+    if configured:
+        return configured
+    defaults = {
+        "openai": "https://api.openai.com/v1",
+        "openai-compatible": "https://api.openai.com/v1",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "local": "http://localhost:8001/v1",
+    }
+    return defaults.get(provider, "https://api.openai.com/v1")
+
+
+def _first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
 
 
 def _trace(

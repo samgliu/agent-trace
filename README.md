@@ -233,9 +233,35 @@ curl -X POST http://localhost:8000/workflows/support-triage/runs \
 ```
 
 By default the workflow uses a deterministic local response generator so tests
-and demos do not require credentials. To call a generic OpenAI-compatible
-`/v1/chat/completions` provider for specialist agent decisions and the customer
-response generation span, set `OPENAI_API_KEY` on the API service and send:
+and demos do not require credentials. To call an OpenAI-compatible model
+provider or gateway for specialist agent decisions and the customer response
+generation span, choose the provider and configure that provider's key/model:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+```
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5
+OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+For a gateway such as LiteLLM, OpenRouter, vLLM, or another
+OpenAI-compatible proxy, use the generic fallback names:
+
+```env
+LLM_PROVIDER=openai-compatible
+LLM_API_KEY=...
+LLM_MODEL=...
+LLM_BASE_URL=http://gateway.example/v1
+```
+
+Then send:
 
 ```json
 {
@@ -246,10 +272,10 @@ response generation span, set `OPENAI_API_KEY` on the API service and send:
 ```
 
 The default real LLM protocol is `/v1/chat/completions` because it is widely
-supported by model gateways and OpenAI-compatible providers. Set
-`AGENTTRACE_OPENAI_BASE_URL` and `AGENTTRACE_OPENAI_MODEL` to route through a
-gateway to OpenAI, Gemini, Anthropic, local vLLM, or another compatible backend.
-OpenAI-native `/v1/responses` can be selected explicitly:
+supported by model gateways and OpenAI-compatible providers. Runtime
+configuration precedence is explicit constructor args, then provider-specific
+env vars, then generic `LLM_*` env vars, then legacy AgentTrace/OpenAI-compatible
+env vars. OpenAI-native `/v1/responses` can be selected explicitly:
 
 ```json
 {

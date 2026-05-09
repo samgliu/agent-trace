@@ -11,6 +11,7 @@ from agenttrace.agents.support_triage import (
     SupportTriageRunner,
     SupportToolsClient,
     build_default_runner,
+    resolve_model_config,
 )
 
 
@@ -327,11 +328,83 @@ class SupportTriageAgentsTest(unittest.TestCase):
             ],
         )
 
+    def test_model_config_uses_provider_specific_credentials(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "gemini",
+                "GEMINI_API_KEY": "gemini-key",
+                "GEMINI_MODEL": "gemini-test",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "gemini")
+        self.assertEqual(config.api_key, "gemini-key")
+        self.assertEqual(config.model, "gemini-test")
+        self.assertEqual(config.base_url, "https://generativelanguage.googleapis.com/v1beta/openai")
+
+    def test_model_config_uses_provider_specific_base_url_before_generic_gateway_settings(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "anthropic",
+                "ANTHROPIC_API_KEY": "anthropic-key",
+                "ANTHROPIC_MODEL": "claude-test",
+                "ANTHROPIC_BASE_URL": "http://anthropic-gateway.test/v1",
+                "LLM_BASE_URL": "http://generic-gateway.test/v1",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "anthropic")
+        self.assertEqual(config.api_key, "anthropic-key")
+        self.assertEqual(config.model, "claude-test")
+        self.assertEqual(config.base_url, "http://anthropic-gateway.test/v1")
+
+    def test_model_config_uses_generic_llm_settings_as_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "openai-compatible",
+                "LLM_API_KEY": "generic-key",
+                "LLM_MODEL": "gateway-model",
+                "LLM_BASE_URL": "http://gateway.test/v1",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "openai-compatible")
+        self.assertEqual(config.api_key, "generic-key")
+        self.assertEqual(config.model, "gateway-model")
+        self.assertEqual(config.base_url, "http://gateway.test/v1")
+
+    def test_model_config_keeps_legacy_openai_env_as_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENAI_API_KEY": "legacy-key",
+                "AGENTTRACE_OPENAI_MODEL": "legacy-model",
+                "AGENTTRACE_OPENAI_BASE_URL": "http://legacy.test/v1",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.provider, "openai")
+        self.assertEqual(config.api_key, "legacy-key")
+        self.assertEqual(config.model, "legacy-model")
+        self.assertEqual(config.base_url, "http://legacy.test/v1")
+
     def test_default_openai_runner_uses_chat_completions_for_generic_compatibility(self) -> None:
         runner = build_default_runner(use_openai=True)
 
         self.assertIsInstance(runner.llm_client, OpenAIChatCompletionsClient)
         self.assertTrue(runner.use_llm_agents)
+        self.assertEqual(runner.llm_client.provider_name, "openai-chat-completions")
 
     def test_default_openai_runner_can_select_responses_api(self) -> None:
         runner = build_default_runner(use_openai=True, openai_api="responses")
