@@ -1209,7 +1209,9 @@ def _customer_response_instructions() -> str:
         "You are a customer service agent. Write a concise, grounded customer response. "
         "Only mention facts present in the provided customer, policy, action, and validation context. "
         "Be customer-friendly: resolve eligible issues, explain approval as a review step when required, "
-        "and do not deny solely because human approval is needed."
+        "and do not deny solely because human approval is needed. Use the recent conversation history "
+        "to answer follow-up questions naturally. Do not repeat first-turn wording like 'I started a review' "
+        "when the existing review context is already present."
     )
 
 
@@ -1234,6 +1236,22 @@ def _customer_response_input(
 
 
 def _static_customer_response(input_text: str, default_response: str) -> str:
+    has_conversation_history = _input_has_conversation_history(input_text)
+    if has_conversation_history and "policy_stale_subscription_refund" in input_text:
+        return (
+            "For this follow-up, the older-subscription refund review is still waiting for human approval. "
+            "I can add any new billing evidence to the review, but I cannot issue the refund before approval."
+        )
+    if has_conversation_history and "policy_refund_duplicate_charge" in input_text:
+        return (
+            "For this follow-up, the duplicate-charge review is still based on customer and payment verification. "
+            "If you have a receipt or second charge ID, I can attach it to the review."
+        )
+    if has_conversation_history and "policy_annual_refund" in input_text:
+        return (
+            "For this follow-up, the annual-plan refund review is still waiting for human approval because of "
+            "the refund amount. I can include any new cancellation or billing details in the review."
+        )
     if "policy_stale_subscription_refund" in input_text:
         return (
             "I started a refund review for the older subscription charge. Because the charge is older than "
@@ -1252,6 +1270,16 @@ def _static_customer_response(input_text: str, default_response: str) -> str:
     if "'action_type': 'clarification_request'" in input_text or '"action_type": "clarification_request"' in input_text:
         return "I need one more account or billing detail before I can safely take action on this request."
     return default_response
+
+
+def _input_has_conversation_history(input_text: str) -> bool:
+    empty_markers = (
+        "'conversation_history': []",
+        '"conversation_history": []',
+        "'recent_conversation_turns', 'value': 0",
+        '"recent_conversation_turns", "value": 0',
+    )
+    return "conversation_history" in input_text and not any(marker in input_text for marker in empty_markers)
 
 
 def _rough_token_count(text: str) -> int:

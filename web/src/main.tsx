@@ -22,9 +22,12 @@ import {
 import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import {
+  createPendingUserMessage,
   createChatSession,
   getChatSession,
   listChatSessions,
+  markPendingMessageFailed,
+  replacePendingChatTurn,
   sendChatMessage,
   type ChatMessage,
   type ChatSession,
@@ -44,6 +47,7 @@ import {
 } from "./utils/evals";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
+import { clampedOffset, hasNextPage, nextOffset, pageRange, previousOffset, TRACE_PAGE_SIZE } from "./utils/pagination";
 import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
@@ -322,6 +326,13 @@ function App() {
           fetchJson<string[]>("/workflows"),
         ]);
         const traces = traceList.items;
+        const safeOffset = clampedOffset(filters.offset, traceList.total, TRACE_PAGE_SIZE);
+        if (safeOffset !== filters.offset) {
+          if (!cancelled) {
+            setFilters((current) => ({ ...current, offset: safeOffset }));
+          }
+          return;
+        }
         const traceId = traces.some((trace) => trace.trace_id === selectedTraceId)
           ? selectedTraceId
           : traces[0]?.trace_id;
@@ -492,6 +503,7 @@ function App() {
 
   async function submitChatTurn(input: ChatInput) {
     setChatStatus({ status: "submitting" });
+    let pendingMessage: ChatMessage | null = null;
     try {
       const session =
         chatSession ??
@@ -503,6 +515,8 @@ function App() {
         setChatSession(session);
         setChatSessions((sessions) => upsertChatSession(sessions, session));
       }
+      pendingMessage = createPendingUserMessage({ sessionId: session.session_id, content: input.message });
+      setChatMessages((messages) => [...messages, pendingMessage!]);
       const result = await sendChatMessage<TraceDetail>(apiPostJson, session.session_id, {
         content: input.message,
         llmProvider: input.llmProvider,
@@ -510,14 +524,20 @@ function App() {
       setChatSession(result.session);
       setChatSessions((sessions) => upsertChatSession(sessions, result.session));
       setChatTraceSummaries((summaries) => ({ ...summaries, [result.trace.trace_id]: result.trace }));
-      setChatMessages((messages) => [...messages, result.user_message, result.assistant_message]);
+      setChatMessages((messages) =>
+        replacePendingChatTurn(messages, pendingMessage!.message_id, result.user_message, result.assistant_message),
+      );
       setLatestChatTraceId(result.trace.trace_id);
       setSelectedTraceId(result.trace.trace_id);
       setSelectedSpanId(result.trace.spans[0]?.span_id ?? null);
       setRefreshKey((value) => value + 1);
       setChatStatus({ status: "idle" });
     } catch (error) {
-      setChatStatus({ status: "error", message: error instanceof Error ? error.message : "Unknown chat error" });
+      const message = error instanceof Error ? error.message : "Unknown chat error";
+      if (pendingMessage) {
+        setChatMessages((messages) => markPendingMessageFailed(messages, pendingMessage!.message_id, message));
+      }
+      setChatStatus({ status: "error", message });
     }
   }
 
@@ -544,7 +564,7 @@ function App() {
             onFiltersChange={setFilters}
             onSelectTrace={setSelectedTraceId}
             onClearSelection={() => setSelectedSpanId(null)}
-            onPageChange={(offset) => setFilters({ ...filters, offset })}
+            onPageChange={(offset) => setFilters((current) => ({ ...current, offset }))}
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
@@ -595,7 +615,7 @@ function App() {
           onFiltersChange={setFilters}
           onSelectTrace={setSelectedTraceId}
           onClearSelection={() => setSelectedSpanId(null)}
-          onPageChange={(offset) => setFilters({ ...filters, offset })}
+          onPageChange={(offset) => setFilters((current) => ({ ...current, offset }))}
         />
 
         <main className="main">
@@ -679,8 +699,8 @@ function RunsSidebar({
   onPageChange: (offset: number) => void;
 }) {
   const hasPrevious = filters.offset > 0;
-  const nextOffset = filters.offset + 50;
-  const hasNext = nextOffset < traceTotal;
+  const nextPageOffset = nextOffset(filters.offset, TRACE_PAGE_SIZE);
+  const hasNext = hasNextPage(filters.offset, traceTotal, TRACE_PAGE_SIZE);
 
   return (
     <aside className="sidebar">
@@ -711,13 +731,11 @@ function RunsSidebar({
         ))}
       </div>
       <div className="paginationControls">
-        <button disabled={!hasPrevious} onClick={() => onPageChange(Math.max(0, filters.offset - 50))}>
+        <button disabled={!hasPrevious} onClick={() => onPageChange(previousOffset(filters.offset, TRACE_PAGE_SIZE))}>
           Previous
         </button>
-        <span>
-          {traceTotal === 0 ? "0-0" : `${filters.offset + 1}-${Math.min(nextOffset, traceTotal)}`}
-        </span>
-        <button disabled={!hasNext} onClick={() => onPageChange(nextOffset)}>
+        <span>{pageRange(filters.offset, traces.length, traceTotal)}</span>
+        <button disabled={!hasNext} onClick={() => onPageChange(nextPageOffset)}>
           Next
         </button>
       </div>
@@ -873,8 +891,8 @@ function ChatMonitor({
     if (!trimmedMessage || !trimmedEmail || isSubmitting) {
       return;
     }
-    await onSubmit({ customerEmail: trimmedEmail, message: trimmedMessage, llmProvider });
     setMessage("");
+    await onSubmit({ customerEmail: trimmedEmail, message: trimmedMessage, llmProvider });
   }
 
   return (
@@ -914,46 +932,71 @@ function ChatMonitor({
           </label>
           <label>
             <span>LLM provider</span>
-            <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)}>
+            <select
+              value={llmProvider}
+              onChange={(event) => setLlmProvider(event.target.value as LLMProvider)}
+              disabled={isSubmitting}
+            >
               <option value="deterministic">Deterministic</option>
               <option value="openai_compatible">Configured LLM</option>
             </select>
           </label>
           <button type="submit" disabled={isSubmitting || !message.trim()}>
             {isSubmitting ? <Activity size={15} /> : <Send size={15} />}
-            Send
+            {isSubmitting ? "Sending" : "Send"}
           </button>
           {status.status === "error" ? <p className="chatError">{status.message}</p> : null}
         </form>
-        <div className="chatThread">
+        <div className="chatThread" aria-live="polite">
           {messages.length === 0 ? (
             <div className="chatEmpty">
               <MessageSquare size={18} />
               <span>Send a customer message to generate a monitored trace.</span>
             </div>
           ) : (
-            messages.map((chatMessage) => (
-              <div className={`chatBubble ${chatMessage.role}`} key={chatMessage.message_id}>
-                <small>{chatMessage.role}</small>
-                <p>{chatMessage.content}</p>
-                {chatMessage.trace_id ? (
-                  <div className="chatMessageChips">
-                    {buildChatMessageChips(traceSummaries[chatMessage.trace_id]).map((chip) => (
-                      <span className={`chatMessageChip ${chip.tone}`} key={chip.label}>
-                        {chip.label}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {chatMessage.trace_id ? (
-                  <button className="chatTraceLink" type="button" onClick={() => onSelectTrace(chatMessage.trace_id!)}>
-                    Trace: {chatMessage.trace_id}
-                    {chatMessage.trace_id === latestTraceId ? <strong>Latest</strong> : null}
-                  </button>
-                ) : null}
-              </div>
-            ))
+            messages.map((chatMessage) => {
+              const isPending = chatMessage.metadata.pending === true;
+              const errorMessage = typeof chatMessage.metadata.error === "string" ? chatMessage.metadata.error : null;
+              return (
+                <div
+                  className={`chatBubble ${chatMessage.role}${isPending ? " pending" : ""}${
+                    errorMessage ? " error" : ""
+                  }`}
+                  key={chatMessage.message_id}
+                >
+                  <small>{chatMessage.role}</small>
+                  <p>{chatMessage.content}</p>
+                  {errorMessage ? <span className="chatMessageError">{errorMessage}</span> : null}
+                  {chatMessage.trace_id ? (
+                    <div className="chatMessageChips">
+                      {buildChatMessageChips(traceSummaries[chatMessage.trace_id]).map((chip) => (
+                        <span className={`chatMessageChip ${chip.tone}`} key={chip.label}>
+                          {chip.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {chatMessage.trace_id ? (
+                    <button className="chatTraceLink" type="button" onClick={() => onSelectTrace(chatMessage.trace_id!)}>
+                      Trace: {chatMessage.trace_id}
+                      {chatMessage.trace_id === latestTraceId ? <strong>Latest</strong> : null}
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })
           )}
+          {isSubmitting ? (
+            <div className="chatBubble assistant pending" aria-label="Assistant response pending">
+              <small>assistant</small>
+              <p>Checking account, policy, and approval context</p>
+              <span className="typingDots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </section>
@@ -1935,7 +1978,7 @@ async function fetchJson<T>(path: string): Promise<T> {
 
 function filterQuery(filters: TraceFilters, activeChatSessionId: string | null): string {
   const params = new URLSearchParams();
-  params.set("limit", "50");
+  params.set("limit", String(TRACE_PAGE_SIZE));
   params.set("offset", String(filters.offset));
   if (filters.workflowName) params.set("workflow_name", filters.workflowName);
   if (filters.status) params.set("status", filters.status);

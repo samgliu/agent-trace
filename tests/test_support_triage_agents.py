@@ -285,6 +285,31 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("older subscription charge", response.output["response"])
         self.assertNotIn("duplicate charge", response.output["response"].lower())
 
+    def test_static_customer_response_handles_follow_up_context_naturally(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I still want a refund on that Prime subscription billed 3 years ago. What happens next?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_static_response_follow_up",
+            conversation_history=[
+                {
+                    "role": "user",
+                    "content": "I want a refund on my Prime subscription that was billed 3 years ago.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I started a refund review for the older subscription charge.",
+                },
+            ],
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("follow-up", response.output["response"])
+        self.assertIn("older-subscription refund review", response.output["response"])
+        self.assertNotIn("I started", response.output["response"])
+        self.assertEqual(trace.metadata["conversation_history_count"], 2)
+
     def test_validator_requires_human_review_for_high_abuse_risk_refund(self) -> None:
         runner = SupportTriageRunner()
 

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createChatSession, getChatSession, listChatSessions, sendChatMessage, type ChatGetTransport, type ChatTransport } from "./chat";
+import {
+  createChatSession,
+  createPendingUserMessage,
+  getChatSession,
+  listChatSessions,
+  markPendingMessageFailed,
+  replacePendingChatTurn,
+  sendChatMessage,
+  type ChatGetTransport,
+  type ChatMessage,
+  type ChatTransport,
+} from "./chat";
 
 describe("chat api helpers", () => {
   it("creates a chat session with backend field names", async () => {
@@ -89,5 +100,61 @@ describe("chat api helpers", () => {
     expect(sessions[0].session_id).toBe("chat_1");
     expect(detail.messages[0].message_id).toBe("msg_1");
     expect(calls).toEqual(["/chat/sessions", "/chat/sessions/chat_1"]);
+  });
+
+  it("creates a pending user message for optimistic chat rendering", () => {
+    const message = createPendingUserMessage({
+      sessionId: "chat_1",
+      content: "What happens next?",
+      messageId: "pending_1",
+      createdAt: "2026-05-10T10:00:00.000Z",
+    });
+
+    expect(message).toEqual({
+      message_id: "pending_1",
+      session_id: "chat_1",
+      role: "user",
+      content: "What happens next?",
+      trace_id: null,
+      metadata: { pending: true },
+      created_at: "2026-05-10T10:00:00.000Z",
+    });
+  });
+
+  it("replaces the pending message and appends the assistant response", () => {
+    const pending = createPendingUserMessage({
+      sessionId: "chat_1",
+      content: "Refund?",
+      messageId: "pending_1",
+      createdAt: "2026-05-10T10:00:00.000Z",
+    });
+    const userMessage: ChatMessage = { ...pending, message_id: "msg_user_1", metadata: {} };
+    const assistantMessage: ChatMessage = {
+      message_id: "msg_assistant_1",
+      session_id: "chat_1",
+      role: "assistant",
+      content: "I can help review that.",
+      trace_id: "trace_1",
+      metadata: {},
+      created_at: "2026-05-10T10:00:01.000Z",
+    };
+
+    const result = replacePendingChatTurn([pending], "pending_1", userMessage, assistantMessage);
+
+    expect(result).toEqual([userMessage, assistantMessage]);
+  });
+
+  it("marks a pending message failed without removing the customer text", () => {
+    const pending = createPendingUserMessage({
+      sessionId: "chat_1",
+      content: "Refund?",
+      messageId: "pending_1",
+      createdAt: "2026-05-10T10:00:00.000Z",
+    });
+
+    const result = markPendingMessageFailed([pending], "pending_1", "Provider rate limit");
+
+    expect(result[0].content).toBe("Refund?");
+    expect(result[0].metadata).toEqual({ pending: false, error: "Provider rate limit" });
   });
 });
