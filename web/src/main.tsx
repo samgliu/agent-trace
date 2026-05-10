@@ -1734,6 +1734,7 @@ function SpanDetail({
   const unsupportedClaims = extractUnsupportedClaims(span.output);
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
   const facts = buildSpanFacts(span);
+  const modelOutputText = typeof span.span_data.model_output_text === "string" ? span.span_data.model_output_text : null;
 
   return (
     <div className="spanDetail">
@@ -1782,6 +1783,7 @@ function SpanDetail({
 
           {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
 
+          {modelOutputText ? <JsonBlock label="Model output" value={modelOutputText} /> : null}
           <JsonBlock label="Input" value={span.input} />
           <JsonBlock label="Output" value={span.output} />
           <JsonBlock label="Metadata" value={span.span_data} />
@@ -1858,10 +1860,11 @@ function ApprovalActions({
 }
 
 function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  const displayValue = value === null || value === undefined ? "-" : typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return (
     <div className="jsonBlock">
       <small>{label}</small>
-      <pre>{value === null || value === undefined ? "-" : JSON.stringify(value, null, 2)}</pre>
+      <pre>{displayValue}</pre>
     </div>
   );
 }

@@ -510,7 +510,7 @@ class SupportTriageRunner:
         )
         action_type = str(action_decision.get("action_type") or fallback_action["action_type"])
         action_reason = str(action_decision.get("reason") or fallback_action["reason"])
-        action_safety = _action_safety(action_type)
+        action_safety = _action_safety(action_type, policy)
         if action_safety:
             action_type = fallback_action["action_type"]
             action_reason = fallback_action["reason"]
@@ -561,6 +561,9 @@ class SupportTriageRunner:
             "grounding_status": "recovered" if requires_approval else "grounded",
             "approval_required": requires_approval,
             "evidence": [customer.get("customer_id"), policy.get("policy_id"), action.get("action_id")],
+            "grounding_evidence": _grounding_evidence(customer, policy, action),
+            "allowed_actions": policy.get("allowed_actions", []),
+            "customer_friendly_resolution": policy.get("customer_friendly_resolution"),
         }
         validation, validation_llm = self._agent_decision(
             agent_name="Validator Agent",
@@ -671,6 +674,7 @@ class SupportTriageRunner:
                     "agent": agent_name,
                     "decision_source": "fallback",
                     "fallback_reason": "invalid_json",
+                    "model_output_text": response.output_text,
                     "raw_response": response.raw_response,
                 },
             )
@@ -683,6 +687,7 @@ class SupportTriageRunner:
             raw_response={
                 "agent": agent_name,
                 "decision_source": "llm",
+                "model_output_text": response.output_text,
                 "raw_response": response.raw_response,
             },
         )
@@ -904,13 +909,22 @@ def _action_reason(
     )
 
 
-def _action_safety(action_type: str) -> dict[str, Any]:
-    if action_type.strip().lower() in VALID_ACTIONS:
+def _action_safety(action_type: str, policy: dict[str, Any]) -> dict[str, Any]:
+    normalized_action = action_type.strip().lower()
+    if normalized_action not in VALID_ACTIONS:
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "unsupported_action_type",
+            "rejected_action_type": action_type,
+        }
+    allowed_actions = policy.get("allowed_actions")
+    if not isinstance(allowed_actions, list) or normalized_action in allowed_actions:
         return {}
     return {
         "decision_source": "fallback",
-        "fallback_reason": "unsupported_action_type",
+        "fallback_reason": "action_not_allowed_by_policy",
         "rejected_action_type": action_type,
+        "policy_allowed_actions": allowed_actions,
     }
 
 
@@ -938,9 +952,32 @@ def _enforce_validation(
         enforced["grounding_status"] = "failed"
         corrections.append("action_not_created")
 
+    allowed_actions = policy.get("allowed_actions")
+    if isinstance(allowed_actions, list) and action.get("action_type") not in allowed_actions:
+        enforced["grounding_status"] = "failed"
+        corrections.append("action_not_allowed_by_policy")
+
+    enforced.setdefault("grounding_evidence", _grounding_evidence({}, policy, action))
+    enforced.setdefault("allowed_actions", policy.get("allowed_actions", []))
+    enforced.setdefault("customer_friendly_resolution", policy.get("customer_friendly_resolution"))
+
     if corrections:
         enforced["validator_corrections"] = corrections
     return enforced
+
+
+def _grounding_evidence(customer: dict[str, Any], policy: dict[str, Any], action: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    customer_id = customer.get("customer_id") or action.get("customer_id")
+    if customer_id:
+        evidence.append({"type": "customer", "id": customer_id})
+    policy_id = policy.get("policy_id")
+    if policy_id:
+        evidence.append({"type": "policy", "id": policy_id})
+    action_id = action.get("action_id")
+    if action_id:
+        evidence.append({"type": "action", "id": action_id})
+    return evidence
 
 
 def _mcp_span_data(tool_name: str) -> dict[str, Any]:
@@ -1005,6 +1042,9 @@ def _agent_decision_span_data(response: LLMResponse) -> dict[str, Any]:
     fallback_reason = raw_response.get("fallback_reason")
     if fallback_reason:
         span_data["fallback_reason"] = fallback_reason
+    model_output_text = raw_response.get("model_output_text")
+    if isinstance(model_output_text, str):
+        span_data["model_output_text"] = model_output_text
     return span_data
 
 
@@ -1023,7 +1063,9 @@ def _json_for_prompt(payload: dict[str, Any]) -> str:
 def _customer_response_instructions() -> str:
     return (
         "You are a customer service agent. Write a concise, grounded customer response. "
-        "Only mention facts present in the provided customer, policy, action, and validation context."
+        "Only mention facts present in the provided customer, policy, action, and validation context. "
+        "Be customer-friendly: resolve eligible issues, explain approval as a review step when required, "
+        "and do not deny solely because human approval is needed."
     )
 
 

@@ -27,6 +27,8 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(result["found"])
         self.assertEqual(result["policy_id"], "policy_annual_refund")
         self.assertTrue(result["requires_approval"])
+        self.assertIn("refund_review", result["allowed_actions"])
+        self.assertIn("customer_friendly_resolution", result)
 
     def test_create_support_action_returns_action_record(self) -> None:
         result = create_support_action(
@@ -36,6 +38,16 @@ class McpToolsTest(unittest.TestCase):
         )
 
         self.assertEqual(result["action_id"], "act_cus_123_refund_review")
+        self.assertEqual(result["status"], "created")
+
+    def test_create_support_action_accepts_customer_friendly_resolution_actions(self) -> None:
+        result = create_support_action(
+            customer_id="cus_123",
+            action_type="courtesy_credit",
+            reason="Offer a policy-safe customer-friendly resolution.",
+        )
+
+        self.assertEqual(result["action_id"], "act_cus_123_courtesy_credit")
         self.assertEqual(result["status"], "created")
 
     def test_create_support_action_rejects_unknown_action(self) -> None:

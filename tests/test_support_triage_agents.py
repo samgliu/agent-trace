@@ -135,6 +135,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(triage.span_data["decision_source"], "llm")
         self.assertEqual(triage.span_data["prompt_version"], "support-triage-v1")
         self.assertEqual(triage.span_data["model_provider"], "static")
+        self.assertEqual(
+            triage.span_data["model_output_text"],
+            '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+        )
         self.assertEqual(action.input_tokens, 11)
 
     def test_llm_agent_action_falls_back_when_action_type_is_unsupported(self) -> None:
@@ -163,6 +167,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["decision_source"], "fallback")
         self.assertEqual(action.span_data["fallback_reason"], "unsupported_action_type")
         self.assertEqual(action.span_data["rejected_action_type"], "wire_money")
+        self.assertEqual(
+            action.span_data["model_output_text"],
+            '{"action_type":"wire_money","reason":"Unsupported action selected by model."}',
+        )
         self.assertEqual(create_action.output["status"], "created")
 
     def test_validator_enforces_policy_required_approval(self) -> None:
@@ -218,6 +226,54 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(triage.span_data["decision_source"], "fallback")
         self.assertEqual(triage.span_data["fallback_reason"], "invalid_json")
+        self.assertEqual(triage.span_data["model_output_text"], "not json")
+
+    def test_validator_records_customer_friendly_grounding_evidence(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_grounding_evidence",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(validator.output["grounding_status"], "grounded")
+        self.assertIn("refund_review", validator.output["allowed_actions"])
+        self.assertEqual(
+            validator.output["grounding_evidence"],
+            [
+                {"type": "customer", "id": "cus_123"},
+                {"type": "policy", "id": "policy_refund_duplicate_charge"},
+                {"type": "action", "id": "act_cus_123_refund_review"},
+            ],
+        )
+        self.assertIn("Resolve verified duplicate charges", validator.output["customer_friendly_resolution"])
+
+    def test_action_agent_falls_back_when_policy_disallows_action(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"cancel_plan","reason":"Canceling would be too aggressive for a duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_policy_disallowed_action",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(action.span_data["decision_source"], "fallback")
+        self.assertEqual(action.span_data["fallback_reason"], "action_not_allowed_by_policy")
+        self.assertEqual(action.span_data["rejected_action_type"], "cancel_plan")
 
     def test_runner_can_emit_spans_incrementally(self) -> None:
         emitted_names: list[str] = []
