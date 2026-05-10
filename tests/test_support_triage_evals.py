@@ -19,18 +19,19 @@ class SupportTriageEvalsTest(unittest.TestCase):
         result = run_support_triage_eval_suite()
 
         self.assertEqual(result.suite_id, "support-triage-core")
-        self.assertEqual(result.total, 4)
-        self.assertEqual(result.passed, 4)
+        self.assertEqual(result.total, 5)
+        self.assertEqual(result.passed, 5)
         self.assertEqual(result.failed, 0)
         self.assertEqual(result.pass_rate, 1.0)
         by_case = {case_result.case.case_id: case_result for case_result in result.results}
         self.assertEqual(by_case["annual-refund-approval"].trace.status, "recovered")
+        self.assertEqual(by_case["stale-subscription-refund-approval"].trace.status, "recovered")
         self.assertEqual(by_case["lookup-timeout-failure"].trace.status, "failed")
 
     def test_eval_result_payload_excludes_raw_trace_body(self) -> None:
         payload = run_support_triage_eval_suite().to_dict()
 
-        self.assertEqual(payload["passed"], 4)
+        self.assertEqual(payload["passed"], 5)
         self.assertEqual(payload["results"][0]["trace_id"], "trace_eval_support_triage_duplicate_charge_refund")
         self.assertNotIn("trace", payload["results"][0])
         self.assertTrue(all(check["passed"] for check in payload["results"][0]["checks"]))

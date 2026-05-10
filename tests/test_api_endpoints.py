@@ -3,6 +3,7 @@ import os
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 try:
     from fastapi.testclient import TestClient
@@ -47,7 +48,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["suites"][0]["suite_id"], "support-triage-core")
-        self.assertEqual(payload["suites"][0]["case_count"], 4)
+        self.assertEqual(payload["suites"][0]["case_count"], 5)
 
     def test_run_support_triage_evals_saves_eval_traces(self) -> None:
         response = self.client.post("/evals/support-triage/run")
@@ -56,7 +57,7 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertIn("run_id", payload)
         self.assertEqual(payload["suite_id"], "support-triage-core")
-        self.assertEqual(payload["passed"], 4)
+        self.assertEqual(payload["passed"], 5)
         self.assertEqual(payload["failed"], 0)
         history_response = self.client.get("/eval-runs")
         detail_response = self.client.get(f"/eval-runs/{payload['run_id']}")
@@ -521,6 +522,28 @@ class ApiEndpointsTest(unittest.TestCase):
         messages = self.client.get(f"/chat/sessions/{session['session_id']}/messages")
         self.assertEqual(messages.status_code, 200)
         self.assertEqual([message["role"] for message in messages.json()], ["user", "assistant"])
+
+    def test_chat_message_returns_clean_llm_error_with_cors_header(self) -> None:
+        class FailingRunner:
+            def run(self, **_: object) -> None:
+                raise RuntimeError("LLM provider request failed with HTTP 429.")
+
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "customer@example.com", "title": "Billing support"},
+        )
+        session = session_response.json()
+
+        with patch("agenttrace.api.main.build_default_runner", return_value=FailingRunner()):
+            response = self.client.post(
+                f"/chat/sessions/{session['session_id']}/messages",
+                json={"content": "Use configured LLM", "use_openai": True},
+                headers={"Origin": "http://localhost:5173"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
+        self.assertEqual(response.json()["detail"], "LLM provider request failed with HTTP 429.")
 
     def test_chat_message_missing_session_returns_404(self) -> None:
         response = self.client.post("/chat/sessions/missing-session/messages", json={"content": "Hello"})

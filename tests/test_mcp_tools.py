@@ -10,6 +10,7 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(result["found"])
         self.assertEqual(result["customer_id"], "cus_123")
         self.assertEqual(result["last_payment_status"], "duplicate_charge_detected")
+        self.assertEqual(result["prior_refunds_12m"], 1)
 
     def test_lookup_customer_returns_missing_context_for_unknown_email(self) -> None:
         result = lookup_customer("unknown@example.com")
@@ -29,6 +30,15 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(result["requires_approval"])
         self.assertIn("refund_review", result["allowed_actions"])
         self.assertIn("customer_friendly_resolution", result)
+        self.assertIn("abuse_controls", result)
+
+    def test_retrieve_policy_returns_stale_subscription_refund_policy(self) -> None:
+        result = retrieve_policy("stale_subscription_refund")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["policy_id"], "policy_stale_subscription_refund")
+        self.assertTrue(result["requires_approval"])
+        self.assertIn("refund_review", result["allowed_actions"])
 
     def test_create_support_action_returns_action_record(self) -> None:
         result = create_support_action(

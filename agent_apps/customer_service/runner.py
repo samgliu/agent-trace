@@ -52,10 +52,13 @@ class StaticLLMClient(LLMClient):
         )
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
+        output_text = self.output_text
+        if "Customer message:" in input_text:
+            output_text = _static_customer_response(input_text, self.output_text)
         return LLMResponse(
-            output_text=self.output_text,
+            output_text=output_text,
             input_tokens=_rough_token_count(instructions + "\n" + input_text),
-            output_tokens=_rough_token_count(self.output_text),
+            output_tokens=_rough_token_count(output_text),
             estimated_cost=0.0,
             raw_response={"provider": self.provider_name},
         )
@@ -74,6 +77,7 @@ class OpenAIChatCompletionsClient(LLMClient):
         post_json: PostJson | None = None,
     ) -> None:
         config = resolve_model_config(api_key=api_key, model=model, base_url=base_url)
+        self.provider = config.provider
         self.provider_name = f"{config.provider}-chat-completions"
         self.api_key = config.api_key
         self.model = config.model
@@ -83,7 +87,11 @@ class OpenAIChatCompletionsClient(LLMClient):
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         if not self.api_key:
-            raise RuntimeError("LLM API key is required. Set the provider-specific API key or LLM_API_KEY.")
+            env_prefix = self.provider.upper().replace("-", "_")
+            raise RuntimeError(
+                f"LLM provider '{self.provider}' is not configured: missing API key. "
+                f"Set {env_prefix}_API_KEY or LLM_API_KEY."
+            )
 
         payload = self._post_json(
             f"{self.base_url}/chat/completions",
@@ -328,6 +336,9 @@ class SupportTriageRunner:
             fallback=_triage(message),
             allowed_keys={"issue_type", "urgency", "sentiment", "missing_information"},
         )
+        triage_safety = _triage_safety(message, triage)
+        if triage_safety:
+            triage = {**triage, **_triage(message)}
         emit(
             _span(
                 trace_id=trace_id,
@@ -343,6 +354,7 @@ class SupportTriageRunner:
                     "agent_role": "triage",
                     "model_provider": self.llm_client.provider_name,
                     **_agent_decision_span_data(triage_llm),
+                    **triage_safety,
                 },
                 input_tokens=triage_llm.input_tokens,
                 output_tokens=triage_llm.output_tokens,
@@ -435,7 +447,16 @@ class SupportTriageRunner:
             },
             allowed_keys={"retrieval_query", "reason"},
         )
-        policy_topic = str(policy_plan.get("retrieval_query") or _policy_topic(triage, customer))
+        fallback_policy_topic = _policy_topic(triage, customer)
+        policy_topic = str(policy_plan.get("retrieval_query") or fallback_policy_topic)
+        policy_safety = _policy_safety(policy_topic, fallback_policy_topic)
+        if policy_safety:
+            policy_topic = fallback_policy_topic
+            policy_plan = {
+                **policy_plan,
+                "retrieval_query": fallback_policy_topic,
+                "reason": "Corrected to the policy topic implied by the customer message and triage result.",
+            }
         emit(
             _span(
                 trace_id=trace_id,
@@ -451,6 +472,7 @@ class SupportTriageRunner:
                     "agent_role": "policy",
                     "model_provider": self.llm_client.provider_name,
                     **_agent_decision_span_data(policy_llm),
+                    **policy_safety,
                 },
                 input_tokens=policy_llm.input_tokens,
                 output_tokens=policy_llm.output_tokens,
@@ -557,6 +579,7 @@ class SupportTriageRunner:
         )
 
         requires_approval = bool(policy.get("requires_approval"))
+        abuse_risk = _abuse_risk(customer, policy)
         validation_fallback = {
             "grounding_status": "recovered" if requires_approval else "grounded",
             "approval_required": requires_approval,
@@ -564,6 +587,8 @@ class SupportTriageRunner:
             "grounding_evidence": _grounding_evidence(customer, policy, action),
             "allowed_actions": policy.get("allowed_actions", []),
             "customer_friendly_resolution": policy.get("customer_friendly_resolution"),
+            "abuse_risk": abuse_risk,
+            "risk_review_required": abuse_risk["requires_human_review"],
         }
         validation, validation_llm = self._agent_decision(
             agent_name="Validator Agent",
@@ -606,12 +631,13 @@ class SupportTriageRunner:
                     clock=clock,
                     duration_ms=100,
                     input={"policy_id": policy.get("policy_id"), "action_id": action.get("action_id")},
-                    output={"approval_status": "blocked", "reason": "Policy requires human approval."},
+                    output={"approval_status": "blocked", "reason": _approval_reason(validation)},
                     span_data={
                         "approval_required": True,
                         "approval_status": "blocked",
                         "policy_id": policy.get("policy_id"),
                         "action_id": action.get("action_id"),
+                        "risk_review_required": validation.get("risk_review_required", False),
                     },
                 )
             )
@@ -640,7 +666,7 @@ class SupportTriageRunner:
 
         return _trace(
             trace_id=trace_id,
-            status="recovered" if requires_approval else "passed",
+            status="recovered" if validation["approval_required"] else "passed",
             started_at=spans[0].started_at,
             ended_at=spans[-1].ended_at,
             spans=spans,
@@ -797,9 +823,41 @@ def _post_json(url: str, *, headers: dict[str, str], json: dict[str, Any], timeo
         import httpx
     except ModuleNotFoundError as exc:
         raise RuntimeError("httpx is required for OpenAI-compatible LLM clients") from exc
-    response = httpx.post(url, headers=headers, json=json, timeout=timeout)
-    response.raise_for_status()
+    try:
+        response = httpx.post(url, headers=headers, json=json, timeout=timeout)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(_provider_http_error_message(exc.response.status_code, exc.response.text)) from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"LLM provider request failed: {exc}") from exc
     return response.json()
+
+
+def _provider_http_error_message(status_code: int, response_text: str) -> str:
+    detail = _provider_error_detail(response_text)
+    if detail:
+        return f"LLM provider request failed with HTTP {status_code}: {detail}"
+    return f"LLM provider request failed with HTTP {status_code}."
+
+
+def _provider_error_detail(response_text: str) -> str | None:
+    if not response_text:
+        return None
+    try:
+        payload = json.loads(response_text)
+    except json.JSONDecodeError:
+        return response_text[:500]
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("status") or error.get("code")
+        if message:
+            return str(message)[:500]
+    if isinstance(error, str):
+        return error[:500]
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if detail:
+        return str(detail)[:500]
+    return response_text[:500]
 
 
 def _run_async_tool(awaitable: Awaitable[dict[str, Any]]) -> dict[str, Any]:
@@ -866,6 +924,11 @@ def _triage(message: str) -> dict[str, Any]:
     if "charged twice" in text or "duplicate" in text:
         issue_type = "billing_duplicate_charge"
         urgency = "medium"
+    elif ("refund" in text and "subscription" in text) and (
+        "year ago" in text or "years ago" in text or "3 years" in text or "old charge" in text
+    ):
+        issue_type = "stale_subscription_refund"
+        urgency = "medium"
     elif "annual" in text and "refund" in text:
         issue_type = "annual_plan_refund"
         urgency = "medium"
@@ -878,12 +941,37 @@ def _triage(message: str) -> dict[str, Any]:
     return {"issue_type": issue_type, "urgency": urgency, "sentiment": "concerned"}
 
 
+def _triage_safety(message: str, triage: dict[str, Any]) -> dict[str, Any]:
+    fallback = _triage(message)
+    if triage.get("issue_type") == fallback["issue_type"]:
+        return {}
+    if fallback["issue_type"] in {"stale_subscription_refund", "billing_duplicate_charge", "annual_plan_refund"}:
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "message_policy_signal_mismatch",
+            "rejected_issue_type": triage.get("issue_type"),
+        }
+    return {}
+
+
 def _policy_topic(triage: dict[str, Any], customer: dict[str, Any]) -> str:
     if triage["issue_type"] == "annual_plan_refund" or customer.get("annual_price_usd", 0) > 500:
         return "annual_plan_refund"
+    if triage["issue_type"] == "stale_subscription_refund":
+        return "stale_subscription_refund"
     if triage["issue_type"] == "billing_duplicate_charge":
         return "duplicate_charge_refund"
-    return "duplicate_charge_refund"
+    return "general_support"
+
+
+def _policy_safety(policy_topic: str, fallback_policy_topic: str) -> dict[str, Any]:
+    if policy_topic == fallback_policy_topic:
+        return {}
+    return {
+        "decision_source": "fallback",
+        "fallback_reason": "policy_topic_mismatch",
+        "rejected_policy_topic": policy_topic,
+    }
 
 
 def _action_type(triage: dict[str, Any], customer: dict[str, Any]) -> str:
@@ -891,6 +979,8 @@ def _action_type(triage: dict[str, Any], customer: dict[str, Any]) -> str:
         return "clarification_request"
     if triage["issue_type"] == "account_access":
         return "escalation"
+    if triage["issue_type"] == "general_support":
+        return "clarification_request"
     return "refund_review"
 
 
@@ -948,6 +1038,13 @@ def _enforce_validation(
         enforced["grounding_status"] = "recovered"
         corrections.append("required_approval_enforced")
 
+    abuse_risk = enforced.get("abuse_risk")
+    if isinstance(abuse_risk, dict) and abuse_risk.get("requires_human_review") and not enforced["approval_required"]:
+        enforced["approval_required"] = True
+        enforced["grounding_status"] = "recovered"
+        corrections.append("abuse_review_enforced")
+    enforced["risk_review_required"] = bool(isinstance(abuse_risk, dict) and abuse_risk.get("requires_human_review"))
+
     if action.get("status") != "created":
         enforced["grounding_status"] = "failed"
         corrections.append("action_not_created")
@@ -964,6 +1061,44 @@ def _enforce_validation(
     if corrections:
         enforced["validator_corrections"] = corrections
     return enforced
+
+
+def _abuse_risk(customer: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    signals: list[str] = []
+    prior_refunds = int(customer.get("prior_refunds_12m") or 0)
+    chargebacks = int(customer.get("chargeback_count_12m") or 0)
+    account_age_days = int(customer.get("account_age_days") or 0)
+    payment_verified = bool(customer.get("payment_method_verified", False))
+    controls = policy.get("abuse_controls") if isinstance(policy.get("abuse_controls"), dict) else {}
+    max_refunds = int(controls.get("max_low_risk_refunds_12m") or 3)
+
+    if prior_refunds > max_refunds:
+        signals.append("high_prior_refund_count")
+    if chargebacks > 0:
+        signals.append("recent_chargebacks")
+    if account_age_days and account_age_days < 30:
+        signals.append("new_account")
+    if customer.get("found") and not payment_verified:
+        signals.append("unverified_payment_method")
+
+    level = "low"
+    if len(signals) >= 2 or "recent_chargebacks" in signals:
+        level = "high"
+    elif signals:
+        level = "medium"
+
+    return {
+        "level": level,
+        "signals": signals,
+        "requires_human_review": level == "high",
+        "principle": controls.get("principle"),
+    }
+
+
+def _approval_reason(validation: dict[str, Any]) -> str:
+    if validation.get("risk_review_required"):
+        return "Human review required by abuse-risk controls."
+    return "Policy requires human approval."
 
 
 def _grounding_evidence(customer: dict[str, Any], policy: dict[str, Any], action: dict[str, Any]) -> list[dict[str, Any]]:
@@ -996,14 +1131,17 @@ def _supervisor_instructions() -> str:
 
 def _triage_instructions() -> str:
     return (
-        "You are the Triage Agent. Classify the customer message. Return only JSON with "
-        "issue_type, urgency, sentiment, and optional missing_information."
+        "You are the Triage Agent. Classify the customer message. Use billing_duplicate_charge only when "
+        "the customer reports duplicate or repeated billing. Use stale_subscription_refund for subscription "
+        "refund requests tied to old charges. Return only JSON with issue_type, urgency, sentiment, and "
+        "optional missing_information."
     )
 
 
 def _policy_agent_instructions() -> str:
     return (
         "You are the Policy Agent. Choose the policy retrieval topic for the customer issue. "
+        "Do not choose duplicate_charge_refund unless the triage issue is billing_duplicate_charge. "
         "Return only JSON with retrieval_query and reason."
     )
 
@@ -1017,7 +1155,7 @@ def _action_agent_instructions() -> str:
 
 def _validator_agent_instructions() -> str:
     return (
-        "You are the Validator Agent. Check grounding, policy compliance, and approval needs. "
+        "You are the Validator Agent. Check grounding, policy compliance, abuse-risk signals, and approval needs. "
         "Return only JSON with grounding_status, approval_required, evidence, and optional unsupported_claims."
     )
 
@@ -1087,6 +1225,27 @@ def _customer_response_input(
         f"Support action: {action}\n"
         f"Validation: {validation}"
     )
+
+
+def _static_customer_response(input_text: str, default_response: str) -> str:
+    if "policy_stale_subscription_refund" in input_text:
+        return (
+            "I started a refund review for the older subscription charge. Because the charge is older than "
+            "the standard self-serve window, it needs human approval before any refund can be issued."
+        )
+    if "policy_refund_duplicate_charge" in input_text:
+        return (
+            "I started a refund review for the detected duplicate charge. Duplicate-charge refunds can be "
+            "resolved after customer and payment verification."
+        )
+    if "policy_annual_refund" in input_text:
+        return (
+            "I started a refund review for the annual plan. Because this is a high-value annual refund, "
+            "it needs human approval before execution."
+        )
+    if "'action_type': 'clarification_request'" in input_text or '"action_type": "clarification_request"' in input_text:
+        return "I need one more account or billing detail before I can safely take action on this request."
+    return default_response
 
 
 def _rough_token_count(text: str) -> int:
