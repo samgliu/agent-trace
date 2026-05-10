@@ -545,6 +545,33 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
         self.assertEqual(response.json()["detail"], "LLM provider request failed with HTTP 429.")
 
+    def test_chat_followup_passes_recent_history_to_runner(self) -> None:
+        captured_history: list[list[dict[str, object]]] = []
+
+        class CapturingRunner:
+            def run(self, **kwargs: object) -> Trace:
+                captured_history.append(list(kwargs.get("conversation_history") or []))
+                return Trace(
+                    trace_id=str(kwargs["trace_id"]),
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"source": "test"},
+                )
+
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "customer@example.com", "title": "Billing support"},
+        )
+        session = session_response.json()
+
+        with patch("agenttrace.api.main.build_default_runner", return_value=CapturingRunner()):
+            self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "First message"})
+            self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "Follow-up message"})
+
+        self.assertEqual(captured_history[0], [])
+        self.assertEqual([item["role"] for item in captured_history[1]], ["user", "assistant"])
+        self.assertEqual(captured_history[1][0]["content"], "First message")
+
     def test_chat_message_missing_session_returns_404(self) -> None:
         response = self.client.post("/chat/sessions/missing-session/messages", json={"content": "Hello"})
 
@@ -629,6 +656,29 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["span_data"]["approval_status"], "rejected")
         self.assertEqual(payload["output"]["approval_status"], "rejected")
+
+    def test_reject_approval_span_appends_chat_event_for_chat_trace(self) -> None:
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "annual@example.com", "title": "Billing support"},
+        )
+        session = session_response.json()
+        message_response = self.client.post(
+            f"/chat/sessions/{session['session_id']}/messages",
+            json={"content": "Can you refund my annual plan?"},
+        )
+        trace = message_response.json()["trace"]
+        approval_span = next(span for span in trace["spans"] if span["span_type"] == "approval")
+
+        response = self.client.post(f"/traces/{trace['trace_id']}/approvals/{approval_span['span_id']}/reject")
+        messages = self.client.get(f"/chat/sessions/{session['session_id']}/messages").json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(messages[-1]["role"], "assistant")
+        self.assertIn("rejected", messages[-1]["content"])
+        self.assertEqual(messages[-1]["trace_id"], trace["trace_id"])
+        self.assertEqual(messages[-1]["metadata"]["event_type"], "approval_decision")
+        self.assertEqual(messages[-1]["metadata"]["approval_status"], "rejected")
 
     def test_revert_approval_span(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))

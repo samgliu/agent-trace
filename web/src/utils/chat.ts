@@ -10,7 +10,7 @@ export type ChatSession = {
 export type ChatMessage = {
   message_id: string;
   session_id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   trace_id: string | null;
   metadata: Record<string, unknown>;

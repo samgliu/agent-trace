@@ -259,9 +259,11 @@ class SupportTriageRunner:
         message: str,
         customer_email: str,
         trace_id: str | None = None,
+        conversation_history: list[dict[str, Any]] | None = None,
         on_span: Callable[[Span], None] | None = None,
     ) -> Trace:
         trace_id = trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
+        conversation_history = conversation_history or []
         clock = _SpanClock(datetime.now(timezone.utc))
         spans: list[Span] = []
         emitted_span_ids: set[str] = set()
@@ -293,7 +295,7 @@ class SupportTriageRunner:
         supervisor_decision, supervisor_llm = self._agent_decision(
             agent_name="Supervisor Agent",
             instructions=_supervisor_instructions(),
-            input_data={"message": message, "customer_email": customer_email},
+            input_data={"message": message, "customer_email": customer_email, "conversation_history": conversation_history},
             fallback={"route": "triage", "handoff_reason": "Initial customer request requires triage."},
             allowed_keys={"route", "handoff_reason"},
         )
@@ -304,7 +306,7 @@ class SupportTriageRunner:
             span_type="agent",
             clock=clock,
             duration_ms=250,
-            input={"message": message, "customer_email": customer_email},
+            input={"message": message, "customer_email": customer_email, "conversation_history": conversation_history},
             output=supervisor_decision,
             span_data={
                 "agent_role": "supervisor",
@@ -361,7 +363,7 @@ class SupportTriageRunner:
                 estimated_cost=triage_llm.estimated_cost,
             )
         )
-        working_memory = _working_memory(message, customer_email, triage)
+        working_memory = _working_memory(message, customer_email, triage, conversation_history)
         emit(
             _span(
                 trace_id=trace_id,
@@ -408,6 +410,7 @@ class SupportTriageRunner:
                 spans=spans,
                 llm_provider=self.llm_client.provider_name,
                 agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
+                conversation_history_count=len(conversation_history),
             )
 
         emit(
@@ -672,6 +675,7 @@ class SupportTriageRunner:
             spans=spans,
             llm_provider=self.llm_client.provider_name,
             agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
+            conversation_history_count=len(conversation_history),
         )
 
     def _agent_decision(
@@ -799,6 +803,7 @@ def _trace(
     spans: list[Span],
     llm_provider: str,
     agent_decision_mode: str,
+    conversation_history_count: int = 0,
 ) -> Trace:
     trace = Trace(
         trace_id=trace_id,
@@ -809,6 +814,7 @@ def _trace(
             "runner": "agent_apps.customer_service.runner",
             "llm_provider": llm_provider,
             "agent_decision_mode": agent_decision_mode,
+            "conversation_history_count": conversation_history_count,
         },
         raw_payload=None,
         started_at=started_at,
@@ -1252,14 +1258,22 @@ def _rough_token_count(text: str) -> int:
     return max(1, len(text.split()))
 
 
-def _working_memory(message: str, customer_email: str, triage: dict[str, Any]) -> dict[str, Any]:
+def _working_memory(
+    message: str,
+    customer_email: str,
+    triage: dict[str, Any],
+    conversation_history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    conversation_history = conversation_history or []
     return {
         "memory_key": f"working:{customer_email}",
         "facts": [
             {"key": "latest_customer_message", "value": message},
             {"key": "issue_type", "value": triage["issue_type"]},
             {"key": "urgency", "value": triage["urgency"]},
+            {"key": "recent_conversation_turns", "value": len(conversation_history)},
         ],
+        "conversation_history": conversation_history,
     }
 
 

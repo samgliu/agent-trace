@@ -416,6 +416,13 @@ function App() {
       return;
     }
     await postJson(`/traces/${state.selectedTrace.trace_id}/approvals/${spanId}/${action}`);
+    const sessionId = stringMetadata(state.selectedTrace.metadata.chat_session_id);
+    if (sessionId && chatSession?.session_id === sessionId) {
+      const session = await getChatSession(fetchJson, sessionId);
+      setChatSession(session);
+      setChatMessages(session.messages);
+      setChatSessions((sessions) => upsertChatSession(sessions, session));
+    }
     setRefreshKey((value) => value + 1);
   }
 
