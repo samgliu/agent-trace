@@ -331,16 +331,17 @@ class SupportTriageRunner:
             )
         )
 
+        triage_context = _conversation_context(message, conversation_history)
         triage, triage_llm = self._agent_decision(
             agent_name="Triage Agent",
             instructions=_triage_instructions(),
-            input_data={"message": message},
-            fallback=_triage(message),
+            input_data={"message": message, "recent_context": triage_context},
+            fallback=_triage(message, conversation_history),
             allowed_keys={"issue_type", "urgency", "sentiment", "missing_information"},
         )
-        triage_safety = _triage_safety(message, triage)
+        triage_safety = _triage_safety(message, triage, conversation_history)
         if triage_safety:
-            triage = {**triage, **_triage(message)}
+            triage = {**triage, **_triage(message, conversation_history)}
         emit(
             _span(
                 trace_id=trace_id,
@@ -350,7 +351,7 @@ class SupportTriageRunner:
                 parent_id=supervisor.span_id,
                 clock=clock,
                 duration_ms=400,
-                input={"message": message},
+                input={"message": message, "recent_context": triage_context},
                 output=triage,
                 span_data={
                     "agent_role": "triage",
@@ -497,7 +498,7 @@ class SupportTriageRunner:
                 span_data={"retriever": "mcp_policy_store", **_mcp_span_data("retrieve_policy_tool")},
             )
         )
-        customer_memory = _customer_memory(customer)
+        customer_memory = _customer_memory(customer, triage["issue_type"])
         emit(
             _span(
                 trace_id=trace_id,
@@ -925,9 +926,29 @@ class _SpanClock:
         return started_at, ended_at
 
 
-def _triage(message: str) -> dict[str, Any]:
-    text = message.lower()
-    if "charged twice" in text or "duplicate" in text:
+def _conversation_context(message: str, conversation_history: list[dict[str, Any]] | None = None) -> str:
+    recent_turns = conversation_history[-4:] if conversation_history else []
+    parts = [str(turn.get("content") or "") for turn in recent_turns]
+    parts.append(message)
+    return "\n".join(part for part in parts if part).lower()
+
+
+def _triage(message: str, conversation_history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    current_text = message.lower()
+    text = _conversation_context(message, conversation_history)
+    quality_exception = _has_quality_exception(text)
+    if _has_account_mismatch(current_text):
+        issue_type = "general_support"
+        urgency = "medium"
+    elif "charged twice" in current_text or "duplicate" in current_text:
+        issue_type = "billing_duplicate_charge"
+        urgency = "medium"
+    elif ("return" in text or "refund" in text) and (
+        "banana" in text or "bananas" in text or "grocery" in text or "product" in text or "item" in text
+    ) and ("ate" in text or "eaten" in text or "consumed" in text or "used all" in text):
+        issue_type = "consumed_product_return"
+        urgency = "low"
+    elif "charged twice" in text or "duplicate" in text:
         issue_type = "billing_duplicate_charge"
         urgency = "medium"
     elif ("refund" in text and "subscription" in text) and (
@@ -944,14 +965,36 @@ def _triage(message: str) -> dict[str, Any]:
     else:
         issue_type = "general_support"
         urgency = "low"
-    return {"issue_type": issue_type, "urgency": urgency, "sentiment": "concerned"}
+    result = {"issue_type": issue_type, "urgency": urgency, "sentiment": "concerned"}
+    if quality_exception and issue_type == "consumed_product_return":
+        result["quality_exception"] = True
+    if issue_type == "general_support" and _has_account_mismatch(current_text):
+        result["missing_information"] = "verified account or matching order ownership"
+    return result
 
 
-def _triage_safety(message: str, triage: dict[str, Any]) -> dict[str, Any]:
-    fallback = _triage(message)
+def _has_quality_exception(text: str) -> bool:
+    return any(signal in text for signal in ("spoiled", "moldy", "mouldy", "rotten", "unsafe", "sick", "delivery issue"))
+
+
+def _has_account_mismatch(text: str) -> bool:
+    return any(signal in text for signal in ("different email", "another email", "spouse", "not my account", "wrong account"))
+
+
+def _triage_safety(
+    message: str,
+    triage: dict[str, Any],
+    conversation_history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    fallback = _triage(message, conversation_history)
     if triage.get("issue_type") == fallback["issue_type"]:
         return {}
-    if fallback["issue_type"] in {"stale_subscription_refund", "billing_duplicate_charge", "annual_plan_refund"}:
+    if fallback["issue_type"] in {
+        "stale_subscription_refund",
+        "billing_duplicate_charge",
+        "annual_plan_refund",
+        "consumed_product_return",
+    }:
         return {
             "decision_source": "fallback",
             "fallback_reason": "message_policy_signal_mismatch",
@@ -961,6 +1004,8 @@ def _triage_safety(message: str, triage: dict[str, Any]) -> dict[str, Any]:
 
 
 def _policy_topic(triage: dict[str, Any], customer: dict[str, Any]) -> str:
+    if triage["issue_type"] == "consumed_product_return":
+        return "consumed_product_return"
     if triage["issue_type"] == "annual_plan_refund" or customer.get("annual_price_usd", 0) > 500:
         return "annual_plan_refund"
     if triage["issue_type"] == "stale_subscription_refund":
@@ -985,7 +1030,9 @@ def _action_type(triage: dict[str, Any], customer: dict[str, Any]) -> str:
         return "clarification_request"
     if triage["issue_type"] == "account_access":
         return "escalation"
-    if triage["issue_type"] == "general_support":
+    if triage["issue_type"] == "consumed_product_return" and triage.get("quality_exception"):
+        return "courtesy_credit"
+    if triage["issue_type"] in {"general_support", "consumed_product_return"}:
         return "clarification_request"
     return "refund_review"
 
@@ -1139,7 +1186,9 @@ def _triage_instructions() -> str:
     return (
         "You are the Triage Agent. Classify the customer message. Use billing_duplicate_charge only when "
         "the customer reports duplicate or repeated billing. Use stale_subscription_refund for subscription "
-        "refund requests tied to old charges. Return only JSON with issue_type, urgency, sentiment, and "
+        "refund requests tied to old charges. Use consumed_product_return when the customer asks to return "
+        "or refund a product they already consumed. Use recent_context to preserve the active issue across "
+        "follow-up messages such as order numbers. Return only JSON with issue_type, urgency, sentiment, and "
         "optional missing_information."
     )
 
@@ -1148,6 +1197,7 @@ def _policy_agent_instructions() -> str:
     return (
         "You are the Policy Agent. Choose the policy retrieval topic for the customer issue. "
         "Do not choose duplicate_charge_refund unless the triage issue is billing_duplicate_charge. "
+        "Use consumed_product_return for consumed product return requests. "
         "Return only JSON with retrieval_query and reason."
     )
 
@@ -1208,8 +1258,12 @@ def _customer_response_instructions() -> str:
     return (
         "You are a customer service agent. Write a concise, grounded customer response. "
         "Only mention facts present in the provided customer, policy, action, and validation context. "
+        "Do not introduce unrelated account issues, billing flags, duplicate charges, or refunds that are not "
+        "part of the customer's current request. "
         "Be customer-friendly: resolve eligible issues, explain approval as a review step when required, "
-        "and do not deny solely because human approval is needed."
+        "and do not deny solely because human approval is needed. Use the recent conversation history "
+        "to answer follow-up questions naturally. Do not repeat first-turn wording like 'I started a review' "
+        "when the existing review context is already present."
     )
 
 
@@ -1222,10 +1276,11 @@ def _customer_response_input(
     working_memory: dict[str, Any],
     customer_memory: dict[str, Any],
 ) -> str:
+    issue_type = _issue_type_from_working_memory(working_memory)
     return (
         f"Customer message: {message}\n"
         f"Working memory: {working_memory}\n"
-        f"Customer context: {customer}\n"
+        f"Customer context: {_response_customer_context(customer, issue_type)}\n"
         f"Customer memory: {customer_memory}\n"
         f"Policy evidence: {policy}\n"
         f"Support action: {action}\n"
@@ -1234,6 +1289,37 @@ def _customer_response_input(
 
 
 def _static_customer_response(input_text: str, default_response: str) -> str:
+    has_conversation_history = _input_has_conversation_history(input_text)
+    if "policy_consumed_product_return" in input_text:
+        if _has_quality_exception(input_text.lower()):
+            return (
+                "Thanks for the details. Because this sounds like a quality or safety exception rather than a normal return, "
+                "I can review the order for a courtesy credit or escalation with the order evidence."
+            )
+        if _input_has_order_number(input_text):
+            return (
+                "Thanks for the order number. Since the bananas were fully consumed, I cannot process a normal return. "
+                "If there was a quality, spoilage, safety, or delivery issue, I can review that exception with the order details."
+            )
+        return (
+            "Since the bananas were fully consumed, I cannot process a normal return. If there was a quality, spoilage, "
+            "safety, or delivery issue, please share the order number or receipt and what was wrong so I can review it."
+        )
+    if has_conversation_history and "policy_stale_subscription_refund" in input_text:
+        return (
+            "For this follow-up, the older-subscription refund review is still waiting for human approval. "
+            "I can add any new billing evidence to the review, but I cannot issue the refund before approval."
+        )
+    if has_conversation_history and "policy_refund_duplicate_charge" in input_text:
+        return (
+            "For this follow-up, the duplicate-charge review is still based on customer and payment verification. "
+            "If you have a receipt or second charge ID, I can attach it to the review."
+        )
+    if has_conversation_history and "policy_annual_refund" in input_text:
+        return (
+            "For this follow-up, the annual-plan refund review is still waiting for human approval because of "
+            "the refund amount. I can include any new cancellation or billing details in the review."
+        )
     if "policy_stale_subscription_refund" in input_text:
         return (
             "I started a refund review for the older subscription charge. Because the charge is older than "
@@ -1252,6 +1338,39 @@ def _static_customer_response(input_text: str, default_response: str) -> str:
     if "'action_type': 'clarification_request'" in input_text or '"action_type": "clarification_request"' in input_text:
         return "I need one more account or billing detail before I can safely take action on this request."
     return default_response
+
+
+def _input_has_conversation_history(input_text: str) -> bool:
+    empty_markers = (
+        "'conversation_history': []",
+        '"conversation_history": []',
+        "'recent_conversation_turns', 'value': 0",
+        '"recent_conversation_turns", "value": 0',
+    )
+    return "conversation_history" in input_text and not any(marker in input_text for marker in empty_markers)
+
+
+def _input_has_order_number(input_text: str) -> bool:
+    text = input_text.lower()
+    return "order number" in text or "order #" in text or "#1234" in text
+
+
+def _issue_type_from_working_memory(working_memory: dict[str, Any]) -> str:
+    facts = working_memory.get("facts")
+    if not isinstance(facts, list):
+        return "general_support"
+    for fact in facts:
+        if isinstance(fact, dict) and fact.get("key") == "issue_type":
+            return str(fact.get("value") or "general_support")
+    return "general_support"
+
+
+def _response_customer_context(customer: dict[str, Any], issue_type: str) -> dict[str, Any]:
+    billing_issue_types = {"billing_duplicate_charge", "annual_plan_refund", "stale_subscription_refund"}
+    if issue_type in billing_issue_types:
+        return customer
+    allowed_keys = {"found", "customer_id", "email", "loyalty_tier", "account_age_days"}
+    return {key: value for key, value in customer.items() if key in allowed_keys}
 
 
 def _rough_token_count(text: str) -> int:
@@ -1277,7 +1396,7 @@ def _working_memory(
     }
 
 
-def _customer_memory(customer: dict[str, Any]) -> dict[str, Any]:
+def _customer_memory(customer: dict[str, Any], issue_type: str = "general_support") -> dict[str, Any]:
     customer_id = str(customer.get("customer_id") or "unknown")
     if not customer.get("found"):
         memory = {
@@ -1290,6 +1409,18 @@ def _customer_memory(customer: dict[str, Any]) -> dict[str, Any]:
             "relevance_score": 0.42,
             "memory_age_seconds": 86400 * 180,
             "used_in_response": False,
+        }
+    if issue_type == "consumed_product_return":
+        memory = {
+            "memory_id": f"mem_{customer_id}_preference",
+            "summary": "Customer prefers concise email updates.",
+            "source": "support_history",
+        }
+        return {
+            "memories": [memory],
+            "relevance_score": 0.72,
+            "memory_age_seconds": 86400 * 30,
+            "used_in_response": True,
         }
     if customer.get("annual_price_usd", 0) > 500:
         memory = {

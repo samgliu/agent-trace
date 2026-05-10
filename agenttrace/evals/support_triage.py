@@ -20,12 +20,16 @@ class EvalCase:
     message: str
     customer_email: str
     expected_trace_status: str
+    conversation_history: tuple[dict[str, Any], ...] = ()
     expected_issue_type: str | None = None
+    expected_policy_id: str | None = None
     expected_action_type: str | None = None
     expected_approval_required: bool | None = None
     expected_grounding_status: str | None = None
     expected_memory_warning_count: int | None = None
     expected_error_count: int | None = None
+    expected_response_contains: tuple[str, ...] = ()
+    expected_response_excludes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +37,7 @@ class EvalCase:
             "name": self.name,
             "message": self.message,
             "customer_email": self.customer_email,
+            "turn_count": len(self.conversation_history) + 1,
         }
 
 
@@ -124,6 +129,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         customer_email="customer@example.com",
         expected_trace_status="passed",
         expected_issue_type="billing_duplicate_charge",
+        expected_policy_id="policy_refund_duplicate_charge",
         expected_action_type="refund_review",
         expected_approval_required=False,
         expected_grounding_status="grounded",
@@ -137,6 +143,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         customer_email="annual@example.com",
         expected_trace_status="recovered",
         expected_issue_type="annual_plan_refund",
+        expected_policy_id="policy_annual_refund",
         expected_action_type="refund_review",
         expected_approval_required=True,
         expected_grounding_status="recovered",
@@ -150,11 +157,13 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         customer_email="customer@example.com",
         expected_trace_status="recovered",
         expected_issue_type="stale_subscription_refund",
+        expected_policy_id="policy_stale_subscription_refund",
         expected_action_type="refund_review",
         expected_approval_required=True,
         expected_grounding_status="recovered",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_response_excludes=("duplicate charge", "$20"),
     ),
     EvalCase(
         case_id="unknown-customer-clarification",
@@ -163,6 +172,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         customer_email="unknown@example.com",
         expected_trace_status="passed",
         expected_issue_type="general_support",
+        expected_policy_id="policy_general_support",
         expected_action_type="clarification_request",
         expected_approval_required=False,
         expected_grounding_status="grounded",
@@ -177,6 +187,130 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_trace_status="failed",
         expected_issue_type="account_access",
         expected_error_count=1,
+    ),
+    EvalCase(
+        case_id="consumed-product-return-boundary",
+        name="Consumed product return boundary",
+        message="I'd like to return the banana I bought last week. I ate all of them already.",
+        customer_email="customer@example.com",
+        expected_trace_status="passed",
+        expected_issue_type="consumed_product_return",
+        expected_policy_id="policy_consumed_product_return",
+        expected_action_type="clarification_request",
+        expected_approval_required=False,
+        expected_grounding_status="grounded",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+        expected_response_contains=("fully consumed", "quality"),
+        expected_response_excludes=("duplicate", "$20"),
+    ),
+    EvalCase(
+        case_id="consumed-product-return-follow-up",
+        name="Consumed product return follow-up",
+        message="Order number: #1234",
+        customer_email="customer@example.com",
+        conversation_history=(
+            {
+                "role": "user",
+                "content": "I'd like to return the banana I bought last week. I ate all of them already.",
+            },
+            {
+                "role": "assistant",
+                "content": "Please share the order number or receipt and what was wrong.",
+            },
+        ),
+        expected_trace_status="passed",
+        expected_issue_type="consumed_product_return",
+        expected_policy_id="policy_consumed_product_return",
+        expected_action_type="clarification_request",
+        expected_approval_required=False,
+        expected_grounding_status="grounded",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+        expected_response_contains=("order number", "normal return"),
+        expected_response_excludes=("duplicate", "$20"),
+    ),
+    EvalCase(
+        case_id="explicit-topic-switch-to-duplicate-charge",
+        name="Explicit topic switch to duplicate charge",
+        message="Actually, separate issue: I was charged twice for my Pro subscription yesterday.",
+        customer_email="customer@example.com",
+        conversation_history=(
+            {
+                "role": "user",
+                "content": "I'd like to return the banana I bought last week. I ate all of them already.",
+            },
+            {
+                "role": "assistant",
+                "content": "Please share the order number or receipt and what was wrong.",
+            },
+        ),
+        expected_trace_status="passed",
+        expected_issue_type="billing_duplicate_charge",
+        expected_policy_id="policy_refund_duplicate_charge",
+        expected_action_type="refund_review",
+        expected_approval_required=False,
+        expected_grounding_status="grounded",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+        expected_response_contains=("duplicate",),
+    ),
+    EvalCase(
+        case_id="consumed-product-quality-exception",
+        name="Consumed product quality exception",
+        message="Order number #1234. The bananas were moldy and unsafe, so I threw them out.",
+        customer_email="customer@example.com",
+        conversation_history=(
+            {
+                "role": "user",
+                "content": "I'd like to return the banana I bought last week. I ate all of them already.",
+            },
+            {
+                "role": "assistant",
+                "content": "Please share the order number or receipt and what was wrong.",
+            },
+        ),
+        expected_trace_status="passed",
+        expected_issue_type="consumed_product_return",
+        expected_policy_id="policy_consumed_product_return",
+        expected_action_type="courtesy_credit",
+        expected_approval_required=False,
+        expected_grounding_status="grounded",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+        expected_response_contains=("quality", "courtesy credit"),
+        expected_response_excludes=("duplicate", "$20"),
+    ),
+    EvalCase(
+        case_id="repeated-refund-abuse-review",
+        name="Repeated refund abuse review",
+        message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+        customer_email="risk@example.com",
+        expected_trace_status="recovered",
+        expected_issue_type="billing_duplicate_charge",
+        expected_policy_id="policy_refund_duplicate_charge",
+        expected_action_type="refund_review",
+        expected_approval_required=True,
+        expected_grounding_status="recovered",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+        expected_response_contains=("review",),
+    ),
+    EvalCase(
+        case_id="account-mismatch-clarification",
+        name="Account mismatch clarification",
+        message="The order is under my spouse's different email. Can you refund it from this account?",
+        customer_email="customer@example.com",
+        expected_trace_status="passed",
+        expected_issue_type="general_support",
+        expected_policy_id="policy_general_support",
+        expected_action_type="clarification_request",
+        expected_approval_required=False,
+        expected_grounding_status="grounded",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+        expected_response_contains=("account", "detail"),
+        expected_response_excludes=("refund review", "duplicate"),
     ),
 )
 
@@ -207,13 +341,20 @@ def run_support_triage_eval_suite(
 
 
 def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str) -> EvalCaseResult:
-    trace = runner.run(message=case.message, customer_email=case.customer_email, trace_id=trace_id)
+    trace = runner.run(
+        message=case.message,
+        customer_email=case.customer_email,
+        trace_id=trace_id,
+        conversation_history=list(case.conversation_history),
+    )
     actual = _actual_values(trace)
     checks = [
         _check("trace_status", case.expected_trace_status, trace.status),
     ]
     if case.expected_issue_type is not None:
         checks.append(_check("issue_type", case.expected_issue_type, actual["issue_type"]))
+    if case.expected_policy_id is not None:
+        checks.append(_check("policy_id", case.expected_policy_id, actual["policy_id"]))
     if case.expected_action_type is not None:
         checks.append(_check("action_type", case.expected_action_type, actual["action_type"]))
     if case.expected_approval_required is not None:
@@ -224,21 +365,29 @@ def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str
         checks.append(_check("memory_warning_count", case.expected_memory_warning_count, actual["memory_warning_count"]))
     if case.expected_error_count is not None:
         checks.append(_check("error_count", case.expected_error_count, actual["error_count"]))
+    for expected_text in case.expected_response_contains:
+        checks.append(_contains_check(f"response_contains:{expected_text}", actual["response"], expected_text))
+    for rejected_text in case.expected_response_excludes:
+        checks.append(_excludes_check(f"response_excludes:{rejected_text}", actual["response"], rejected_text))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
 
 
 def _actual_values(trace: Trace) -> dict[str, Any]:
     triage_span = _find_span(trace, "Triage Agent")
+    retrieval_span = _find_span(trace, "retrieve_policy")
     action_span = _find_span(trace, "Action Agent")
     validator_span = _find_span(trace, "Validator Agent")
+    response_span = _find_span(trace, "Customer Response Generator")
     summary = build_trace_summary(trace)
     return {
         "issue_type": _dict_value(triage_span.output if triage_span else None, "issue_type"),
+        "policy_id": _dict_value(retrieval_span.output if retrieval_span else None, "policy_id"),
         "action_type": _dict_value(action_span.output if action_span else None, "action_type"),
         "approval_required": _dict_value(validator_span.output if validator_span else None, "approval_required"),
         "grounding_status": _dict_value(validator_span.output if validator_span else None, "grounding_status"),
         "memory_warning_count": summary["memory_warning_count"],
         "error_count": summary["error_count"],
+        "response": _dict_value(response_span.output if response_span else None, "response") or "",
     }
 
 
@@ -254,3 +403,21 @@ def _dict_value(value: Any, key: str) -> Any:
 
 def _check(name: str, expected: Any, actual: Any) -> EvalCheck:
     return EvalCheck(name=name, expected=expected, actual=actual, passed=actual == expected)
+
+
+def _contains_check(name: str, actual: str, expected_text: str) -> EvalCheck:
+    return EvalCheck(
+        name=name,
+        expected=f"contains {expected_text}",
+        actual=actual,
+        passed=expected_text.lower() in actual.lower(),
+    )
+
+
+def _excludes_check(name: str, actual: str, rejected_text: str) -> EvalCheck:
+    return EvalCheck(
+        name=name,
+        expected=f"excludes {rejected_text}",
+        actual=actual,
+        passed=rejected_text.lower() not in actual.lower(),
+    )

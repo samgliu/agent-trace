@@ -285,6 +285,82 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("older subscription charge", response.output["response"])
         self.assertNotIn("duplicate charge", response.output["response"].lower())
 
+    def test_static_customer_response_handles_follow_up_context_naturally(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I still want a refund on that Prime subscription billed 3 years ago. What happens next?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_static_response_follow_up",
+            conversation_history=[
+                {
+                    "role": "user",
+                    "content": "I want a refund on my Prime subscription that was billed 3 years ago.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I started a refund review for the older subscription charge.",
+                },
+            ],
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("follow-up", response.output["response"])
+        self.assertIn("older-subscription refund review", response.output["response"])
+        self.assertNotIn("I started", response.output["response"])
+        self.assertEqual(trace.metadata["conversation_history_count"], 2)
+
+    def test_consumed_product_return_does_not_pivot_to_duplicate_charge(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I'd like to return the banana I bought last week. I ate all of them already.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_consumed_product_return",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(triage.output["issue_type"], "consumed_product_return")
+        self.assertEqual(retrieval.output["policy_id"], "policy_consumed_product_return")
+        self.assertEqual(action.output["action_type"], "clarification_request")
+        self.assertIn("fully consumed", response.output["response"])
+        self.assertNotIn("duplicate", response.output["response"].lower())
+        self.assertNotIn("$20", response.output["response"])
+
+    def test_consumed_product_return_follow_up_keeps_active_issue(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="Order number: #1234",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_consumed_product_return_follow_up",
+            conversation_history=[
+                {
+                    "role": "user",
+                    "content": "I'd like to return the banana I bought last week. I ate all of them already.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please share the order number or receipt and what was wrong.",
+                },
+            ],
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertEqual(triage.output["issue_type"], "consumed_product_return")
+        self.assertEqual(retrieval.output["policy_id"], "policy_consumed_product_return")
+        self.assertIn("order number", response.output["response"].lower())
+        self.assertIn("normal return", response.output["response"])
+        self.assertNotIn("duplicate", response.output["response"].lower())
+        self.assertNotIn("$20", response.output["response"])
+        self.assertEqual(trace.metadata["conversation_history_count"], 2)
+
     def test_validator_requires_human_review_for_high_abuse_risk_refund(self) -> None:
         runner = SupportTriageRunner()
 

@@ -32,6 +32,56 @@ export type ChatSessionDetail = ChatSession & {
   messages: ChatMessage[];
 };
 
+export function createPendingUserMessage(input: {
+  sessionId: string;
+  content: string;
+  messageId?: string;
+  createdAt?: string;
+}): ChatMessage {
+  return {
+    message_id: input.messageId ?? `pending_${Date.now()}`,
+    session_id: input.sessionId,
+    role: "user",
+    content: input.content,
+    trace_id: null,
+    metadata: { pending: true },
+    created_at: input.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export function replacePendingChatTurn(
+  messages: ChatMessage[],
+  pendingMessageId: string,
+  userMessage: ChatMessage,
+  assistantMessage: ChatMessage,
+): ChatMessage[] {
+  let replaced = false;
+  const nextMessages = messages.map((message) => {
+    if (message.message_id !== pendingMessageId) {
+      return message;
+    }
+    replaced = true;
+    return userMessage;
+  });
+  return [...(replaced ? nextMessages : [...nextMessages, userMessage]), assistantMessage];
+}
+
+export function markPendingMessageFailed(
+  messages: ChatMessage[],
+  pendingMessageId: string,
+  errorMessage: string,
+): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.message_id !== pendingMessageId) {
+      return message;
+    }
+    return {
+      ...message,
+      metadata: { ...message.metadata, pending: false, error: errorMessage },
+    };
+  });
+}
+
 export function listChatSessions(transport: ChatGetTransport): Promise<ChatSession[]> {
   return transport("/chat/sessions");
 }

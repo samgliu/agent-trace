@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  evalCategorySummaries,
+  evalCheckCategory,
   evalPassRateLabel,
   evalStatusLabel,
   failedEvalCases,
+  failedChecksByCategory,
   listEvalRuns,
   runSupportTriageEvalSuite,
   type EvalRunListResponse,
@@ -70,5 +73,60 @@ describe("eval helpers", () => {
     expect(evalStatusLabel(null)).toBe("Not run");
     expect(evalStatusLabel(sampleRun)).toBe("Needs review");
     expect(failedEvalCases(sampleRun).map((result) => result.case_id)).toEqual(["fail"]);
+  });
+
+  it("categorizes eval checks by product-facing failure area", () => {
+    expect(evalCheckCategory("issue_type")).toBe("Routing");
+    expect(evalCheckCategory("policy_id")).toBe("Policy");
+    expect(evalCheckCategory("memory_warning_count")).toBe("Memory");
+    expect(evalCheckCategory("response_excludes:duplicate")).toBe("Response");
+    expect(evalCheckCategory("error_count")).toBe("Reliability");
+  });
+
+  it("summarizes eval category failures across a run", () => {
+    const run: EvalSuiteRun = {
+      ...sampleRun,
+      results: [
+        {
+          case_id: "case_1",
+          name: "Case",
+          trace_id: "trace_1",
+          passed: false,
+          score: 0.5,
+          checks: [
+            { name: "issue_type", expected: "billing", actual: "general", passed: false },
+            { name: "policy_id", expected: "policy_a", actual: "policy_b", passed: false },
+            { name: "response_excludes:duplicate", expected: "excludes duplicate", actual: "duplicate", passed: false },
+            { name: "error_count", expected: 0, actual: 0, passed: true },
+          ],
+        },
+      ],
+    };
+
+    expect(evalCategorySummaries(run)).toEqual([
+      { category: "Routing", failed: 1, total: 1 },
+      { category: "Policy", failed: 1, total: 1 },
+      { category: "Memory", failed: 0, total: 0 },
+      { category: "Response", failed: 1, total: 1 },
+      { category: "Reliability", failed: 0, total: 1 },
+    ]);
+  });
+
+  it("groups failed checks by category for a case", () => {
+    const groups = failedChecksByCategory({
+      case_id: "case_1",
+      name: "Case",
+      trace_id: "trace_1",
+      passed: false,
+      score: 0.5,
+      checks: [
+        { name: "issue_type", expected: "billing", actual: "general", passed: false },
+        { name: "policy_id", expected: "policy_a", actual: "policy_b", passed: false },
+        { name: "error_count", expected: 0, actual: 0, passed: true },
+      ],
+    });
+
+    expect(groups.map((group) => group.category)).toEqual(["Routing", "Policy"]);
+    expect(groups[0].checks[0].name).toBe("issue_type");
   });
 });
