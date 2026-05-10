@@ -21,7 +21,7 @@ from agenttrace.api.schemas import (
     TraceIngestRequest,
     TraceLifecycleUpdateRequest,
 )
-from agenttrace.agents.support_triage import build_default_runner
+from agent_apps.customer_service.runner import build_default_runner
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
@@ -66,7 +66,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
                 started_at=datetime.now(timezone.utc),
                 metadata={
                     "source": "agenttrace-agent-runner",
-                    "runner": "agenttrace.agents.support_triage",
+                    "runner": "agent_apps.customer_service.runner",
                     "live_run": True,
                 },
             ),

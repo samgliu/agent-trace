@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agenttrace.agents.support_triage import SupportTriageRunner, build_default_runner
+from agent_apps.customer_service.runner import SupportTriageRunner, build_default_runner
 from agenttrace.core.models import Trace
 from agenttrace.core.summary import build_trace_summary
 

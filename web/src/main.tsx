@@ -803,7 +803,7 @@ function LiveWorkflowPanel({
           <span>LLM provider</span>
           <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)} disabled={active}>
             <option value="deterministic">Deterministic</option>
-            <option value="openai_compatible">OpenAI-compatible</option>
+            <option value="openai_compatible">Configured LLM</option>
           </select>
         </label>
         <button type="submit" disabled={active || !message.trim()}>
@@ -909,7 +909,7 @@ function ChatMonitor({
             <span>LLM provider</span>
             <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)}>
               <option value="deterministic">Deterministic</option>
-              <option value="openai_compatible">OpenAI-compatible</option>
+              <option value="openai_compatible">Configured LLM</option>
             </select>
           </label>
           <button type="submit" disabled={isSubmitting || !message.trim()}>

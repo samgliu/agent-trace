@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from agenttrace.agents.support_triage import (
+from agent_apps.customer_service.runner import (
     LLMResponse,
     LocalSupportToolsClient,
     McpSupportToolsClient,

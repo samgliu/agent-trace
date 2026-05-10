@@ -1,2 +1,1 @@
-"""Executable multi-agent workflows."""
-
+"""Compatibility imports for agent apps now housed under ``agent_apps``."""

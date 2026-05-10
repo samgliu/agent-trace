@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY README.md pyproject.toml ./
 COPY agenttrace ./agenttrace
+COPY agent_apps ./agent_apps
 COPY examples ./examples
 COPY tests ./tests
 
