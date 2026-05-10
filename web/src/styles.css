@@ -609,34 +609,95 @@ h2 {
   margin-top: 12px;
 }
 
-.evalCases button {
+.evalCategoryStrip {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-  min-height: 42px;
-  padding: 9px 10px;
-  color: #172026;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.evalCategoryStrip span {
+  padding: 5px 8px;
+  color: #3e4a50;
   background: #f8fafb;
   border: 1px solid #dce4e8;
   border-radius: 5px;
-  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
 }
 
-.evalCases button.failed {
+.evalCategoryStrip span.failed {
   color: #7b1d1d;
   background: #fff0ed;
   border-color: #e9a7a0;
 }
 
-.evalCases button span {
+.evalCategoryStrip strong {
+  margin-left: 4px;
+}
+
+.evalCaseCard {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+}
+
+.evalCaseCard.failed {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
+.evalCaseCard button {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.evalCaseCard button span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
   font-weight: 800;
+}
+
+.evalFailedGroups {
+  display: grid;
+  gap: 6px;
+}
+
+.evalFailedGroups div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.evalFailedGroups small,
+.evalFailedGroups span {
+  padding: 3px 6px;
+  background: #ffffff;
+  border: 1px solid #e9a7a0;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.evalFailedGroups small {
+  color: #7b1d1d;
+  text-transform: uppercase;
 }
 
 .evalHistory {

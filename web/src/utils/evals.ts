@@ -36,6 +36,19 @@ export type EvalRunListResponse = {
   total: number;
 };
 
+export type EvalCheckCategory = "Routing" | "Policy" | "Memory" | "Response" | "Reliability";
+
+export type EvalCategorySummary = {
+  category: EvalCheckCategory;
+  failed: number;
+  total: number;
+};
+
+export type EvalFailedCheckGroup = {
+  category: EvalCheckCategory;
+  checks: EvalCheck[];
+};
+
 export type EvalSuiteTransport = <T>(path: string, body?: unknown) => Promise<T>;
 export type EvalSuiteGetTransport = <T>(path: string) => Promise<T>;
 
@@ -60,4 +73,41 @@ export function evalStatusLabel(run: EvalSuiteRun | null): string {
     return "Not run";
   }
   return run.failed === 0 ? "Passing" : "Needs review";
+}
+
+export function evalCheckCategory(checkName: string): EvalCheckCategory {
+  if (checkName === "issue_type" || checkName === "action_type") return "Routing";
+  if (checkName === "policy_id" || checkName === "approval_required" || checkName === "grounding_status") return "Policy";
+  if (checkName === "memory_warning_count") return "Memory";
+  if (checkName.startsWith("response_contains:") || checkName.startsWith("response_excludes:")) return "Response";
+  return "Reliability";
+}
+
+export function evalCategorySummaries(run: EvalSuiteRun | null): EvalCategorySummary[] {
+  const categories: EvalCheckCategory[] = ["Routing", "Policy", "Memory", "Response", "Reliability"];
+  const initial = Object.fromEntries(
+    categories.map((category) => [category, { category, failed: 0, total: 0 }]),
+  ) as Record<EvalCheckCategory, EvalCategorySummary>;
+
+  run?.results.forEach((result) => {
+    result.checks.forEach((check) => {
+      const category = evalCheckCategory(check.name);
+      initial[category].total += 1;
+      if (!check.passed) {
+        initial[category].failed += 1;
+      }
+    });
+  });
+
+  return categories.map((category) => initial[category]);
+}
+
+export function failedChecksByCategory(result: EvalCaseResult): EvalFailedCheckGroup[] {
+  const categories: EvalCheckCategory[] = ["Routing", "Policy", "Memory", "Response", "Reliability"];
+  return categories
+    .map((category) => ({
+      category,
+      checks: result.checks.filter((check) => !check.passed && evalCheckCategory(check.name) === category),
+    }))
+    .filter((group) => group.checks.length > 0);
 }

@@ -37,9 +37,11 @@ import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
+  evalCategorySummaries,
   evalPassRateLabel,
   evalStatusLabel,
   failedEvalCases,
+  failedChecksByCategory,
   listEvalRuns,
   runSupportTriageEvalSuite,
   type EvalRunSummary,
@@ -1092,6 +1094,7 @@ function EvalDashboardPanel({
   onSelectTrace: (traceId: string) => void;
 }) {
   const failures = failedEvalCases(run);
+  const categorySummaries = evalCategorySummaries(run);
   const running = status.status === "running";
 
   return (
@@ -1112,19 +1115,35 @@ function EvalDashboardPanel({
         <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? `${run.passed}/${run.total}` : "-"} />
         <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
       </div>
+      <div className="evalCategoryStrip">
+        {categorySummaries.map((summary) => (
+          <span className={summary.failed > 0 ? "failed" : "passed"} key={summary.category}>
+            {summary.category} <strong>{summary.failed}</strong>
+          </span>
+        ))}
+      </div>
       {status.status === "error" ? <p className="evalError">{status.message}</p> : null}
       {run ? (
         <div className="evalCases">
           {(failures.length > 0 ? failures : run.results).slice(0, 4).map((result) => (
-            <button
-              type="button"
-              className={result.passed ? "passed" : "failed"}
-              key={result.case_id}
-              onClick={() => onSelectTrace(result.trace_id)}
-            >
-              <span>{result.name}</span>
-              <strong>{Math.round(result.score * 100)}%</strong>
-            </button>
+            <div className={result.passed ? "evalCaseCard passed" : "evalCaseCard failed"} key={result.case_id}>
+              <button type="button" onClick={() => onSelectTrace(result.trace_id)}>
+                <span>{result.name}</span>
+                <strong>{Math.round(result.score * 100)}%</strong>
+              </button>
+              {!result.passed ? (
+                <div className="evalFailedGroups">
+                  {failedChecksByCategory(result).map((group) => (
+                    <div key={group.category}>
+                      <small>{group.category}</small>
+                      {group.checks.slice(0, 3).map((check) => (
+                        <span key={check.name}>{check.name}</span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ))}
         </div>
       ) : (
