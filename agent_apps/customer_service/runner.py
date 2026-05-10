@@ -934,8 +934,16 @@ def _conversation_context(message: str, conversation_history: list[dict[str, Any
 
 
 def _triage(message: str, conversation_history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    current_text = message.lower()
     text = _conversation_context(message, conversation_history)
-    if ("return" in text or "refund" in text) and (
+    quality_exception = _has_quality_exception(text)
+    if _has_account_mismatch(current_text):
+        issue_type = "general_support"
+        urgency = "medium"
+    elif "charged twice" in current_text or "duplicate" in current_text:
+        issue_type = "billing_duplicate_charge"
+        urgency = "medium"
+    elif ("return" in text or "refund" in text) and (
         "banana" in text or "bananas" in text or "grocery" in text or "product" in text or "item" in text
     ) and ("ate" in text or "eaten" in text or "consumed" in text or "used all" in text):
         issue_type = "consumed_product_return"
@@ -957,7 +965,20 @@ def _triage(message: str, conversation_history: list[dict[str, Any]] | None = No
     else:
         issue_type = "general_support"
         urgency = "low"
-    return {"issue_type": issue_type, "urgency": urgency, "sentiment": "concerned"}
+    result = {"issue_type": issue_type, "urgency": urgency, "sentiment": "concerned"}
+    if quality_exception and issue_type == "consumed_product_return":
+        result["quality_exception"] = True
+    if issue_type == "general_support" and _has_account_mismatch(current_text):
+        result["missing_information"] = "verified account or matching order ownership"
+    return result
+
+
+def _has_quality_exception(text: str) -> bool:
+    return any(signal in text for signal in ("spoiled", "moldy", "mouldy", "rotten", "unsafe", "sick", "delivery issue"))
+
+
+def _has_account_mismatch(text: str) -> bool:
+    return any(signal in text for signal in ("different email", "another email", "spouse", "not my account", "wrong account"))
 
 
 def _triage_safety(
@@ -1009,6 +1030,8 @@ def _action_type(triage: dict[str, Any], customer: dict[str, Any]) -> str:
         return "clarification_request"
     if triage["issue_type"] == "account_access":
         return "escalation"
+    if triage["issue_type"] == "consumed_product_return" and triage.get("quality_exception"):
+        return "courtesy_credit"
     if triage["issue_type"] in {"general_support", "consumed_product_return"}:
         return "clarification_request"
     return "refund_review"
@@ -1268,6 +1291,11 @@ def _customer_response_input(
 def _static_customer_response(input_text: str, default_response: str) -> str:
     has_conversation_history = _input_has_conversation_history(input_text)
     if "policy_consumed_product_return" in input_text:
+        if _has_quality_exception(input_text.lower()):
+            return (
+                "Thanks for the details. Because this sounds like a quality or safety exception rather than a normal return, "
+                "I can review the order for a courtesy credit or escalation with the order evidence."
+            )
         if _input_has_order_number(input_text):
             return (
                 "Thanks for the order number. Since the bananas were fully consumed, I cannot process a normal return. "
