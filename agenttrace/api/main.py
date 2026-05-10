@@ -21,7 +21,7 @@ from agenttrace.api.schemas import (
     TraceIngestRequest,
     TraceLifecycleUpdateRequest,
 )
-from agenttrace.agents.support_triage import build_default_runner
+from agent_apps.customer_service.runner import build_default_runner
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
 from agenttrace.core.grounding import build_grounding_summary
 from agenttrace.core.importer import normalize_trace
@@ -66,7 +66,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
                 started_at=datetime.now(timezone.utc),
                 metadata={
                     "source": "agenttrace-agent-runner",
-                    "runner": "agenttrace.agents.support_triage",
+                    "runner": "agent_apps.customer_service.runner",
                     "live_run": True,
                 },
             ),
@@ -181,16 +181,19 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     @app.post("/chat/sessions/{session_id}/messages")
     def create_chat_message(session_id: str, payload: ChatMessageCreateRequest) -> dict[str, Any]:
         session = _require_chat_session(trace_store, session_id)
+        previous_messages = trace_store.list_chat_messages(session_id)
         user_message = trace_store.add_chat_message(
             session_id,
             role="user",
             content=payload.content,
         )
+        conversation_history = _conversation_history(previous_messages)
         try:
             trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
                 message=payload.content,
                 customer_email=session["customer_email"],
                 trace_id=f"trace_chat_{user_message['message_id']}",
+                conversation_history=conversation_history,
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -509,6 +512,19 @@ def _with_chat_metadata(trace: Trace, *, session_id: str, user_message_id: str) 
     )
 
 
+def _conversation_history(messages: list[dict[str, Any]], *, limit: int = 8) -> list[dict[str, Any]]:
+    recent = messages[-limit:]
+    return [
+        {
+            "role": message["role"],
+            "content": message["content"],
+            "trace_id": message.get("trace_id"),
+            "event_type": message.get("metadata", {}).get("event_type"),
+        }
+        for message in recent
+    ]
+
+
 def _assistant_response_from_trace(trace: Trace) -> str:
     for span in reversed(trace.spans):
         if span.span_type != "generation":
@@ -526,7 +542,7 @@ def _update_approval_span(
     span_id: str,
     status: str,
 ):
-    _require_trace(store, trace_id)
+    trace = _require_trace(store, trace_id)
     span = store.get_span(trace_id, span_id)
     if span is None:
         raise HTTPException(status_code=404, detail=f"Span not found: {span_id}")
@@ -553,7 +569,38 @@ def _update_approval_span(
     updated = store.update_span_payload(trace_id, span_id, output=output, span_data=span_data)
     if updated is None:
         raise HTTPException(status_code=404, detail=f"Span not found: {span_id}")
+    _append_approval_chat_message(store, trace, updated, status)
     return updated
+
+
+def _append_approval_chat_message(store: SQLiteTraceStore, trace: Trace, span: Span, status: str) -> None:
+    session_id = trace.metadata.get("chat_session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return
+    status_label = {"approved": "approved", "rejected": "rejected", "blocked": "reverted"}.get(status, status)
+    content = _approval_chat_content(status)
+    store.add_chat_message(
+        session_id,
+        role="assistant",
+        content=content,
+        trace_id=trace.trace_id,
+        metadata={
+            "event_type": "approval_decision",
+            "approval_status": status_label,
+            "approval_span_id": span.span_id,
+        },
+    )
+
+
+def _approval_chat_content(status: str) -> str:
+    if status == "approved":
+        return "Human approval was granted for this support action. I can proceed with the approved next step."
+    if status == "rejected":
+        return (
+            "Human approval was rejected for this support action. I cannot proceed with that action, "
+            "but I can review any additional evidence or offer the next policy-safe option."
+        )
+    return "The approval decision was reverted. The support action is waiting for human review again."
 
 
 app = create_app()

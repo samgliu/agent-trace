@@ -16,7 +16,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["agenttrace*"]
+include = ["agenttrace*", "agent_apps*"]
 
 [project.scripts]
 agenttrace = "agenttrace.cli:main"

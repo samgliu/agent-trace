@@ -416,6 +416,13 @@ function App() {
       return;
     }
     await postJson(`/traces/${state.selectedTrace.trace_id}/approvals/${spanId}/${action}`);
+    const sessionId = stringMetadata(state.selectedTrace.metadata.chat_session_id);
+    if (sessionId && chatSession?.session_id === sessionId) {
+      const session = await getChatSession(fetchJson, sessionId);
+      setChatSession(session);
+      setChatMessages(session.messages);
+      setChatSessions((sessions) => upsertChatSession(sessions, session));
+    }
     setRefreshKey((value) => value + 1);
   }
 
@@ -803,7 +810,7 @@ function LiveWorkflowPanel({
           <span>LLM provider</span>
           <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)} disabled={active}>
             <option value="deterministic">Deterministic</option>
-            <option value="openai_compatible">OpenAI-compatible</option>
+            <option value="openai_compatible">Configured LLM</option>
           </select>
         </label>
         <button type="submit" disabled={active || !message.trim()}>
@@ -909,7 +916,7 @@ function ChatMonitor({
             <span>LLM provider</span>
             <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as LLMProvider)}>
               <option value="deterministic">Deterministic</option>
-              <option value="openai_compatible">OpenAI-compatible</option>
+              <option value="openai_compatible">Configured LLM</option>
             </select>
           </label>
           <button type="submit" disabled={isSubmitting || !message.trim()}>
@@ -1734,6 +1741,7 @@ function SpanDetail({
   const unsupportedClaims = extractUnsupportedClaims(span.output);
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
   const facts = buildSpanFacts(span);
+  const modelOutputText = typeof span.span_data.model_output_text === "string" ? span.span_data.model_output_text : null;
 
   return (
     <div className="spanDetail">
@@ -1782,6 +1790,7 @@ function SpanDetail({
 
           {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
 
+          {modelOutputText ? <JsonBlock label="Model output" value={modelOutputText} /> : null}
           <JsonBlock label="Input" value={span.input} />
           <JsonBlock label="Output" value={span.output} />
           <JsonBlock label="Metadata" value={span.span_data} />
@@ -1858,10 +1867,11 @@ function ApprovalActions({
 }
 
 function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  const displayValue = value === null || value === undefined ? "-" : typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return (
     <div className="jsonBlock">
       <small>{label}</small>
-      <pre>{value === null || value === undefined ? "-" : JSON.stringify(value, null, 2)}</pre>
+      <pre>{displayValue}</pre>
     </div>
   );
 }

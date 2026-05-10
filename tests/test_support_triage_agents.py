@@ -1,7 +1,8 @@
+import os
 import unittest
 from unittest.mock import patch
 
-from agenttrace.agents.support_triage import (
+from agent_apps.customer_service.runner import (
     LLMResponse,
     LocalSupportToolsClient,
     McpSupportToolsClient,
@@ -10,6 +11,7 @@ from agenttrace.agents.support_triage import (
     StaticLLMClient,
     SupportTriageRunner,
     SupportToolsClient,
+    _provider_http_error_message,
     build_default_runner,
     resolve_model_config,
 )
@@ -135,6 +137,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(triage.span_data["decision_source"], "llm")
         self.assertEqual(triage.span_data["prompt_version"], "support-triage-v1")
         self.assertEqual(triage.span_data["model_provider"], "static")
+        self.assertEqual(
+            triage.span_data["model_output_text"],
+            '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+        )
         self.assertEqual(action.input_tokens, 11)
 
     def test_llm_agent_action_falls_back_when_action_type_is_unsupported(self) -> None:
@@ -163,6 +169,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["decision_source"], "fallback")
         self.assertEqual(action.span_data["fallback_reason"], "unsupported_action_type")
         self.assertEqual(action.span_data["rejected_action_type"], "wire_money")
+        self.assertEqual(
+            action.span_data["model_output_text"],
+            '{"action_type":"wire_money","reason":"Unsupported action selected by model."}',
+        )
         self.assertEqual(create_action.output["status"], "created")
 
     def test_validator_enforces_policy_required_approval(self) -> None:
@@ -218,6 +228,132 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(triage.span_data["decision_source"], "fallback")
         self.assertEqual(triage.span_data["fallback_reason"], "invalid_json")
+        self.assertEqual(triage.span_data["model_output_text"], "not json")
+
+    def test_validator_records_customer_friendly_grounding_evidence(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_grounding_evidence",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(validator.output["grounding_status"], "grounded")
+        self.assertIn("refund_review", validator.output["allowed_actions"])
+        self.assertEqual(
+            validator.output["grounding_evidence"],
+            [
+                {"type": "customer", "id": "cus_123"},
+                {"type": "policy", "id": "policy_refund_duplicate_charge"},
+                {"type": "action", "id": "act_cus_123_refund_review"},
+            ],
+        )
+        self.assertIn("Resolve verified duplicate charges", validator.output["customer_friendly_resolution"])
+
+    def test_stale_subscription_refund_does_not_default_to_duplicate_charge(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I want a refund on my Prime subscription that was billed 3 years ago. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_stale_subscription_refund",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        policy = next(span for span in trace.spans if span.name == "Policy Agent")
+        retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(trace.status, "recovered")
+        self.assertEqual(triage.output["issue_type"], "stale_subscription_refund")
+        self.assertEqual(policy.output["retrieval_query"], "stale_subscription_refund")
+        self.assertEqual(retrieval.output["policy_id"], "policy_stale_subscription_refund")
+        self.assertTrue(validator.output["approval_required"])
+        self.assertEqual(retrieval.output["topic"], "stale_subscription_refund")
+
+    def test_static_customer_response_uses_selected_policy_context(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I want a refund on my Prime subscription that was billed 3 years ago. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_static_response_policy_context",
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("older subscription charge", response.output["response"])
+        self.assertNotIn("duplicate charge", response.output["response"].lower())
+
+    def test_validator_requires_human_review_for_high_abuse_risk_refund(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="risk@example.com",
+            trace_id="trace_runner_abuse_risk_review",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(trace.status, "recovered")
+        self.assertTrue(validator.output["approval_required"])
+        self.assertTrue(validator.output["risk_review_required"])
+        self.assertEqual(validator.output["abuse_risk"]["level"], "high")
+        self.assertIn("high_prior_refund_count", validator.output["abuse_risk"]["signals"])
+        self.assertIn("abuse_review_enforced", validator.output["validator_corrections"])
+
+    def test_llm_triage_is_corrected_when_message_signals_stale_refund(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"customer has a duplicate charge flag"}',
+                '{"action_type":"refund_review","reason":"Review stale subscription refund."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123"]}',
+                "I started a refund review for the old subscription charge.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I want a refund on my Prime subscription that was billed 3 years ago. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_stale_subscription_llm_correction",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        policy = next(span for span in trace.spans if span.name == "Policy Agent")
+        retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
+        self.assertEqual(triage.output["issue_type"], "stale_subscription_refund")
+        self.assertEqual(triage.span_data["fallback_reason"], "message_policy_signal_mismatch")
+        self.assertEqual(policy.output["retrieval_query"], "stale_subscription_refund")
+        self.assertEqual(policy.span_data["fallback_reason"], "policy_topic_mismatch")
+        self.assertEqual(retrieval.output["policy_id"], "policy_stale_subscription_refund")
+
+    def test_action_agent_falls_back_when_policy_disallows_action(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"cancel_plan","reason":"Canceling would be too aggressive for a duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_policy_disallowed_action",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(action.span_data["decision_source"], "fallback")
+        self.assertEqual(action.span_data["fallback_reason"], "action_not_allowed_by_policy")
+        self.assertEqual(action.span_data["rejected_action_type"], "cancel_plan")
 
     def test_runner_can_emit_spans_incrementally(self) -> None:
         emitted_names: list[str] = []
@@ -327,6 +463,41 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 {"role": "user", "content": "Customer context."},
             ],
         )
+
+    def test_openai_chat_completions_client_wraps_provider_http_errors(self) -> None:
+        def post_json(url: str, *, headers: dict, json: dict, timeout: float) -> dict:
+            raise RuntimeError("LLM provider request failed with HTTP 429.")
+
+        client = OpenAIChatCompletionsClient(
+            api_key="test-key",
+            model="gpt-test",
+            base_url="http://llm.test/v1",
+            post_json=post_json,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "HTTP 429"):
+            client.generate(instructions="Follow policy.", input_text="Customer context.")
+
+    def test_provider_http_error_message_includes_provider_detail(self) -> None:
+        message = _provider_http_error_message(
+            429,
+            '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED"}}',
+        )
+
+        self.assertIn("HTTP 429", message)
+        self.assertIn("exceeded your current quota", message)
+
+    def test_openai_chat_completions_client_reports_missing_provider_key(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            client = OpenAIChatCompletionsClient(
+                api_key=None,
+                model="gemini-test",
+                base_url="http://llm.test/v1",
+            )
+        client.provider = "gemini"
+
+        with self.assertRaisesRegex(RuntimeError, "Set GEMINI_API_KEY or LLM_API_KEY"):
+            client.generate(instructions="Follow policy.", input_text="Customer context.")
 
     def test_model_config_uses_provider_specific_credentials(self) -> None:
         with patch.dict(

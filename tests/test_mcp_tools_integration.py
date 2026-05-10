@@ -1,7 +1,7 @@
 import os
 import unittest
 
-from agenttrace.agents.support_triage import McpSupportToolsClient
+from agent_apps.customer_service.runner import McpSupportToolsClient
 
 
 @unittest.skipUnless(os.environ.get("AGENTTRACE_RUN_MCP_INTEGRATION"), "MCP integration test is opt-in")

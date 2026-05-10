@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agenttrace.agents.support_triage import SupportTriageRunner, build_default_runner
+from agent_apps.customer_service.runner import SupportTriageRunner, build_default_runner
 from agenttrace.core.models import Trace
 from agenttrace.core.summary import build_trace_summary
 
@@ -137,6 +137,19 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         customer_email="annual@example.com",
         expected_trace_status="recovered",
         expected_issue_type="annual_plan_refund",
+        expected_action_type="refund_review",
+        expected_approval_required=True,
+        expected_grounding_status="recovered",
+        expected_memory_warning_count=0,
+        expected_error_count=0,
+    ),
+    EvalCase(
+        case_id="stale-subscription-refund-approval",
+        name="Stale subscription refund needs approval",
+        message="I want a refund on my Prime subscription that was billed 3 years ago. Can I get a refund?",
+        customer_email="customer@example.com",
+        expected_trace_status="recovered",
+        expected_issue_type="stale_subscription_refund",
         expected_action_type="refund_review",
         expected_approval_required=True,
         expected_grounding_status="recovered",

@@ -13,6 +13,9 @@ services:
     image: agenttrace:local
     entrypoint: ["python", "-m", "uvicorn"]
     command: ["agenttrace.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - path: ./agent_apps/customer_service/.env
+        required: false
     environment:
       AGENTTRACE_DB: /app/.agenttrace/agenttrace.db
       AGENTTRACE_MCP_TOOLS_URL: http://mcp-tools:8010/mcp/

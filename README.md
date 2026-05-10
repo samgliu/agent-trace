@@ -14,7 +14,7 @@ It currently supports:
 - grounding summaries for grounded, recovered, and failed responses
 - multi-agent spans, handoffs, MCP tool calls, guardrails, and validation spans
 - a FastMCP MCP-tools service used by the real workflow runner in Docker
-- an executable `agents/` support-triage workflow runner with optional
+- an executable `agent_apps/customer_service` support-triage workflow runner with optional
   OpenAI-compatible chat completions generation
 
 ## Architecture
@@ -259,6 +259,16 @@ LLM_PROVIDER=openai-compatible
 LLM_API_KEY=...
 LLM_MODEL=...
 LLM_BASE_URL=http://gateway.example/v1
+```
+
+The Docker API service reads the customer-service agent environment from
+`agent_apps/customer_service/.env`. Use
+`agent_apps/customer_service/.env.example` as the template and keep the real
+`.env` file out of git. After changing `.env`, recreate the API container so
+Compose reloads the file:
+
+```bash
+docker compose up -d --force-recreate api
 ```
 
 Then send:
