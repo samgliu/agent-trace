@@ -124,6 +124,22 @@ POLICIES: dict[str, dict[str, Any]] = {
         "evidence_requirements": ["verified_customer_id_or_contact", "customer_request"],
         "customer_friendly_resolution": "Ask for the smallest missing detail needed to route or resolve the request.",
     },
+    "consumed_product_return": {
+        "policy_id": "policy_consumed_product_return",
+        "topic": "consumed_product_return",
+        "version": "2026-05-01",
+        "summary": (
+            "Products that were fully consumed are not eligible for a normal return. The agent may review for "
+            "a quality, spoilage, safety, or delivery exception after collecting order evidence and the issue reason."
+        ),
+        "requires_approval": False,
+        "allowed_actions": ["clarification_request", "courtesy_credit", "escalation"],
+        "evidence_requirements": ["order_number_or_receipt", "product_issue_reason", "consumption_status"],
+        "customer_friendly_resolution": (
+            "Set a clear boundary on normal returns for consumed items, then collect only the evidence needed "
+            "to review a quality or safety exception."
+        ),
+    },
 }
 
 
