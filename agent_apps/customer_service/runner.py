@@ -1390,9 +1390,9 @@ def _customer_memory(customer: dict[str, Any], issue_type: str = "general_suppor
         }
         return {
             "memories": [memory],
-            "relevance_score": 0.52,
+            "relevance_score": 0.72,
             "memory_age_seconds": 86400 * 30,
-            "used_in_response": False,
+            "used_in_response": True,
         }
     if customer.get("annual_price_usd", 0) > 500:
         memory = {
