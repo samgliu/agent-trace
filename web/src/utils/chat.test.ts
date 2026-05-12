@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   createChatSession,
   createPendingUserMessage,
+  getChatMessages,
   getChatSession,
   listChatSessions,
   markPendingMessageFailed,
   replacePendingChatTurn,
   sendChatMessage,
+  sendChatMessageAsync,
   type ChatGetTransport,
   type ChatMessage,
   type ChatTransport,
@@ -84,22 +86,47 @@ describe("chat api helpers", () => {
     });
   });
 
-  it("loads chat sessions and session details", async () => {
+  it("enqueues async chat messages against the async endpoint", async () => {
+    const calls: Array<{ path: string; body?: unknown }> = [];
+    const transport: ChatTransport = async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return {
+        session: { session_id: "chat_1" },
+        user_message: { role: "user" },
+        assistant_message: { role: "assistant", metadata: { pending: true } },
+      } as T;
+    };
+
+    const result = await sendChatMessageAsync(transport, "chat_1", { content: "Refund?" });
+
+    expect(result.assistant_message.metadata.pending).toBe(true);
+    expect(calls[0]).toEqual({
+      path: "/chat/sessions/chat_1/messages/async",
+      body: { content: "Refund?", use_openai: false, openai_api: "chat_completions" },
+    });
+  });
+
+  it("loads chat sessions, session details, and messages", async () => {
     const calls: string[] = [];
     const transport: ChatGetTransport = async <T>(path: string): Promise<T> => {
       calls.push(path);
       if (path === "/chat/sessions") {
         return [{ session_id: "chat_1" }] as T;
       }
+      if (path === "/chat/sessions/chat_1/messages") {
+        return [{ message_id: "msg_2" }] as T;
+      }
       return { session_id: "chat_1", messages: [{ message_id: "msg_1" }] } as T;
     };
 
     const sessions = await listChatSessions(transport);
     const detail = await getChatSession(transport, "chat_1");
+    const messages = await getChatMessages(transport, "chat_1");
 
     expect(sessions[0].session_id).toBe("chat_1");
     expect(detail.messages[0].message_id).toBe("msg_1");
-    expect(calls).toEqual(["/chat/sessions", "/chat/sessions/chat_1"]);
+    expect(messages[0].message_id).toBe("msg_2");
+    expect(calls).toEqual(["/chat/sessions", "/chat/sessions/chat_1", "/chat/sessions/chat_1/messages"]);
   });
 
   it("creates a pending user message for optimistic chat rendering", () => {

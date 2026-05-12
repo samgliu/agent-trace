@@ -24,11 +24,11 @@ import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import {
   createPendingUserMessage,
   createChatSession,
+  getChatMessages,
   getChatSession,
   listChatSessions,
   markPendingMessageFailed,
-  replacePendingChatTurn,
-  sendChatMessage,
+  sendChatMessageAsync,
   type ChatMessage,
   type ChatSession,
   type LLMProvider,
@@ -318,6 +318,41 @@ function App() {
   }, [chatMessages, refreshKey]);
 
   useEffect(() => {
+    const pendingKey = pendingChatMessageKey(chatMessages);
+    if (!chatSession || !pendingKey) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    const pollMessages = () => {
+      getChatMessages(fetchJson, chatSession.session_id)
+        .then((messages) => {
+          if (cancelled) return;
+          const previousLatestTraceId = latestTraceFromMessages(chatMessages);
+          const nextLatestTraceId = latestTraceFromMessages(messages);
+          setChatMessages(messages);
+          setLatestChatTraceId(nextLatestTraceId);
+          if (nextLatestTraceId && nextLatestTraceId !== previousLatestTraceId) {
+            setSelectedTraceId(nextLatestTraceId);
+            setSelectedSpanId(null);
+            setRefreshKey((value) => value + 1);
+          }
+          if (hasPendingChatMessage(messages)) {
+            timer = window.setTimeout(pollMessages, 2000);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setChatStatus({ status: "error", message: "Could not refresh chat messages." });
+          }
+        });
+    };
+    timer = window.setTimeout(pollMessages, 1200);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [chatSession?.session_id, pendingChatMessageKey(chatMessages)]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function load() {
@@ -519,19 +554,15 @@ function App() {
       }
       pendingMessage = createPendingUserMessage({ sessionId: session.session_id, content: input.message });
       setChatMessages((messages) => [...messages, pendingMessage!]);
-      const result = await sendChatMessage<TraceDetail>(apiPostJson, session.session_id, {
+      const result = await sendChatMessageAsync(apiPostJson, session.session_id, {
         content: input.message,
         llmProvider: input.llmProvider,
       });
       setChatSession(result.session);
       setChatSessions((sessions) => upsertChatSession(sessions, result.session));
-      setChatTraceSummaries((summaries) => ({ ...summaries, [result.trace.trace_id]: result.trace }));
       setChatMessages((messages) =>
-        replacePendingChatTurn(messages, pendingMessage!.message_id, result.user_message, result.assistant_message),
+        replacePendingChatMessage(messages, pendingMessage!.message_id, result.user_message, result.assistant_message),
       );
-      setLatestChatTraceId(result.trace.trace_id);
-      setSelectedTraceId(result.trace.trace_id);
-      setSelectedSpanId(result.trace.spans[0]?.span_id ?? null);
       setRefreshKey((value) => value + 1);
       setChatStatus({ status: "idle" });
     } catch (error) {
@@ -2054,6 +2085,26 @@ function latestTraceFromMessages(messages: ChatMessage[]): string | null {
     if (traceId) return traceId;
   }
   return null;
+}
+
+function replacePendingChatMessage(
+  messages: ChatMessage[],
+  pendingMessageId: string,
+  userMessage: ChatMessage,
+  assistantMessage: ChatMessage,
+): ChatMessage[] {
+  return [...messages.filter((message) => message.message_id !== pendingMessageId), userMessage, assistantMessage];
+}
+
+function hasPendingChatMessage(messages: ChatMessage[]): boolean {
+  return messages.some((message) => message.metadata.pending === true);
+}
+
+function pendingChatMessageKey(messages: ChatMessage[]): string {
+  return messages
+    .filter((message) => message.metadata.pending === true)
+    .map((message) => message.message_id)
+    .join(",");
 }
 
 function uniqueTraceIds(messages: ChatMessage[]): string[] {

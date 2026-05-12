@@ -6,6 +6,9 @@ import os
 import time
 import threading
 import uuid
+import json
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
@@ -189,12 +192,16 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         )
         conversation_history = _conversation_history(previous_messages)
         try:
-            trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+            trace = run_support_triage_agent(
                 message=payload.content,
                 customer_email=session["customer_email"],
                 trace_id=f"trace_chat_{user_message['message_id']}",
                 conversation_history=conversation_history,
+                use_openai=payload.use_openai,
+                openai_api=payload.openai_api,
             )
+        except AgentServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         trace = _with_chat_metadata(trace, session_id=session_id, user_message_id=user_message["message_id"])
@@ -214,14 +221,51 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             "trace": saved_trace.to_dict(),
         }
 
+    @app.post("/chat/sessions/{session_id}/messages/async")
+    def create_async_chat_message(session_id: str, payload: ChatMessageCreateRequest) -> dict[str, Any]:
+        session = _require_chat_session(trace_store, session_id)
+        previous_messages = trace_store.list_chat_messages(session_id)
+        user_message = trace_store.add_chat_message(
+            session_id,
+            role="user",
+            content=payload.content,
+        )
+        assistant_message = trace_store.add_chat_message(
+            session_id,
+            role="assistant",
+            content="Checking account, policy, and approval context",
+            metadata={
+                "status": "pending",
+                "pending": True,
+                "chat_user_message_id": user_message["message_id"],
+            },
+        )
+        _start_async_chat_turn(
+            trace_store=trace_store,
+            session=session,
+            previous_messages=previous_messages,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            payload=payload,
+        )
+        return {
+            "session": _require_chat_session(trace_store, session_id),
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+        }
+
     @app.post("/workflows/support-triage/runs")
     def run_support_triage_workflow(payload: SupportTriageRunRequest) -> dict[str, Any]:
         try:
-            trace = build_default_runner(use_openai=payload.use_openai, openai_api=payload.openai_api).run(
+            trace = run_support_triage_agent(
                 message=payload.message,
                 customer_email=payload.customer_email,
                 trace_id=payload.trace_id,
+                use_openai=payload.use_openai,
+                openai_api=payload.openai_api,
             )
+        except AgentServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         trace_store.save_trace(trace)
@@ -387,6 +431,112 @@ def _database_path() -> Path:
     return Path(os.environ.get("AGENTTRACE_DB", str(DEFAULT_DB_PATH)))
 
 
+class AgentServiceError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+def run_support_triage_agent(
+    *,
+    message: str,
+    customer_email: str,
+    trace_id: str | None = None,
+    conversation_history: list[dict[str, Any]] | None = None,
+    use_openai: bool = False,
+    openai_api: str = "chat_completions",
+) -> Trace:
+    agent_service_url = _agent_service_url()
+    if agent_service_url:
+        return _run_support_triage_via_agent_service(
+            agent_service_url=agent_service_url,
+            message=message,
+            customer_email=customer_email,
+            trace_id=trace_id,
+            conversation_history=conversation_history or [],
+            use_openai=use_openai,
+            openai_api=openai_api,
+        )
+    return build_default_runner(use_openai=use_openai, openai_api=openai_api).run(
+        message=message,
+        customer_email=customer_email,
+        trace_id=trace_id,
+        conversation_history=conversation_history,
+    )
+
+
+def _agent_service_url() -> str | None:
+    raw_value = os.environ.get("AGENTTRACE_AGENT_SERVICE_URL", "").strip()
+    return raw_value.rstrip("/") if raw_value else None
+
+
+def _run_support_triage_via_agent_service(
+    *,
+    agent_service_url: str,
+    message: str,
+    customer_email: str,
+    trace_id: str | None,
+    conversation_history: list[dict[str, Any]],
+    use_openai: bool,
+    openai_api: str,
+) -> Trace:
+    payload = {
+        "message": message,
+        "customer_email": customer_email,
+        "trace_id": trace_id,
+        "conversation_history": conversation_history,
+        "use_openai": use_openai,
+        "openai_api": openai_api,
+    }
+    response = _post_agent_service_json(f"{agent_service_url}/runs/support-triage", payload)
+    trace_payload = response.get("trace")
+    if not isinstance(trace_payload, dict):
+        raise AgentServiceError("Agent service returned an invalid trace payload.", status_code=502)
+    return Trace.from_dict(trace_payload)
+
+
+def _post_agent_service_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_agent_service_timeout_seconds()) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        message = _agent_service_error_message(exc)
+        raise AgentServiceError(message, status_code=exc.code) from exc
+    except urllib.error.URLError as exc:
+        raise AgentServiceError(f"Agent service is unavailable: {exc.reason}", status_code=502) from exc
+    except TimeoutError as exc:
+        raise AgentServiceError("Agent service timed out while running the workflow.", status_code=504) from exc
+    if not isinstance(parsed, dict):
+        raise AgentServiceError("Agent service returned an invalid JSON payload.", status_code=502)
+    return parsed
+
+
+def _agent_service_timeout_seconds() -> float:
+    raw_value = os.environ.get("AGENTTRACE_AGENT_SERVICE_TIMEOUT_SECONDS", "300")
+    try:
+        return max(1.0, float(raw_value))
+    except ValueError:
+        return 300.0
+
+
+def _agent_service_error_message(exc: urllib.error.HTTPError) -> str:
+    try:
+        payload = json.loads(exc.read().decode("utf-8"))
+    except Exception:
+        return f"Agent service request failed with HTTP {exc.code}."
+    if isinstance(payload, dict) and payload.get("detail"):
+        return str(payload["detail"])
+    return f"Agent service request failed with HTTP {exc.code}."
+
+
 def _with_eval_metadata(trace: Trace, *, suite_id: str, case_id: str) -> Trace:
     metadata = {
         **trace.metadata,
@@ -493,6 +643,86 @@ def _require_chat_session(store: SQLiteTraceStore, session_id: str) -> dict[str,
     if session is None:
         raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
     return session
+
+
+def _start_async_chat_turn(
+    *,
+    trace_store: SQLiteTraceStore,
+    session: dict[str, Any],
+    previous_messages: list[dict[str, Any]],
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+    payload: ChatMessageCreateRequest,
+) -> None:
+    thread = threading.Thread(
+        target=_complete_async_chat_turn,
+        kwargs={
+            "trace_store": trace_store,
+            "session": session,
+            "previous_messages": previous_messages,
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "payload": payload,
+        },
+        daemon=True,
+    )
+    thread.start()
+
+
+def _complete_async_chat_turn(
+    *,
+    trace_store: SQLiteTraceStore,
+    session: dict[str, Any],
+    previous_messages: list[dict[str, Any]],
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+    payload: ChatMessageCreateRequest,
+) -> None:
+    try:
+        trace = run_support_triage_agent(
+            message=payload.content,
+            customer_email=session["customer_email"],
+            trace_id=f"trace_chat_{user_message['message_id']}",
+            conversation_history=_conversation_history(previous_messages),
+            use_openai=payload.use_openai,
+            openai_api=payload.openai_api,
+        )
+        trace = _with_chat_metadata(trace, session_id=session["session_id"], user_message_id=user_message["message_id"])
+        trace_store.save_trace(trace)
+        saved_trace = _require_trace(trace_store, trace.trace_id)
+        trace_store.update_chat_message(
+            assistant_message["message_id"],
+            content=_assistant_response_from_trace(saved_trace),
+            trace_id=saved_trace.trace_id,
+            metadata={
+                "status": "complete",
+                "pending": False,
+                "trace_status": saved_trace.status,
+                "chat_user_message_id": user_message["message_id"],
+            },
+        )
+    except AgentServiceError as exc:
+        _mark_async_chat_failed(trace_store, assistant_message, user_message, exc.message)
+    except RuntimeError as exc:
+        _mark_async_chat_failed(trace_store, assistant_message, user_message, str(exc))
+
+
+def _mark_async_chat_failed(
+    trace_store: SQLiteTraceStore,
+    assistant_message: dict[str, Any],
+    user_message: dict[str, Any],
+    message: str,
+) -> None:
+    trace_store.update_chat_message(
+        assistant_message["message_id"],
+        content=message,
+        metadata={
+            "status": "failed",
+            "pending": False,
+            "error": message,
+            "chat_user_message_id": user_message["message_id"],
+        },
+    )
 
 
 def _with_chat_metadata(trace: Trace, *, session_id: str, user_message_id: str) -> Trace:

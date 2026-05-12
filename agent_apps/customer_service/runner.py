@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 import asyncio
 import json
@@ -12,7 +13,17 @@ from typing import Any, Callable, Awaitable
 
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
-from agenttrace.mcp_tools.tools import VALID_ACTIONS, create_support_action, lookup_customer, retrieve_policy
+from agenttrace.mcp_tools.tools import (
+    VALID_ACTIONS,
+    create_quality_exception_review,
+    create_refund_review,
+    create_support_action,
+    lookup_charge,
+    lookup_customer,
+    lookup_order,
+    retrieve_policy,
+    verify_order_owner,
+)
 
 PostJson = Any
 AsyncToolCall = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -40,6 +51,27 @@ class ModelConfig:
     api_key: str | None
     model: str
     base_url: str
+    fallback_models: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AgentState:
+    active_issue: str
+    missing_fields: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+    risk_signals: tuple[str, ...] = ()
+    proposed_action: str | None = None
+    next_required_step: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "active_issue": self.active_issue,
+            "missing_fields": list(self.missing_fields),
+            "evidence_ids": list(self.evidence_ids),
+            "risk_signals": list(self.risk_signals),
+            "proposed_action": self.proposed_action,
+            "next_required_step": self.next_required_step,
+        }
 
 
 class StaticLLMClient(LLMClient):
@@ -81,6 +113,7 @@ class OpenAIChatCompletionsClient(LLMClient):
         self.provider_name = f"{config.provider}-chat-completions"
         self.api_key = config.api_key
         self.model = config.model
+        self.models = (config.model, *config.fallback_models)
         self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
@@ -93,20 +126,20 @@ class OpenAIChatCompletionsClient(LLMClient):
                 f"Set {env_prefix}_API_KEY or LLM_API_KEY."
             )
 
-        payload = self._post_json(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
+        payload = _post_with_model_fallback(
+            post_json=self._post_json,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout_seconds=self.timeout_seconds,
+            models=self.models,
+            path="/chat/completions",
+            payload_for_model=lambda model: {
+                "model": model,
                 "messages": [
                     {"role": "system", "content": instructions},
                     {"role": "user", "content": input_text},
                 ],
             },
-            timeout=self.timeout_seconds,
         )
         usage = payload.get("usage") or {}
         choices = payload.get("choices") or []
@@ -135,6 +168,7 @@ class OpenAIResponsesClient(LLMClient):
         self.provider_name = f"{config.provider}-responses"
         self.api_key = config.api_key
         self.model = config.model
+        self.models = (config.model, *config.fallback_models)
         self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
@@ -143,19 +177,19 @@ class OpenAIResponsesClient(LLMClient):
         if not self.api_key:
             raise RuntimeError("LLM API key is required. Set OPENAI_API_KEY or LLM_API_KEY.")
 
-        payload = self._post_json(
-            f"{self.base_url}/responses",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
+        payload = _post_with_model_fallback(
+            post_json=self._post_json,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout_seconds=self.timeout_seconds,
+            models=self.models,
+            path="/responses",
+            payload_for_model=lambda model: {
+                "model": model,
                 "reasoning": {"effort": "low"},
                 "instructions": instructions,
                 "input": input_text,
             },
-            timeout=self.timeout_seconds,
         )
         usage = payload.get("usage") or {}
         return LLMResponse(
@@ -173,7 +207,35 @@ class SupportToolsClient:
     def retrieve_policy(self, topic: str) -> dict[str, Any]:
         raise NotImplementedError
 
+    def lookup_order(self, order_number: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def lookup_charge(self, customer_id: str, charge_id: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def verify_order_owner(self, order_number: str, customer_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
     def create_support_action(self, customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def create_refund_review(
+        self,
+        customer_id: str,
+        policy_id: str,
+        reason: str,
+        amount_usd: int | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def create_quality_exception_review(
+        self,
+        customer_id: str,
+        order_id: str,
+        reason: str,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -184,8 +246,36 @@ class LocalSupportToolsClient(SupportToolsClient):
     def retrieve_policy(self, topic: str) -> dict[str, Any]:
         return retrieve_policy(topic)
 
+    def lookup_order(self, order_number: str) -> dict[str, Any]:
+        return lookup_order(order_number)
+
+    def lookup_charge(self, customer_id: str, charge_id: str | None = None) -> dict[str, Any]:
+        return lookup_charge(customer_id=customer_id, charge_id=charge_id)
+
+    def verify_order_owner(self, order_number: str, customer_id: str) -> dict[str, Any]:
+        return verify_order_owner(order_number=order_number, customer_id=customer_id)
+
     def create_support_action(self, customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
         return create_support_action(customer_id, action_type, reason)
+
+    def create_refund_review(
+        self,
+        customer_id: str,
+        policy_id: str,
+        reason: str,
+        amount_usd: int | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return create_refund_review(customer_id, policy_id, reason, amount_usd, evidence_ids)
+
+    def create_quality_exception_review(
+        self,
+        customer_id: str,
+        order_id: str,
+        reason: str,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return create_quality_exception_review(customer_id, order_id, reason, evidence_ids)
 
 
 class McpSupportToolsClient(SupportToolsClient):
@@ -201,20 +291,81 @@ class McpSupportToolsClient(SupportToolsClient):
         self._call_tool = call_tool or self._call_fastmcp_tool
 
     def lookup_customer(self, email: str) -> dict[str, Any]:
-        return _run_async_tool(self._call_tool("lookup_customer_tool", {"email": email}))
+        return _mcp_tool_result(_run_async_tool(self._call_tool("lookup_customer_tool", {"email": email})))
 
     def retrieve_policy(self, topic: str) -> dict[str, Any]:
-        return _run_async_tool(self._call_tool("retrieve_policy_tool", {"topic": topic}))
+        return _mcp_tool_result(_run_async_tool(self._call_tool("retrieve_policy_tool", {"topic": topic})))
+
+    def lookup_order(self, order_number: str) -> dict[str, Any]:
+        return _mcp_tool_result(_run_async_tool(self._call_tool("lookup_order_tool", {"order_number": order_number})))
+
+    def lookup_charge(self, customer_id: str, charge_id: str | None = None) -> dict[str, Any]:
+        return _mcp_tool_result(
+            _run_async_tool(self._call_tool("lookup_charge_tool", {"customer_id": customer_id, "charge_id": charge_id}))
+        )
+
+    def verify_order_owner(self, order_number: str, customer_id: str) -> dict[str, Any]:
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool("verify_order_owner_tool", {"order_number": order_number, "customer_id": customer_id})
+            )
+        )
 
     def create_support_action(self, customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
-        return _run_async_tool(
-            self._call_tool(
-                "create_support_action_tool",
-                {
-                    "customer_id": customer_id,
-                    "action_type": action_type,
-                    "reason": reason,
-                },
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "create_support_action_tool",
+                    {
+                        "customer_id": customer_id,
+                        "action_type": action_type,
+                        "reason": reason,
+                    },
+                )
+            )
+        )
+
+    def create_refund_review(
+        self,
+        customer_id: str,
+        policy_id: str,
+        reason: str,
+        amount_usd: int | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "create_refund_review_tool",
+                    {
+                        "customer_id": customer_id,
+                        "policy_id": policy_id,
+                        "reason": reason,
+                        "amount_usd": amount_usd,
+                        "evidence_ids": evidence_ids,
+                    },
+                )
+            )
+        )
+
+    def create_quality_exception_review(
+        self,
+        customer_id: str,
+        order_id: str,
+        reason: str,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "create_quality_exception_review_tool",
+                    {
+                        "customer_id": customer_id,
+                        "order_id": order_id,
+                        "reason": reason,
+                        "evidence_ids": evidence_ids,
+                    },
+                )
             )
         )
 
@@ -281,6 +432,8 @@ class SupportTriageRunner:
             "triage": _span_id(trace_id, "triage"),
             "working_memory_write": _span_id(trace_id, "working_memory_write"),
             "lookup_customer": _span_id(trace_id, "lookup_customer"),
+            "lookup_order": _span_id(trace_id, "lookup_order"),
+            "verify_order_owner": _span_id(trace_id, "verify_order_owner"),
             "handoff_policy": _span_id(trace_id, "handoff_policy"),
             "policy_agent": _span_id(trace_id, "policy_agent"),
             "retrieve_policy": _span_id(trace_id, "retrieve_policy"),
@@ -364,7 +517,8 @@ class SupportTriageRunner:
                 estimated_cost=triage_llm.estimated_cost,
             )
         )
-        working_memory = _working_memory(message, customer_email, triage, conversation_history)
+        agent_state = _agent_state(triage=triage)
+        working_memory = _working_memory(message, customer_email, triage, conversation_history, agent_state)
         emit(
             _span(
                 trace_id=trace_id,
@@ -428,6 +582,50 @@ class SupportTriageRunner:
                 span_data=_mcp_span_data("lookup_customer_tool"),
             )
         )
+        order_number = _extract_order_number(message)
+        order: dict[str, Any] | None = None
+        order_owner: dict[str, Any] | None = None
+        if order_number:
+            order = self.tools_client.lookup_order(order_number)
+            emit(
+                _span(
+                    trace_id=trace_id,
+                    span_id=span_ids["lookup_order"],
+                    name="lookup_order",
+                    span_type="function_tool",
+                    parent_id=supervisor.span_id,
+                    clock=clock,
+                    duration_ms=120,
+                    input={"order_number": order_number},
+                    output=order,
+                    span_data=_mcp_span_data("lookup_order_tool"),
+                )
+            )
+            order_owner = self.tools_client.verify_order_owner(
+                order_number,
+                str(customer.get("customer_id") or "unknown"),
+            )
+            emit(
+                _span(
+                    trace_id=trace_id,
+                    span_id=span_ids["verify_order_owner"],
+                    name="verify_order_owner",
+                    span_type="function_tool",
+                    parent_id=span_ids["lookup_order"],
+                    clock=clock,
+                    duration_ms=90,
+                    input={"order_number": order_number, "customer_id": customer.get("customer_id")},
+                    output=order_owner,
+                    span_data=_mcp_span_data("verify_order_owner_tool"),
+                )
+            )
+        agent_state = _agent_state(
+            triage=triage,
+            customer=customer,
+            order=order,
+            order_owner=order_owner,
+        )
+        working_memory["agent_state"] = agent_state.to_dict()
         emit(
             _span(
                 trace_id=trace_id,
@@ -530,7 +728,13 @@ class SupportTriageRunner:
         action_decision, action_llm = self._agent_decision(
             agent_name="Action Agent",
             instructions=_action_agent_instructions(),
-            input_data={"triage": triage, "customer": customer, "policy": policy, "memory": customer_memory},
+            input_data={
+                "triage": triage,
+                "customer": customer,
+                "policy": policy,
+                "memory": customer_memory,
+                "agent_state": agent_state.to_dict(),
+            },
             fallback=fallback_action,
             allowed_keys={"action_type", "reason"},
         )
@@ -549,7 +753,12 @@ class SupportTriageRunner:
                 parent_id=supervisor.span_id,
                 clock=clock,
                 duration_ms=450,
-                input={"issue_type": triage["issue_type"], "policy": policy, "memory": customer_memory},
+                input={
+                    "issue_type": triage["issue_type"],
+                    "policy": policy,
+                    "memory": customer_memory,
+                    "agent_state": agent_state.to_dict(),
+                },
                 output={"action_type": action_type, "reason": action_reason},
                 span_data={
                     "agent_role": "action",
@@ -562,32 +771,50 @@ class SupportTriageRunner:
                 estimated_cost=action_llm.estimated_cost,
             )
         )
-        action = self.tools_client.create_support_action(
-            str(customer.get("customer_id") or "unknown"),
-            action_type,
-            action_reason,
+        agent_state = _agent_state(
+            triage=triage,
+            customer=customer,
+            order=order,
+            order_owner=order_owner,
+            proposed_action=action_type,
+            policy=policy,
+        )
+        action, action_tool_name = _create_domain_action(
+            self.tools_client,
+            customer=customer,
+            policy=policy,
+            action_type=action_type,
+            action_reason=action_reason,
+            order=order,
+            agent_state=agent_state,
         )
         emit(
             _span(
                 trace_id=trace_id,
                 span_id=span_ids["create_action"],
-                name="create_support_action",
+                name=action_tool_name.removesuffix("_tool"),
                 span_type="function_tool",
                 parent_id=span_ids["action_agent"],
                 clock=clock,
                 duration_ms=150,
-                input={"customer_id": customer.get("customer_id"), "action_type": action_type, "reason": action_reason},
+                input={
+                    "customer_id": customer.get("customer_id"),
+                    "action_type": action_type,
+                    "reason": action_reason,
+                    "evidence_ids": list(agent_state.evidence_ids),
+                },
                 output=action,
-                span_data=_mcp_span_data("create_support_action_tool"),
+                span_data=_mcp_span_data(action_tool_name),
             )
         )
 
         requires_approval = bool(policy.get("requires_approval"))
         abuse_risk = _abuse_risk(customer, policy)
+        validation_evidence = list(dict.fromkeys([*agent_state.evidence_ids, action.get("action_id")]))
         validation_fallback = {
             "grounding_status": "recovered" if requires_approval else "grounded",
             "approval_required": requires_approval,
-            "evidence": [customer.get("customer_id"), policy.get("policy_id"), action.get("action_id")],
+            "evidence": validation_evidence,
             "grounding_evidence": _grounding_evidence(customer, policy, action),
             "allowed_actions": policy.get("allowed_actions", []),
             "customer_friendly_resolution": policy.get("customer_friendly_resolution"),
@@ -646,6 +873,7 @@ class SupportTriageRunner:
                 )
             )
 
+        working_memory["agent_state"] = agent_state.to_dict()
         llm_response = self.llm_client.generate(
             instructions=_customer_response_instructions(),
             input_text=_customer_response_input(message, customer, policy, action, validation, working_memory, customer_memory),
@@ -728,15 +956,23 @@ def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_co
     if not use_openai:
         llm_client: LLMClient = StaticLLMClient()
     elif openai_api == "responses":
-        llm_client = OpenAIResponsesClient()
+        llm_client = OpenAIResponsesClient(timeout_seconds=_llm_timeout_seconds())
     else:
-        llm_client = OpenAIChatCompletionsClient()
+        llm_client = OpenAIChatCompletionsClient(timeout_seconds=_llm_timeout_seconds())
     tools_client: SupportToolsClient
     if os.environ.get("AGENTTRACE_MCP_TOOLS_URL"):
         tools_client = McpSupportToolsClient()
     else:
         tools_client = LocalSupportToolsClient()
     return SupportTriageRunner(llm_client=llm_client, tools_client=tools_client, use_llm_agents=use_openai)
+
+
+def _llm_timeout_seconds() -> float:
+    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "45")
+    try:
+        return max(1.0, float(raw_value))
+    except ValueError:
+        return 45.0
 
 
 def resolve_model_config(
@@ -753,6 +989,7 @@ def resolve_model_config(
         api_key=api_key or _first_env(f"{env_prefix}_API_KEY", "LLM_API_KEY", "AGENTTRACE_MODEL_API_KEY", "OPENAI_API_KEY"),
         model=model or _configured_model(env_prefix, provider),
         base_url=base_url or _configured_base_url(env_prefix, provider),
+        fallback_models=_configured_fallback_models(env_prefix),
     )
 
 
@@ -772,6 +1009,13 @@ def _configured_model(env_prefix: str, provider: str) -> str:
         "local": "local-model",
     }
     return defaults.get(provider, "gpt-5")
+
+
+def _configured_fallback_models(env_prefix: str) -> tuple[str, ...]:
+    configured = _first_env(f"{env_prefix}_FALLBACK_MODELS", "LLM_FALLBACK_MODELS", "AGENTTRACE_MODEL_FALLBACKS")
+    if not configured:
+        return ()
+    return tuple(model.strip() for model in configured.split(",") if model.strip())
 
 
 def _configured_base_url(env_prefix: str, provider: str) -> str:
@@ -840,6 +1084,41 @@ def _post_json(url: str, *, headers: dict[str, str], json: dict[str, Any], timeo
     return response.json()
 
 
+def _post_with_model_fallback(
+    *,
+    post_json: PostJson,
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+    models: tuple[str, ...],
+    path: str,
+    payload_for_model: Callable[[str], dict[str, Any]],
+) -> dict[str, Any]:
+    last_error: RuntimeError | None = None
+    for model in models:
+        try:
+            return post_json(
+                f"{base_url}{path}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload_for_model(model),
+                timeout=timeout_seconds,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+            if model == models[-1] or not _is_retryable_model_capacity_error(str(exc)):
+                raise
+    assert last_error is not None
+    raise last_error
+
+
+def _is_retryable_model_capacity_error(message: str) -> bool:
+    retryable_markers = ("HTTP 429", "HTTP 503", "HTTP 529", "RESOURCE_EXHAUSTED", "UNAVAILABLE")
+    return any(marker in message for marker in retryable_markers)
+
+
 def _provider_http_error_message(status_code: int, response_text: str) -> str:
     detail = _provider_error_detail(response_text)
     if detail:
@@ -873,6 +1152,19 @@ def _run_async_tool(awaitable: Awaitable[dict[str, Any]]) -> dict[str, Any]:
     except RuntimeError:
         return asyncio.run(awaitable)
     raise RuntimeError("McpSupportToolsClient cannot run inside an active event loop")
+
+
+def _mcp_tool_result(data: dict[str, Any]) -> dict[str, Any]:
+    error = data.get("error")
+    if data.get("ok") is False and isinstance(error, dict):
+        error_type = str(error.get("type") or "RuntimeError")
+        message = str(error.get("message") or "MCP tool failed.")
+        if error_type == "TimeoutError":
+            raise TimeoutError(message)
+        if error_type == "ValueError":
+            raise ValueError(message)
+        raise RuntimeError(message)
+    return data
 
 
 def _span(
@@ -1069,6 +1361,116 @@ def _action_safety(action_type: str, policy: dict[str, Any]) -> dict[str, Any]:
         "rejected_action_type": action_type,
         "policy_allowed_actions": allowed_actions,
     }
+
+
+def _create_domain_action(
+    tools_client: SupportToolsClient,
+    *,
+    customer: dict[str, Any],
+    policy: dict[str, Any],
+    action_type: str,
+    action_reason: str,
+    order: dict[str, Any] | None,
+    agent_state: AgentState,
+) -> tuple[dict[str, Any], str]:
+    customer_id = str(customer.get("customer_id") or "unknown")
+    evidence_ids = list(agent_state.evidence_ids)
+    if action_type == "refund_review":
+        amount = _refund_amount(customer, order)
+        return (
+            tools_client.create_refund_review(
+                customer_id,
+                str(policy.get("policy_id") or "policy_unknown"),
+                action_reason,
+                amount,
+                evidence_ids,
+            ),
+            "create_refund_review_tool",
+        )
+    if action_type == "courtesy_credit" and order and order.get("order_id"):
+        return (
+            tools_client.create_quality_exception_review(
+                customer_id,
+                str(order["order_id"]),
+                action_reason,
+                evidence_ids,
+            ),
+            "create_quality_exception_review_tool",
+        )
+    return (
+        tools_client.create_support_action(customer_id, action_type, action_reason),
+        "create_support_action_tool",
+    )
+
+
+def _refund_amount(customer: dict[str, Any], order: dict[str, Any] | None) -> int | None:
+    if order and isinstance(order.get("amount_usd"), int):
+        return int(order["amount_usd"])
+    for key in ("duplicate_charge_amount_usd", "annual_price_usd", "monthly_price_usd"):
+        if isinstance(customer.get(key), int):
+            return int(customer[key])
+    return None
+
+
+def _extract_order_number(message: str) -> str | None:
+    match = re.search(r"(?:order(?:\s+number)?[:\s#]*|#)([A-Za-z0-9-]{3,20})", message, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _agent_state(
+    *,
+    triage: dict[str, Any],
+    customer: dict[str, Any] | None = None,
+    order: dict[str, Any] | None = None,
+    order_owner: dict[str, Any] | None = None,
+    proposed_action: str | None = None,
+    policy: dict[str, Any] | None = None,
+) -> AgentState:
+    missing_fields: list[str] = []
+    evidence_ids: list[str] = []
+    risk_signals: list[str] = []
+    issue_type = str(triage.get("issue_type") or "general_support")
+
+    if triage.get("missing_information"):
+        missing_fields.append(str(triage["missing_information"]))
+    if customer and customer.get("customer_id"):
+        evidence_ids.append(str(customer["customer_id"]))
+    if policy and policy.get("policy_id"):
+        evidence_ids.append(str(policy["policy_id"]))
+    if order:
+        if order.get("order_id"):
+            evidence_ids.append(str(order["order_id"]))
+        if not order.get("found"):
+            missing_fields.extend(str(field) for field in order.get("missing_fields", []))
+    if order_owner:
+        if order_owner.get("verified"):
+            evidence_ids.append(str(order_owner.get("reason") or "order_customer_match"))
+        else:
+            risk_signals.append("order_customer_mismatch")
+
+    if issue_type == "consumed_product_return" and not order:
+        missing_fields.append("order_number_or_receipt")
+        if not triage.get("quality_exception"):
+            missing_fields.append("product_issue_reason")
+
+    next_required_step = "create_support_action"
+    if missing_fields and proposed_action == "clarification_request":
+        next_required_step = "collect_missing_information"
+    elif policy and policy.get("requires_approval"):
+        next_required_step = "human_approval"
+    elif risk_signals:
+        next_required_step = "human_review"
+
+    return AgentState(
+        active_issue=issue_type,
+        missing_fields=tuple(dict.fromkeys(missing_fields)),
+        evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+        risk_signals=tuple(dict.fromkeys(risk_signals)),
+        proposed_action=proposed_action,
+        next_required_step=next_required_step,
+    )
 
 
 def _enforce_validation(
@@ -1382,6 +1784,7 @@ def _working_memory(
     customer_email: str,
     triage: dict[str, Any],
     conversation_history: list[dict[str, Any]] | None = None,
+    agent_state: AgentState | None = None,
 ) -> dict[str, Any]:
     conversation_history = conversation_history or []
     return {
@@ -1393,6 +1796,7 @@ def _working_memory(
             {"key": "recent_conversation_turns", "value": len(conversation_history)},
         ],
         "conversation_history": conversation_history,
+        "agent_state": (agent_state or _agent_state(triage=triage)).to_dict(),
     }
 
 

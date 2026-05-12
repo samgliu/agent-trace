@@ -253,6 +253,32 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(messages[1]["message_id"], assistant_message["message_id"])
             self.assertEqual(messages[1]["trace_id"], "trace_chat_turn")
 
+    def test_chat_message_can_be_updated_for_async_completion(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+
+            session = store.create_chat_session(customer_email="customer@example.com")
+            message = store.add_chat_message(
+                session["session_id"],
+                role="assistant",
+                content="Checking account, policy, and approval context",
+                metadata={"status": "pending", "pending": True},
+            )
+
+            updated = store.update_chat_message(
+                message["message_id"],
+                content="I created a refund review.",
+                trace_id="trace_chat_turn",
+                metadata={"status": "complete", "pending": False},
+            )
+            messages = store.list_chat_messages(session["session_id"])
+
+            self.assertEqual(updated["content"], "I created a refund review.")
+            self.assertEqual(updated["trace_id"], "trace_chat_turn")
+            self.assertEqual(updated["metadata"]["status"], "complete")
+            self.assertEqual(messages[0]["content"], "I created a refund review.")
+
     def test_workflow_run_round_trip_and_update(self) -> None:
         with TemporaryDirectory() as temp_dir:
             store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")

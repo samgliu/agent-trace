@@ -294,6 +294,72 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["metadata"]["source_format"], "agenttrace")
 
+    def test_run_support_triage_workflow_can_delegate_to_agent_service(self) -> None:
+        captured_payloads: list[dict[str, object]] = []
+
+        def post_agent_service_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+            captured_payloads.append({"url": url, "payload": payload})
+            return {
+                "trace": Trace(
+                    trace_id=str(payload["trace_id"]),
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"source": "agent-service-test"},
+                ).to_dict(),
+                "assistant_response": "done",
+            }
+
+        with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
+            with patch("agenttrace.api.main._post_agent_service_json", side_effect=post_agent_service_json):
+                response = self.client.post(
+                    "/workflows/support-triage/runs",
+                    json={
+                        "trace_id": "trace_api_delegated_runner",
+                        "message": "Refund?",
+                        "customer_email": "customer@example.com",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["trace_id"], "trace_api_delegated_runner")
+        self.assertEqual(
+            captured_payloads,
+            [
+                {
+                    "url": "http://agent-service.test/runs/support-triage",
+                    "payload": {
+                        "message": "Refund?",
+                        "customer_email": "customer@example.com",
+                        "trace_id": "trace_api_delegated_runner",
+                        "conversation_history": [],
+                        "use_openai": False,
+                        "openai_api": "chat_completions",
+                    },
+                }
+            ],
+        )
+
+    def test_run_support_triage_workflow_returns_clean_agent_service_timeout(self) -> None:
+        with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
+            with patch("agenttrace.api.main.urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+                response = self.client.post(
+                    "/workflows/support-triage/runs",
+                    json={
+                        "trace_id": "trace_api_delegated_timeout",
+                        "message": "Refund?",
+                        "customer_email": "customer@example.com",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json()["detail"], "Agent service timed out while running the workflow.")
+
+    def test_agent_service_timeout_defaults_to_real_llm_budget(self) -> None:
+        from agenttrace.api.main import _agent_service_timeout_seconds
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_agent_service_timeout_seconds(), 300.0)
+
     def test_live_support_triage_workflow_can_be_polled_until_trace_is_ready(self) -> None:
         response = self.client.post(
             "/workflows/support-triage/runs/live",
@@ -571,6 +637,137 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(captured_history[0], [])
         self.assertEqual([item["role"] for item in captured_history[1]], ["user", "assistant"])
         self.assertEqual(captured_history[1][0]["content"], "First message")
+
+    def test_chat_message_delegates_history_to_agent_service_when_configured(self) -> None:
+        captured_payloads: list[dict[str, object]] = []
+
+        def post_agent_service_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+            captured_payloads.append({"url": url, "payload": payload})
+            return {
+                "trace": Trace(
+                    trace_id=str(payload["trace_id"]),
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"source": "agent-service-test"},
+                ).to_dict(),
+                "assistant_response": "done",
+            }
+
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "customer@example.com", "title": "Billing support"},
+        )
+        session = session_response.json()
+
+        with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
+            with patch("agenttrace.api.main._post_agent_service_json", side_effect=post_agent_service_json):
+                self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "First"})
+                response = self.client.post(
+                    f"/chat/sessions/{session['session_id']}/messages",
+                    json={"content": "Second"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        second_payload = captured_payloads[1]["payload"]
+        self.assertEqual(second_payload["message"], "Second")
+        self.assertEqual(len(second_payload["conversation_history"]), 2)
+        self.assertEqual(second_payload["conversation_history"][0]["content"], "First")
+
+    def test_async_chat_message_returns_pending_assistant_message(self) -> None:
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "customer@example.com", "title": "Billing support"},
+        )
+        session = session_response.json()
+
+        with patch("agenttrace.api.main._start_async_chat_turn") as start_async_chat_turn:
+            response = self.client.post(
+                f"/chat/sessions/{session['session_id']}/messages/async",
+                json={"content": "I was charged twice."},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["user_message"]["role"], "user")
+        self.assertEqual(payload["assistant_message"]["role"], "assistant")
+        self.assertTrue(payload["assistant_message"]["metadata"]["pending"])
+        self.assertEqual(payload["assistant_message"]["metadata"]["status"], "pending")
+        start_async_chat_turn.assert_called_once()
+
+        messages = self.client.get(f"/chat/sessions/{session['session_id']}/messages").json()
+        self.assertEqual([message["role"] for message in messages], ["user", "assistant"])
+        self.assertTrue(messages[1]["metadata"]["pending"])
+
+    def test_complete_async_chat_turn_updates_assistant_message_and_trace(self) -> None:
+        from agenttrace.api.main import _complete_async_chat_turn
+        from agenttrace.api.schemas import ChatMessageCreateRequest
+
+        class PassingRunner:
+            def run(self, **kwargs: object) -> Trace:
+                return Trace(
+                    trace_id=str(kwargs["trace_id"]),
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"source": "async-test"},
+                )
+
+        session = self.store.create_chat_session(customer_email="customer@example.com")
+        user_message = self.store.add_chat_message(session["session_id"], role="user", content="Refund?")
+        assistant_message = self.store.add_chat_message(
+            session["session_id"],
+            role="assistant",
+            content="Checking account, policy, and approval context",
+            metadata={"status": "pending", "pending": True},
+        )
+
+        with patch("agenttrace.api.main.build_default_runner", return_value=PassingRunner()):
+            _complete_async_chat_turn(
+                trace_store=self.store,
+                session=session,
+                previous_messages=[],
+                user_message=user_message,
+                assistant_message=assistant_message,
+                payload=ChatMessageCreateRequest(content="Refund?"),
+            )
+
+        messages = self.store.list_chat_messages(session["session_id"])
+        self.assertEqual(messages[1]["metadata"]["status"], "complete")
+        self.assertFalse(messages[1]["metadata"]["pending"])
+        self.assertEqual(messages[1]["trace_id"], f"trace_chat_{user_message['message_id']}")
+        trace = self.store.get_trace(messages[1]["trace_id"])
+        self.assertIsNotNone(trace)
+
+    def test_complete_async_chat_turn_marks_provider_error_failed(self) -> None:
+        from agenttrace.api.main import _complete_async_chat_turn
+        from agenttrace.api.schemas import ChatMessageCreateRequest
+
+        class FailingRunner:
+            def run(self, **_: object) -> None:
+                raise RuntimeError("LLM provider request failed with HTTP 429.")
+
+        session = self.store.create_chat_session(customer_email="customer@example.com")
+        user_message = self.store.add_chat_message(session["session_id"], role="user", content="Use LLM")
+        assistant_message = self.store.add_chat_message(
+            session["session_id"],
+            role="assistant",
+            content="Checking account, policy, and approval context",
+            metadata={"status": "pending", "pending": True},
+        )
+
+        with patch("agenttrace.api.main.build_default_runner", return_value=FailingRunner()):
+            _complete_async_chat_turn(
+                trace_store=self.store,
+                session=session,
+                previous_messages=[],
+                user_message=user_message,
+                assistant_message=assistant_message,
+                payload=ChatMessageCreateRequest(content="Use LLM", use_openai=True),
+            )
+
+        messages = self.store.list_chat_messages(session["session_id"])
+        self.assertEqual(messages[1]["metadata"]["status"], "failed")
+        self.assertFalse(messages[1]["metadata"]["pending"])
+        self.assertEqual(messages[1]["metadata"]["error"], "LLM provider request failed with HTTP 429.")
 
     def test_chat_message_missing_session_returns_404(self) -> None:
         response = self.client.post("/chat/sessions/missing-session/messages", json={"content": "Hello"})

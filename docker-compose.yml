@@ -19,10 +19,31 @@ services:
     environment:
       AGENTTRACE_DB: /app/.agenttrace/agenttrace.db
       AGENTTRACE_MCP_TOOLS_URL: http://mcp-tools:8010/mcp/
+      AGENTTRACE_AGENT_SERVICE_URL: http://agent-service:8020
+      AGENTTRACE_AGENT_SERVICE_TIMEOUT_SECONDS: 300
     ports:
       - "8000:8000"
     volumes:
       - ./.agenttrace:/app/.agenttrace
+    working_dir: /app
+    depends_on:
+      - mcp-tools
+      - agent-service
+
+  agent-service:
+    build:
+      context: .
+    image: agenttrace:local
+    entrypoint: ["python", "-m", "uvicorn"]
+    command: ["agent_apps.customer_service.api:app", "--host", "0.0.0.0", "--port", "8020"]
+    env_file:
+      - path: ./agent_apps/customer_service/.env
+        required: false
+    environment:
+      AGENTTRACE_MCP_TOOLS_URL: http://mcp-tools:8010/mcp/
+      AGENTTRACE_LLM_TIMEOUT_SECONDS: 45
+    ports:
+      - "8020:8020"
     working_dir: /app
     depends_on:
       - mcp-tools
