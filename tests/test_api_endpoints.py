@@ -222,6 +222,19 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["memory_warning_count"], 3)
         self.assertEqual(payload["status_counts"]["passed"], 3)
 
+    def test_event_bus_streams_published_sse_events(self) -> None:
+        from agenttrace.api.main import EventBus
+
+        bus = EventBus()
+        stream = bus.stream()
+
+        self.assertIn("event: connected", next(stream))
+        bus.publish("trace.updated", resource_type="trace", resource_id="trace_1", trace_id="trace_1")
+        frame = next(stream)
+
+        self.assertIn("event: trace.updated", frame)
+        self.assertIn('"trace_id":"trace_1"', frame)
+
     def test_get_trace(self) -> None:
         response = self.client.get(f"/traces/{self.trace.trace_id}")
 
@@ -699,7 +712,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertTrue(messages[1]["metadata"]["pending"])
 
     def test_complete_async_chat_turn_updates_assistant_message_and_trace(self) -> None:
-        from agenttrace.api.main import _complete_async_chat_turn
+        from agenttrace.api.main import EventBus, _complete_async_chat_turn
         from agenttrace.api.schemas import ChatMessageCreateRequest
 
         class PassingRunner:
@@ -719,16 +732,26 @@ class ApiEndpointsTest(unittest.TestCase):
             content="Checking account, policy, and approval context",
             metadata={"status": "pending", "pending": True},
         )
+        event_bus = EventBus()
+        events: list[dict[str, object]] = []
+        original_publish = event_bus.publish
+
+        def capture_event(event_type: str, **payload: object) -> dict[str, object]:
+            event = original_publish(event_type, **payload)
+            events.append(event)
+            return event
 
         with patch("agenttrace.api.main.build_default_runner", return_value=PassingRunner()):
-            _complete_async_chat_turn(
-                trace_store=self.store,
-                session=session,
-                previous_messages=[],
-                user_message=user_message,
-                assistant_message=assistant_message,
-                payload=ChatMessageCreateRequest(content="Refund?"),
-            )
+            with patch.object(event_bus, "publish", side_effect=capture_event):
+                _complete_async_chat_turn(
+                    trace_store=self.store,
+                    event_bus=event_bus,
+                    session=session,
+                    previous_messages=[],
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    payload=ChatMessageCreateRequest(content="Refund?"),
+                )
 
         messages = self.store.list_chat_messages(session["session_id"])
         self.assertEqual(messages[1]["metadata"]["status"], "complete")
@@ -736,9 +759,12 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(messages[1]["trace_id"], f"trace_chat_{user_message['message_id']}")
         trace = self.store.get_trace(messages[1]["trace_id"])
         self.assertIsNotNone(trace)
+        event_types = [str(event["type"]) for event in events]
+        self.assertIn("chat.turn.completed", event_types)
+        self.assertNotIn("chat.message.updated", event_types)
 
     def test_complete_async_chat_turn_marks_provider_error_failed(self) -> None:
-        from agenttrace.api.main import _complete_async_chat_turn
+        from agenttrace.api.main import EventBus, _complete_async_chat_turn
         from agenttrace.api.schemas import ChatMessageCreateRequest
 
         class FailingRunner:
@@ -757,6 +783,7 @@ class ApiEndpointsTest(unittest.TestCase):
         with patch("agenttrace.api.main.build_default_runner", return_value=FailingRunner()):
             _complete_async_chat_turn(
                 trace_store=self.store,
+                event_bus=EventBus(),
                 session=session,
                 previous_messages=[],
                 user_message=user_message,

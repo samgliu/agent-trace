@@ -7,6 +7,7 @@ import time
 import threading
 import uuid
 import json
+import queue
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from agenttrace.api.schemas import (
     ChatMessageCreateRequest,
@@ -56,6 +58,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     )
     trace_store = store or SQLiteTraceStore(_database_path())
     trace_store.initialize()
+    event_bus = EventBus()
     workflow_runs = WorkflowRunRegistry(trace_store)
     _reconcile_stale_workflow_runs(trace_store, workflow_runs)
 
@@ -77,6 +80,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             source_kind="agent_runner",
         )
         trace_store.upsert_trace(placeholder)
+        _publish_trace_events(event_bus, "trace.created", live_trace_id)
         run = workflow_runs.create(
             live_trace_id,
             input_data={
@@ -86,15 +90,18 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
                 "openai_api": payload.openai_api,
             },
         )
+        _publish_workflow_run_event(event_bus, "workflow_run.created", run["run_id"], trace_id=live_trace_id)
         span_delay_seconds = _live_span_delay_seconds()
 
         def execute() -> None:
             workflow_runs.mark_running(run["run_id"])
+            _publish_workflow_run_event(event_bus, "workflow_run.updated", run["run_id"], trace_id=live_trace_id)
             try:
                 def persist_span(span: Span) -> None:
                     if workflow_runs.is_cancel_requested(run["run_id"]):
                         raise WorkflowRunCancelled("Workflow run cancelled.")
                     trace_store.upsert_span(span)
+                    _publish_trace_events(event_bus, "span.updated", span.trace_id, span_id=span.span_id)
                     if span_delay_seconds > 0:
                         time.sleep(span_delay_seconds)
 
@@ -108,15 +115,23 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
                     raise WorkflowRunCancelled("Workflow run cancelled.")
                 trace_store.save_trace(trace)
                 workflow_runs.mark_completed(run["run_id"], trace.trace_id)
+                _publish_trace_events(event_bus, "trace.updated", trace.trace_id)
+                _publish_workflow_run_event(event_bus, "workflow_run.completed", run["run_id"], trace_id=trace.trace_id)
             except WorkflowRunCancelled as exc:
                 trace_store.update_trace_lifecycle(live_trace_id, status="cancelled", ended_at=_utc_now())
                 workflow_runs.mark_cancelled(run["run_id"], str(exc))
+                _publish_trace_events(event_bus, "trace.updated", live_trace_id)
+                _publish_workflow_run_event(event_bus, "workflow_run.cancelled", run["run_id"], trace_id=live_trace_id)
             except RuntimeError as exc:
                 trace_store.update_trace_lifecycle(live_trace_id, status="failed", ended_at=_utc_now())
                 workflow_runs.mark_failed(run["run_id"], str(exc))
+                _publish_trace_events(event_bus, "trace.updated", live_trace_id)
+                _publish_workflow_run_event(event_bus, "workflow_run.failed", run["run_id"], trace_id=live_trace_id)
             except Exception as exc:  # pragma: no cover - defensive for background execution.
                 trace_store.update_trace_lifecycle(live_trace_id, status="failed", ended_at=_utc_now())
                 workflow_runs.mark_failed(run["run_id"], f"Unexpected workflow failure: {exc}")
+                _publish_trace_events(event_bus, "trace.updated", live_trace_id)
+                _publish_workflow_run_event(event_bus, "workflow_run.failed", run["run_id"], trace_id=live_trace_id)
 
         thread = threading.Thread(target=execute, name=f"agenttrace-run-{run['run_id']}", daemon=True)
         thread.start()
@@ -126,6 +141,10 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/events")
+    def events() -> StreamingResponse:
+        return StreamingResponse(event_bus.stream(), media_type="text/event-stream")
 
     @app.get("/dashboard/summary")
     def dashboard_summary() -> dict[str, Any]:
@@ -156,7 +175,11 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         for case_result in result.results:
             trace = _with_eval_metadata(case_result.trace, suite_id=result.suite_id, case_id=case_result.case.case_id)
             trace_store.save_trace(trace)
-        return trace_store.save_eval_run(result.to_dict())
+            _publish_trace_events(event_bus, "trace.created", trace.trace_id)
+        saved = trace_store.save_eval_run(result.to_dict())
+        event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=saved["run_id"])
+        event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+        return saved
 
     @app.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
@@ -206,6 +229,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         trace = _with_chat_metadata(trace, session_id=session_id, user_message_id=user_message["message_id"])
         trace_store.save_trace(trace)
+        _publish_trace_events(event_bus, "trace.created", trace.trace_id, session_id=session_id)
         saved_trace = _require_trace(trace_store, trace.trace_id)
         assistant_message = trace_store.add_chat_message(
             session_id,
@@ -214,6 +238,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             trace_id=saved_trace.trace_id,
             metadata={"trace_status": saved_trace.status},
         )
+        event_bus.publish("chat.turn.completed", resource_type="chat_session", resource_id=session_id, session_id=session_id, trace_id=saved_trace.trace_id)
         return {
             "session": _require_chat_session(trace_store, session_id),
             "user_message": user_message,
@@ -240,8 +265,15 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
                 "chat_user_message_id": user_message["message_id"],
             },
         )
+        event_bus.publish(
+            "chat.turn.started",
+            resource_type="chat_session",
+            resource_id=session_id,
+            session_id=session_id,
+        )
         _start_async_chat_turn(
             trace_store=trace_store,
+            event_bus=event_bus,
             session=session,
             previous_messages=previous_messages,
             user_message=user_message,
@@ -269,6 +301,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         trace_store.save_trace(trace)
+        _publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
 
@@ -295,6 +328,8 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Workflow run not found: {run_id}")
         if run["status"] == "cancelled" and run["trace_id"]:
             trace_store.update_trace_lifecycle(run["trace_id"], status="cancelled", ended_at=_utc_now())
+            _publish_trace_events(event_bus, "trace.updated", run["trace_id"])
+        _publish_workflow_run_event(event_bus, "workflow_run.updated", run_id, trace_id=run["trace_id"])
         return get_workflow_run(run_id)
 
     @app.post("/workflow-runs/{run_id}/retry")
@@ -358,6 +393,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             source_kind="live_api",
         )
         trace_store.upsert_trace(trace)
+        _publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
 
@@ -367,6 +403,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         trace_store.upsert_trace(trace)
         for span in trace.spans:
             trace_store.upsert_span(span)
+        _publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = _require_trace(trace_store, trace.trace_id)
         return saved.to_dict()
 
@@ -374,7 +411,9 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def ingest_span(trace_id: str, payload: SpanIngestRequest) -> dict[str, Any]:
         _require_trace(trace_store, trace_id)
         span = Span.from_dict({**payload.model_dump(), "trace_id": trace_id}, trace_id=trace_id)
-        return trace_store.upsert_span(span).to_dict()
+        saved = trace_store.upsert_span(span)
+        _publish_trace_events(event_bus, "span.updated", trace_id, span_id=saved.span_id)
+        return saved.to_dict()
 
     @app.patch("/traces/{trace_id}")
     def update_trace(trace_id: str, payload: TraceLifecycleUpdateRequest) -> dict[str, Any]:
@@ -385,6 +424,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         )
         if updated is None:
             raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")
+        _publish_trace_events(event_bus, "trace.updated", trace_id)
         return updated.to_dict()
 
     @app.get("/traces/{trace_id}")
@@ -414,21 +454,61 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
 
     @app.post("/traces/{trace_id}/approvals/{span_id}/approve")
     def approve_span(trace_id: str, span_id: str) -> dict[str, Any]:
-        return _update_approval_span(trace_store, trace_id, span_id, "approved").to_dict()
+        return _update_approval_span(trace_store, trace_id, span_id, "approved", event_bus=event_bus).to_dict()
 
     @app.post("/traces/{trace_id}/approvals/{span_id}/reject")
     def reject_span(trace_id: str, span_id: str) -> dict[str, Any]:
-        return _update_approval_span(trace_store, trace_id, span_id, "rejected").to_dict()
+        return _update_approval_span(trace_store, trace_id, span_id, "rejected", event_bus=event_bus).to_dict()
 
     @app.post("/traces/{trace_id}/approvals/{span_id}/revert")
     def revert_span(trace_id: str, span_id: str) -> dict[str, Any]:
-        return _update_approval_span(trace_store, trace_id, span_id, "blocked").to_dict()
+        return _update_approval_span(trace_store, trace_id, span_id, "blocked", event_bus=event_bus).to_dict()
 
     return app
 
 
 def _database_path() -> Path:
     return Path(os.environ.get("AGENTTRACE_DB", str(DEFAULT_DB_PATH)))
+
+
+class EventBus:
+    def __init__(self) -> None:
+        self._subscribers: list[queue.Queue[dict[str, Any]]] = []
+        self._lock = threading.Lock()
+
+    def publish(self, event_type: str, **payload: Any) -> dict[str, Any]:
+        event = {
+            "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+            "type": event_type,
+            "created_at": _utc_now(),
+            **payload,
+        }
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for subscriber in subscribers:
+            subscriber.put(event)
+        return event
+
+    def stream(self):
+        subscriber: queue.Queue[dict[str, Any]] = queue.Queue()
+        with self._lock:
+            self._subscribers.append(subscriber)
+        try:
+            yield _sse_frame({"type": "connected"}, event_type="connected")
+            while True:
+                try:
+                    event = subscriber.get(timeout=15)
+                    yield _sse_frame(event, event_type=event["type"])
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+        finally:
+            with self._lock:
+                if subscriber in self._subscribers:
+                    self._subscribers.remove(subscriber)
+
+
+def _sse_frame(payload: dict[str, Any], *, event_type: str) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
 
 
 class AgentServiceError(RuntimeError):
@@ -645,9 +725,37 @@ def _require_chat_session(store: SQLiteTraceStore, session_id: str) -> dict[str,
     return session
 
 
+def _publish_trace_events(event_bus: EventBus, event_type: str, trace_id: str, **extra: Any) -> None:
+    event_bus.publish(event_type, resource_type="trace", resource_id=trace_id, trace_id=trace_id, **extra)
+    event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+
+
+def _publish_workflow_run_event(event_bus: EventBus, event_type: str, run_id: str, *, trace_id: str | None) -> None:
+    event_bus.publish(event_type, resource_type="workflow_run", resource_id=run_id, run_id=run_id, trace_id=trace_id)
+
+
+def _publish_chat_event(
+    event_bus: EventBus,
+    event_type: str,
+    session_id: str,
+    message_id: str,
+    *,
+    trace_id: str | None = None,
+) -> None:
+    event_bus.publish(
+        event_type,
+        resource_type="chat_message",
+        resource_id=message_id,
+        session_id=session_id,
+        message_id=message_id,
+        trace_id=trace_id,
+    )
+
+
 def _start_async_chat_turn(
     *,
     trace_store: SQLiteTraceStore,
+    event_bus: EventBus,
     session: dict[str, Any],
     previous_messages: list[dict[str, Any]],
     user_message: dict[str, Any],
@@ -658,6 +766,7 @@ def _start_async_chat_turn(
         target=_complete_async_chat_turn,
         kwargs={
             "trace_store": trace_store,
+            "event_bus": event_bus,
             "session": session,
             "previous_messages": previous_messages,
             "user_message": user_message,
@@ -672,6 +781,7 @@ def _start_async_chat_turn(
 def _complete_async_chat_turn(
     *,
     trace_store: SQLiteTraceStore,
+    event_bus: EventBus,
     session: dict[str, Any],
     previous_messages: list[dict[str, Any]],
     user_message: dict[str, Any],
@@ -689,6 +799,7 @@ def _complete_async_chat_turn(
         )
         trace = _with_chat_metadata(trace, session_id=session["session_id"], user_message_id=user_message["message_id"])
         trace_store.save_trace(trace)
+        _publish_trace_events(event_bus, "trace.created", trace.trace_id, session_id=session["session_id"])
         saved_trace = _require_trace(trace_store, trace.trace_id)
         trace_store.update_chat_message(
             assistant_message["message_id"],
@@ -701,14 +812,23 @@ def _complete_async_chat_turn(
                 "chat_user_message_id": user_message["message_id"],
             },
         )
+        event_bus.publish(
+            "chat.turn.completed",
+            resource_type="chat_session",
+            resource_id=session["session_id"],
+            session_id=session["session_id"],
+            trace_id=saved_trace.trace_id,
+        )
     except AgentServiceError as exc:
-        _mark_async_chat_failed(trace_store, assistant_message, user_message, exc.message)
+        _mark_async_chat_failed(trace_store, event_bus, session, assistant_message, user_message, exc.message)
     except RuntimeError as exc:
-        _mark_async_chat_failed(trace_store, assistant_message, user_message, str(exc))
+        _mark_async_chat_failed(trace_store, event_bus, session, assistant_message, user_message, str(exc))
 
 
 def _mark_async_chat_failed(
     trace_store: SQLiteTraceStore,
+    event_bus: EventBus,
+    session: dict[str, Any],
     assistant_message: dict[str, Any],
     user_message: dict[str, Any],
     message: str,
@@ -722,6 +842,13 @@ def _mark_async_chat_failed(
             "error": message,
             "chat_user_message_id": user_message["message_id"],
         },
+    )
+    event_bus.publish(
+        "chat.turn.failed",
+        resource_type="chat_session",
+        resource_id=session["session_id"],
+        session_id=session["session_id"],
+        message=message,
     )
 
 
@@ -771,6 +898,8 @@ def _update_approval_span(
     trace_id: str,
     span_id: str,
     status: str,
+    *,
+    event_bus: EventBus | None = None,
 ):
     trace = _require_trace(store, trace_id)
     span = store.get_span(trace_id, span_id)
@@ -800,6 +929,17 @@ def _update_approval_span(
     if updated is None:
         raise HTTPException(status_code=404, detail=f"Span not found: {span_id}")
     _append_approval_chat_message(store, trace, updated, status)
+    if event_bus is not None:
+        _publish_trace_events(event_bus, "approval.updated", trace_id, span_id=span_id)
+        session_id = trace.metadata.get("chat_session_id")
+        if isinstance(session_id, str):
+            event_bus.publish(
+                "chat.message.created",
+                resource_type="chat_session",
+                resource_id=session_id,
+                session_id=session_id,
+                trace_id=trace_id,
+            )
     return updated
 
 

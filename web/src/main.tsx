@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -245,11 +245,12 @@ function App() {
     offset: 0,
   });
   const [refreshKey, setRefreshKey] = useState(0);
+  const chatRefreshTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       setRefreshKey((value) => value + 1);
-    }, 5000);
+    }, 60000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -259,40 +260,42 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (liveWorkflowRun === null || !isWorkflowRunActive(liveWorkflowRun)) {
-      return;
-    }
-    const runId = liveWorkflowRun.run_id;
-    let cancelled = false;
-    const timer = window.setInterval(() => {
-      getWorkflowRun<TraceDetail>(fetchJson, runId)
-        .then((run) => {
-          if (cancelled) return;
-          setLiveWorkflowRun(run);
-          if (run.trace_id) {
-            setSelectedTraceId(run.trace_id);
-            setSelectedSpanId((currentSpanId) =>
-              run.trace?.spans.some((span) => span.span_id === currentSpanId)
-                ? currentSpanId
-                : run.trace?.spans[0]?.span_id ?? null,
-            );
-            setRefreshKey((value) => value + 1);
-          }
-          if (run.status === "failed") {
-            setLiveWorkflowError(run.error ?? "Workflow run failed.");
-          }
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            setLiveWorkflowError(error instanceof Error ? error.message : "Could not poll workflow run.");
-          }
-        });
-    }, 1000);
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      if (chatRefreshTimerRef.current !== null) {
+        window.clearTimeout(chatRefreshTimerRef.current);
+      }
     };
-  }, [liveWorkflowRun]);
+  }, []);
+
+  useEffect(() => {
+    const events = new EventSource(`${API_BASE_URL}/events`);
+    events.addEventListener("message", (rawEvent) => {
+      handleServerEvent(parseServerEvent(rawEvent));
+    });
+    events.addEventListener("connected", () => {});
+    [
+      "chat.message.created",
+      "chat.turn.started",
+      "chat.turn.completed",
+      "chat.turn.failed",
+      "workflow_run.created",
+      "workflow_run.updated",
+      "workflow_run.completed",
+      "workflow_run.failed",
+      "workflow_run.cancelled",
+      "trace.created",
+      "trace.updated",
+      "span.updated",
+      "approval.updated",
+      "dashboard.updated",
+      "eval_run.completed",
+    ].forEach((eventType) => {
+      events.addEventListener(eventType, (rawEvent) => {
+        handleServerEvent(parseServerEvent(rawEvent));
+      });
+    });
+    return () => events.close();
+  }, [chatSession?.session_id, liveWorkflowRun?.run_id, selectedTraceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -316,41 +319,6 @@ function App() {
       cancelled = true;
     };
   }, [chatMessages, refreshKey]);
-
-  useEffect(() => {
-    const pendingKey = pendingChatMessageKey(chatMessages);
-    if (!chatSession || !pendingKey) return;
-    let cancelled = false;
-    let timer: number | null = null;
-    const pollMessages = () => {
-      getChatMessages(fetchJson, chatSession.session_id)
-        .then((messages) => {
-          if (cancelled) return;
-          const previousLatestTraceId = latestTraceFromMessages(chatMessages);
-          const nextLatestTraceId = latestTraceFromMessages(messages);
-          setChatMessages(messages);
-          setLatestChatTraceId(nextLatestTraceId);
-          if (nextLatestTraceId && nextLatestTraceId !== previousLatestTraceId) {
-            setSelectedTraceId(nextLatestTraceId);
-            setSelectedSpanId(null);
-            setRefreshKey((value) => value + 1);
-          }
-          if (hasPendingChatMessage(messages)) {
-            timer = window.setTimeout(pollMessages, 2000);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setChatStatus({ status: "error", message: "Could not refresh chat messages." });
-          }
-        });
-    };
-    timer = window.setTimeout(pollMessages, 1200);
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [chatSession?.session_id, pendingChatMessageKey(chatMessages)]);
 
   useEffect(() => {
     let cancelled = false;
@@ -433,6 +401,76 @@ function App() {
       setEvalHistory(history.items);
     } catch {
       setEvalHistory([]);
+    }
+  }
+
+  function handleServerEvent(event: ServerEvent | null) {
+    if (!event) return;
+    if (event.type.startsWith("chat.") && event.session_id && event.session_id === chatSession?.session_id) {
+      if (event.type === "chat.turn.completed" || event.type === "chat.turn.failed" || event.type === "chat.message.created") {
+        scheduleChatMessagesRefresh(event.session_id);
+      }
+    }
+    if (event.type.startsWith("workflow_run.") && event.run_id && event.run_id === liveWorkflowRun?.run_id) {
+      refreshWorkflowRun(event.run_id);
+    }
+    if (
+      event.type === "trace.created" ||
+      event.type === "trace.updated" ||
+      event.type === "span.updated" ||
+      event.type === "approval.updated" ||
+      event.type === "dashboard.updated"
+    ) {
+      setRefreshKey((value) => value + 1);
+    }
+    if (event.type === "eval_run.completed") {
+      loadEvalRuns();
+      setRefreshKey((value) => value + 1);
+    }
+  }
+
+  function scheduleChatMessagesRefresh(sessionId: string) {
+    if (chatRefreshTimerRef.current !== null) {
+      window.clearTimeout(chatRefreshTimerRef.current);
+    }
+    chatRefreshTimerRef.current = window.setTimeout(() => {
+      chatRefreshTimerRef.current = null;
+      refreshChatMessages(sessionId);
+    }, 250);
+  }
+
+  async function refreshChatMessages(sessionId: string) {
+    try {
+      const messages = await getChatMessages(fetchJson, sessionId);
+      const nextLatestTraceId = latestTraceFromMessages(messages);
+      setChatMessages(messages);
+      setLatestChatTraceId(nextLatestTraceId);
+      if (nextLatestTraceId) {
+        setSelectedTraceId(nextLatestTraceId);
+        setSelectedSpanId(null);
+      }
+    } catch {
+      setChatStatus({ status: "error", message: "Could not refresh chat messages." });
+    }
+  }
+
+  async function refreshWorkflowRun(runId: string) {
+    try {
+      const run = await getWorkflowRun<TraceDetail>(fetchJson, runId);
+      setLiveWorkflowRun(run);
+      if (run.trace_id) {
+        setSelectedTraceId(run.trace_id);
+        setSelectedSpanId((currentSpanId) =>
+          run.trace?.spans.some((span) => span.span_id === currentSpanId)
+            ? currentSpanId
+            : run.trace?.spans[0]?.span_id ?? null,
+        );
+      }
+      if (run.status === "failed") {
+        setLiveWorkflowError(run.error ?? "Workflow run failed.");
+      }
+    } catch (error) {
+      setLiveWorkflowError(error instanceof Error ? error.message : "Could not refresh workflow run.");
     }
   }
 
@@ -803,6 +841,16 @@ type ChatInput = {
   customerEmail: string;
   message: string;
   llmProvider: LLMProvider;
+};
+
+type ServerEvent = {
+  type: string;
+  resource_type?: string;
+  resource_id?: string;
+  session_id?: string;
+  message_id?: string;
+  trace_id?: string;
+  run_id?: string;
 };
 
 type LiveWorkflowInput = ChatInput;
@@ -2096,23 +2144,21 @@ function replacePendingChatMessage(
   return [...messages.filter((message) => message.message_id !== pendingMessageId), userMessage, assistantMessage];
 }
 
-function hasPendingChatMessage(messages: ChatMessage[]): boolean {
-  return messages.some((message) => message.metadata.pending === true);
-}
-
-function pendingChatMessageKey(messages: ChatMessage[]): string {
-  return messages
-    .filter((message) => message.metadata.pending === true)
-    .map((message) => message.message_id)
-    .join(",");
-}
-
 function uniqueTraceIds(messages: ChatMessage[]): string[] {
   return Array.from(new Set(messages.map((message) => message.trace_id).filter((traceId): traceId is string => Boolean(traceId))));
 }
 
 function summaryMap(summaries: TraceSummary[]): Record<string, TraceSummary> {
   return Object.fromEntries(summaries.map((summary) => [summary.trace_id, summary]));
+}
+
+function parseServerEvent(event: Event): ServerEvent | null {
+  if (!("data" in event) || typeof event.data !== "string") return null;
+  try {
+    return JSON.parse(event.data) as ServerEvent;
+  } catch {
+    return null;
+  }
 }
 
 function upsertChatSession(sessions: ChatSession[], session: ChatSession): ChatSession[] {
