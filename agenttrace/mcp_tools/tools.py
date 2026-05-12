@@ -50,6 +50,56 @@ CUSTOMERS: dict[str, dict[str, Any]] = {
 }
 
 
+ORDERS: dict[str, dict[str, Any]] = {
+    "1234": {
+        "order_id": "ord_1234",
+        "order_number": "1234",
+        "customer_id": "cus_123",
+        "email": "customer@example.com",
+        "item": "bananas",
+        "category": "grocery",
+        "status": "delivered",
+        "delivered_days_ago": 7,
+        "amount_usd": 6,
+        "returnable": False,
+        "normal_return_blocked_reason": "fully_consumed",
+        "quality_exception_eligible": True,
+    },
+    "A800": {
+        "order_id": "ord_a800",
+        "order_number": "A800",
+        "customer_id": "cus_annual_800",
+        "email": "annual@example.com",
+        "item": "Annual Pro subscription",
+        "category": "subscription",
+        "status": "active",
+        "amount_usd": 800,
+        "returnable": False,
+        "quality_exception_eligible": False,
+    },
+}
+
+
+CHARGES: dict[str, dict[str, Any]] = {
+    "chg_dup_001": {
+        "charge_id": "chg_dup_001",
+        "customer_id": "cus_123",
+        "amount_usd": 20,
+        "status": "duplicate_detected",
+        "created_days_ago": 1,
+        "payment_method_verified": True,
+    },
+    "chg_annual_800": {
+        "charge_id": "chg_annual_800",
+        "customer_id": "cus_annual_800",
+        "amount_usd": 800,
+        "status": "paid",
+        "created_days_ago": 24,
+        "payment_method_verified": True,
+    },
+}
+
+
 POLICIES: dict[str, dict[str, Any]] = {
     "duplicate_charge_refund": {
         "policy_id": "policy_refund_duplicate_charge",
@@ -181,6 +231,59 @@ def retrieve_policy(topic: str) -> dict[str, Any]:
     return {"found": True, **policy}
 
 
+def lookup_order(order_number: str) -> dict[str, Any]:
+    """Return order evidence by customer-provided order number."""
+    normalized_order = order_number.strip().lstrip("#")
+    order = ORDERS.get(normalized_order.upper()) or ORDERS.get(normalized_order)
+    if order is None:
+        return {
+            "found": False,
+            "order_number": normalized_order,
+            "missing_fields": ["valid_order_number"],
+        }
+    return {"found": True, **order}
+
+
+def lookup_charge(customer_id: str, charge_id: str | None = None) -> dict[str, Any]:
+    """Return charge evidence for a customer."""
+    normalized_charge_id = charge_id.strip() if charge_id else None
+    if normalized_charge_id:
+        charge = CHARGES.get(normalized_charge_id)
+        if charge is None or charge.get("customer_id") != customer_id:
+            return {
+                "found": False,
+                "customer_id": customer_id,
+                "charge_id": normalized_charge_id,
+                "missing_fields": ["matching_charge"],
+            }
+        return {"found": True, **charge}
+
+    matches = [charge for charge in CHARGES.values() if charge.get("customer_id") == customer_id]
+    if not matches:
+        return {
+            "found": False,
+            "customer_id": customer_id,
+            "missing_fields": ["charge_id_or_recent_charge"],
+        }
+    return {"found": True, "customer_id": customer_id, "charges": matches}
+
+
+def verify_order_owner(order_number: str, customer_id: str) -> dict[str, Any]:
+    """Verify that an order belongs to the current support customer."""
+    order = lookup_order(order_number)
+    if not order.get("found"):
+        return {"verified": False, **order}
+    verified = order.get("customer_id") == customer_id
+    return {
+        "verified": verified,
+        "order_id": order.get("order_id"),
+        "order_number": order.get("order_number"),
+        "customer_id": customer_id,
+        "order_customer_id": order.get("customer_id"),
+        "reason": "order_customer_match" if verified else "order_customer_mismatch",
+    }
+
+
 def create_support_action(customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
     """Create a deterministic support action record."""
     normalized_action = action_type.strip().lower()
@@ -192,5 +295,47 @@ def create_support_action(customer_id: str, action_type: str, reason: str) -> di
         "customer_id": customer_id,
         "action_type": normalized_action,
         "reason": reason,
+        "status": "created",
+    }
+
+
+def create_refund_review(
+    customer_id: str,
+    policy_id: str,
+    reason: str,
+    amount_usd: int | None = None,
+    evidence_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create a refund review record with explicit policy and evidence links."""
+    review_id = f"rr_{customer_id}_{policy_id}"
+    return {
+        "action_id": review_id,
+        "review_id": review_id,
+        "customer_id": customer_id,
+        "policy_id": policy_id,
+        "action_type": "refund_review",
+        "reason": reason,
+        "amount_usd": amount_usd,
+        "evidence_ids": evidence_ids or [],
+        "status": "created",
+    }
+
+
+def create_quality_exception_review(
+    customer_id: str,
+    order_id: str,
+    reason: str,
+    evidence_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create a quality/safety exception review for consumed products."""
+    review_id = f"qer_{customer_id}_{order_id}"
+    return {
+        "action_id": review_id,
+        "review_id": review_id,
+        "customer_id": customer_id,
+        "order_id": order_id,
+        "action_type": "courtesy_credit",
+        "reason": reason,
+        "evidence_ids": evidence_ids or [],
         "status": "created",
     }

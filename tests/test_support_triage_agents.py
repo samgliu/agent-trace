@@ -92,7 +92,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 "retrieve_policy",
                 "Read Customer Memory",
                 "Action Agent",
-                "create_support_action",
+                "create_refund_review",
                 "Validator Agent",
                 "Customer Response Generator",
             ],
@@ -163,7 +163,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
 
         action = next(span for span in trace.spans if span.name == "Action Agent")
-        create_action = next(span for span in trace.spans if span.name == "create_support_action")
+        create_action = next(span for span in trace.spans if span.name == "create_refund_review")
         self.assertEqual(trace.status, "passed")
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(action.span_data["decision_source"], "fallback")
@@ -247,7 +247,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
             [
                 {"type": "customer", "id": "cus_123"},
                 {"type": "policy", "id": "policy_refund_duplicate_charge"},
-                {"type": "action", "id": "act_cus_123_refund_review"},
+                {"type": "action", "id": "rr_cus_123_policy_refund_duplicate_charge"},
             ],
         )
         self.assertIn("Resolve verified duplicate charges", validator.output["customer_friendly_resolution"])
@@ -352,9 +352,13 @@ class SupportTriageAgentsTest(unittest.TestCase):
 
         triage = next(span for span in trace.spans if span.name == "Triage Agent")
         retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
+        order = next(span for span in trace.spans if span.name == "lookup_order")
+        owner = next(span for span in trace.spans if span.name == "verify_order_owner")
         response = next(span for span in trace.spans if span.name == "Customer Response Generator")
         self.assertEqual(triage.output["issue_type"], "consumed_product_return")
         self.assertEqual(retrieval.output["policy_id"], "policy_consumed_product_return")
+        self.assertEqual(order.output["order_id"], "ord_1234")
+        self.assertTrue(owner.output["verified"])
         self.assertIn("order number", response.output["response"].lower())
         self.assertIn("normal return", response.output["response"])
         self.assertNotIn("duplicate", response.output["response"].lower())
@@ -668,6 +672,12 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 return {"found": True, "customer_id": "cus_test"}
             if tool_name == "retrieve_policy_tool":
                 return {"found": True, "policy_id": "policy_test"}
+            if tool_name == "lookup_order_tool":
+                return {"found": True, "order_id": "ord_test"}
+            if tool_name == "lookup_charge_tool":
+                return {"found": True, "charges": [{"charge_id": "chg_test"}]}
+            if tool_name == "verify_order_owner_tool":
+                return {"verified": True, "order_id": "ord_test"}
             return {"action_id": "act_test", "status": "created"}
 
         client = McpSupportToolsClient(server_url="http://mcp.test/mcp/", call_tool=call_tool)
@@ -676,6 +686,17 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(client.retrieve_policy("duplicate_charge_refund")["policy_id"], "policy_test")
         self.assertEqual(
             client.create_support_action("cus_test", "refund_review", "reason")["action_id"],
+            "act_test",
+        )
+        self.assertEqual(client.lookup_order("#1234")["order_id"], "ord_test")
+        self.assertEqual(client.lookup_charge("cus_test")["charges"][0]["charge_id"], "chg_test")
+        self.assertTrue(client.verify_order_owner("#1234", "cus_test")["verified"])
+        self.assertEqual(
+            client.create_refund_review("cus_test", "policy_test", "reason", 20, ["cus_test"])["action_id"],
+            "act_test",
+        )
+        self.assertEqual(
+            client.create_quality_exception_review("cus_test", "ord_test", "reason", ["ord_test"])["action_id"],
             "act_test",
         )
         self.assertEqual(
@@ -689,6 +710,31 @@ class SupportTriageAgentsTest(unittest.TestCase):
                         "customer_id": "cus_test",
                         "action_type": "refund_review",
                         "reason": "reason",
+                    },
+                },
+                {"tool_name": "lookup_order_tool", "arguments": {"order_number": "#1234"}},
+                {"tool_name": "lookup_charge_tool", "arguments": {"customer_id": "cus_test", "charge_id": None}},
+                {
+                    "tool_name": "verify_order_owner_tool",
+                    "arguments": {"order_number": "#1234", "customer_id": "cus_test"},
+                },
+                {
+                    "tool_name": "create_refund_review_tool",
+                    "arguments": {
+                        "customer_id": "cus_test",
+                        "policy_id": "policy_test",
+                        "reason": "reason",
+                        "amount_usd": 20,
+                        "evidence_ids": ["cus_test"],
+                    },
+                },
+                {
+                    "tool_name": "create_quality_exception_review_tool",
+                    "arguments": {
+                        "customer_id": "cus_test",
+                        "order_id": "ord_test",
+                        "reason": "reason",
+                        "evidence_ids": ["ord_test"],
                     },
                 },
             ],

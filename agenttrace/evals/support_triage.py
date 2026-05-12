@@ -28,6 +28,8 @@ class EvalCase:
     expected_grounding_status: str | None = None
     expected_memory_warning_count: int | None = None
     expected_error_count: int | None = None
+    expected_tool_names: tuple[str, ...] = ()
+    expected_evidence_ids: tuple[str, ...] = ()
     expected_response_contains: tuple[str, ...] = ()
     expected_response_excludes: tuple[str, ...] = ()
 
@@ -135,6 +137,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_tool_names=("create_refund_review_tool",),
+        expected_evidence_ids=("cus_123", "policy_refund_duplicate_charge"),
     ),
     EvalCase(
         case_id="annual-refund-approval",
@@ -227,6 +231,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_tool_names=("lookup_order_tool", "verify_order_owner_tool"),
+        expected_evidence_ids=("cus_123", "ord_1234", "order_customer_match"),
         expected_response_contains=("order number", "normal return"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -278,6 +284,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_tool_names=("lookup_order_tool", "verify_order_owner_tool", "create_quality_exception_review_tool"),
+        expected_evidence_ids=("cus_123", "ord_1234", "policy_consumed_product_return"),
         expected_response_contains=("quality", "courtesy credit"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -369,6 +377,10 @@ def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str
         checks.append(_contains_check(f"response_contains:{expected_text}", actual["response"], expected_text))
     for rejected_text in case.expected_response_excludes:
         checks.append(_excludes_check(f"response_excludes:{rejected_text}", actual["response"], rejected_text))
+    for tool_name in case.expected_tool_names:
+        checks.append(_includes_check(f"tool_used:{tool_name}", actual["tool_names"], tool_name))
+    for evidence_id in case.expected_evidence_ids:
+        checks.append(_includes_check(f"evidence_id:{evidence_id}", actual["evidence_ids"], evidence_id))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
 
 
@@ -388,6 +400,8 @@ def _actual_values(trace: Trace) -> dict[str, Any]:
         "memory_warning_count": summary["memory_warning_count"],
         "error_count": summary["error_count"],
         "response": _dict_value(response_span.output if response_span else None, "response") or "",
+        "tool_names": _tool_names(trace),
+        "evidence_ids": _evidence_ids(trace),
     }
 
 
@@ -399,6 +413,33 @@ def _dict_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return None
+
+
+def _tool_names(trace: Trace) -> list[str]:
+    names: list[str] = []
+    for span in trace.spans:
+        tool_name = span.span_data.get("tool_name")
+        if isinstance(tool_name, str):
+            names.append(tool_name)
+    return names
+
+
+def _evidence_ids(trace: Trace) -> list[str]:
+    ids: list[str] = []
+    for span in trace.spans:
+        if isinstance(span.output, dict):
+            for key in ("evidence_ids", "evidence"):
+                value = span.output.get(key)
+                if isinstance(value, list):
+                    ids.extend(str(item) for item in value)
+            grounding_evidence = span.output.get("grounding_evidence")
+            if isinstance(grounding_evidence, list):
+                ids.extend(
+                    str(item["id"])
+                    for item in grounding_evidence
+                    if isinstance(item, dict) and item.get("id") is not None
+                )
+    return list(dict.fromkeys(ids))
 
 
 def _check(name: str, expected: Any, actual: Any) -> EvalCheck:
@@ -420,4 +461,13 @@ def _excludes_check(name: str, actual: str, rejected_text: str) -> EvalCheck:
         expected=f"excludes {rejected_text}",
         actual=actual,
         passed=rejected_text.lower() not in actual.lower(),
+    )
+
+
+def _includes_check(name: str, actual: list[str], expected_text: str) -> EvalCheck:
+    return EvalCheck(
+        name=name,
+        expected=f"includes {expected_text}",
+        actual=actual,
+        passed=expected_text in actual,
     )

@@ -1,6 +1,15 @@
 import unittest
 
-from agenttrace.mcp_tools.tools import create_support_action, lookup_customer, retrieve_policy
+from agenttrace.mcp_tools.tools import (
+    create_quality_exception_review,
+    create_refund_review,
+    create_support_action,
+    lookup_charge,
+    lookup_customer,
+    lookup_order,
+    retrieve_policy,
+    verify_order_owner,
+)
 
 
 class McpToolsTest(unittest.TestCase):
@@ -40,6 +49,28 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(result["requires_approval"])
         self.assertIn("refund_review", result["allowed_actions"])
 
+    def test_lookup_order_returns_order_evidence(self) -> None:
+        result = lookup_order("#1234")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["order_id"], "ord_1234")
+        self.assertFalse(result["returnable"])
+        self.assertTrue(result["quality_exception_eligible"])
+
+    def test_lookup_charge_returns_customer_charge_evidence(self) -> None:
+        result = lookup_charge("cus_123")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["charges"][0]["charge_id"], "chg_dup_001")
+
+    def test_verify_order_owner_records_match_and_mismatch(self) -> None:
+        matched = verify_order_owner("#1234", "cus_123")
+        mismatched = verify_order_owner("#1234", "cus_other")
+
+        self.assertTrue(matched["verified"])
+        self.assertFalse(mismatched["verified"])
+        self.assertEqual(mismatched["reason"], "order_customer_mismatch")
+
     def test_create_support_action_returns_action_record(self) -> None:
         result = create_support_action(
             customer_id="cus_123",
@@ -63,6 +94,31 @@ class McpToolsTest(unittest.TestCase):
     def test_create_support_action_rejects_unknown_action(self) -> None:
         with self.assertRaises(ValueError):
             create_support_action(customer_id="cus_123", action_type="wire_money", reason="Not allowed.")
+
+    def test_create_refund_review_returns_policy_linked_record(self) -> None:
+        result = create_refund_review(
+            customer_id="cus_123",
+            policy_id="policy_refund_duplicate_charge",
+            reason="Duplicate charge detected.",
+            amount_usd=20,
+            evidence_ids=["cus_123", "policy_refund_duplicate_charge"],
+        )
+
+        self.assertEqual(result["action_type"], "refund_review")
+        self.assertEqual(result["amount_usd"], 20)
+        self.assertEqual(result["evidence_ids"], ["cus_123", "policy_refund_duplicate_charge"])
+
+    def test_create_quality_exception_review_returns_order_linked_record(self) -> None:
+        result = create_quality_exception_review(
+            customer_id="cus_123",
+            order_id="ord_1234",
+            reason="Moldy groceries reported.",
+            evidence_ids=["cus_123", "ord_1234"],
+        )
+
+        self.assertEqual(result["action_type"], "courtesy_credit")
+        self.assertEqual(result["order_id"], "ord_1234")
+        self.assertEqual(result["status"], "created")
 
 
 if __name__ == "__main__":
