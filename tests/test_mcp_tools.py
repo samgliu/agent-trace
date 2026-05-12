@@ -7,6 +7,7 @@ from agenttrace.mcp_tools.tools import (
     lookup_charge,
     lookup_customer,
     lookup_order,
+    lookup_subscription,
     retrieve_policy,
     verify_order_owner,
 )
@@ -62,6 +63,14 @@ class McpToolsTest(unittest.TestCase):
 
         self.assertTrue(result["found"])
         self.assertEqual(result["charges"][0]["charge_id"], "chg_dup_001")
+
+    def test_lookup_subscription_returns_subscription_evidence(self) -> None:
+        result = lookup_subscription("cus_annual_800")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["subscription_id"], "sub_annual_800")
+        self.assertEqual(result["plan"], "Annual Pro")
+        self.assertEqual(result["billing_period"], "annual")
 
     def test_verify_order_owner_records_match_and_mismatch(self) -> None:
         matched = verify_order_owner("#1234", "cus_123")

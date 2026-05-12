@@ -5,6 +5,7 @@ from agent_apps.customer_service.domain import (
     CUSTOMERS,
     ORDERS,
     POLICIES,
+    SUBSCRIPTIONS,
     VALID_ACTIONS,
     create_quality_exception_review,
     create_refund_review,
@@ -12,6 +13,7 @@ from agent_apps.customer_service.domain import (
     lookup_charge,
     lookup_customer,
     lookup_order,
+    lookup_subscription,
     retrieve_policy,
     verify_order_owner,
 )
@@ -21,6 +23,7 @@ __all__ = [
     "CUSTOMERS",
     "ORDERS",
     "POLICIES",
+    "SUBSCRIPTIONS",
     "VALID_ACTIONS",
     "create_quality_exception_review",
     "create_refund_review",
@@ -28,6 +31,7 @@ __all__ = [
     "lookup_charge",
     "lookup_customer",
     "lookup_order",
+    "lookup_subscription",
     "retrieve_policy",
     "verify_order_owner",
 ]

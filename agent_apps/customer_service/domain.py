@@ -100,6 +100,32 @@ CHARGES: dict[str, dict[str, Any]] = {
 }
 
 
+SUBSCRIPTIONS: dict[str, dict[str, Any]] = {
+    "sub_cus_123_pro": {
+        "subscription_id": "sub_cus_123_pro",
+        "customer_id": "cus_123",
+        "plan": "Pro",
+        "billing_period": "monthly",
+        "status": "active",
+        "last_charge_id": "chg_dup_001",
+        "last_charge_amount_usd": 20,
+        "last_charge_created_days_ago": 1,
+        "refund_window_days": 180,
+    },
+    "sub_annual_800": {
+        "subscription_id": "sub_annual_800",
+        "customer_id": "cus_annual_800",
+        "plan": "Annual Pro",
+        "billing_period": "annual",
+        "status": "active",
+        "last_charge_id": "chg_annual_800",
+        "last_charge_amount_usd": 800,
+        "last_charge_created_days_ago": 24,
+        "refund_window_days": 180,
+    },
+}
+
+
 POLICIES: dict[str, dict[str, Any]] = {
     "duplicate_charge_refund": {
         "policy_id": "policy_refund_duplicate_charge",
@@ -266,6 +292,19 @@ def lookup_charge(customer_id: str, charge_id: str | None = None) -> dict[str, A
             "missing_fields": ["charge_id_or_recent_charge"],
         }
     return {"found": True, "customer_id": customer_id, "charges": matches}
+
+
+def lookup_subscription(customer_id: str) -> dict[str, Any]:
+    """Return active subscription evidence for a customer."""
+    matches = [subscription for subscription in SUBSCRIPTIONS.values() if subscription.get("customer_id") == customer_id]
+    if not matches:
+        return {
+            "found": False,
+            "customer_id": customer_id,
+            "missing_fields": ["active_subscription"],
+        }
+    primary = matches[0]
+    return {"found": True, **primary}
 
 
 def verify_order_owner(order_number: str, customer_id: str) -> dict[str, Any]:

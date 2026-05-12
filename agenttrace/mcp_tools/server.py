@@ -15,6 +15,7 @@ from agenttrace.mcp_tools.tools import (
     lookup_charge,
     lookup_customer,
     lookup_order,
+    lookup_subscription,
     retrieve_policy,
     verify_order_owner,
 )
@@ -47,6 +48,12 @@ def lookup_order_tool(order_number: str) -> dict:
 def lookup_charge_tool(customer_id: str, charge_id: str | None = None) -> dict:
     """Look up charge evidence by customer and optional charge ID."""
     return _tool_result(lambda: lookup_charge(customer_id=customer_id, charge_id=charge_id))
+
+
+@mcp.tool
+def lookup_subscription_tool(customer_id: str) -> dict:
+    """Look up active subscription evidence by customer."""
+    return _tool_result(lambda: lookup_subscription(customer_id=customer_id))
 
 
 @mcp.tool
