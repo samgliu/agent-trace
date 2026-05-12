@@ -245,7 +245,10 @@ function App() {
     offset: 0,
   });
   const [refreshKey, setRefreshKey] = useState(0);
-  const chatRefreshTimerRef = useRef<number | null>(null);
+  const chatSessionIdRef = useRef<string | null>(null);
+  const liveWorkflowRunIdRef = useRef<string | null>(null);
+  chatSessionIdRef.current = chatSession?.session_id ?? null;
+  liveWorkflowRunIdRef.current = liveWorkflowRun?.run_id ?? null;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -257,14 +260,6 @@ function App() {
   useEffect(() => {
     loadChatSessions();
     loadEvalRuns();
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (chatRefreshTimerRef.current !== null) {
-        window.clearTimeout(chatRefreshTimerRef.current);
-      }
-    };
   }, []);
 
   useEffect(() => {
@@ -295,7 +290,7 @@ function App() {
       });
     });
     return () => events.close();
-  }, [chatSession?.session_id, liveWorkflowRun?.run_id, selectedTraceId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -406,12 +401,12 @@ function App() {
 
   function handleServerEvent(event: ServerEvent | null) {
     if (!event) return;
-    if (event.type.startsWith("chat.") && event.session_id && event.session_id === chatSession?.session_id) {
+    if (event.type.startsWith("chat.") && event.session_id && event.session_id === chatSessionIdRef.current) {
       if (event.type === "chat.turn.completed" || event.type === "chat.turn.failed" || event.type === "chat.message.created") {
-        scheduleChatMessagesRefresh(event.session_id);
+        refreshChatMessages(event.session_id);
       }
     }
-    if (event.type.startsWith("workflow_run.") && event.run_id && event.run_id === liveWorkflowRun?.run_id) {
+    if (event.type.startsWith("workflow_run.") && event.run_id && event.run_id === liveWorkflowRunIdRef.current) {
       refreshWorkflowRun(event.run_id);
     }
     if (
@@ -427,16 +422,6 @@ function App() {
       loadEvalRuns();
       setRefreshKey((value) => value + 1);
     }
-  }
-
-  function scheduleChatMessagesRefresh(sessionId: string) {
-    if (chatRefreshTimerRef.current !== null) {
-      window.clearTimeout(chatRefreshTimerRef.current);
-    }
-    chatRefreshTimerRef.current = window.setTimeout(() => {
-      chatRefreshTimerRef.current = null;
-      refreshChatMessages(sessionId);
-    }, 250);
   }
 
   async function refreshChatMessages(sessionId: string) {
