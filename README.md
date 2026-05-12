@@ -308,6 +308,8 @@ POST   /chat/sessions
 GET    /chat/sessions
 GET    /chat/sessions/{session_id}
 POST   /chat/sessions/{session_id}/messages
+POST   /chat/sessions/{session_id}/messages/async
+GET    /events
 
 POST   /workflows/support-triage/runs
 POST   /workflows/support-triage/runs/live
