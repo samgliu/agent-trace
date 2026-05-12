@@ -11,8 +11,8 @@ metadata, and eval results.
 ## What It Demonstrates
 
 - Trace ingestion for AgentTrace JSON and OpenAI Agents-style exports/events.
-- A Dockerized FastAPI backend, React dashboard, SQLite store, and FastMCP tool
-  service.
+- A Dockerized AgentTrace API, standalone agent service, React dashboard,
+  SQLite store, and FastMCP tool service.
 - A customer-service multi-agent workflow under `agent_apps/customer_service`.
 - Live workflow execution with partial span polling, cancellation, retry, and
   trace lifecycle tracking.
@@ -27,10 +27,13 @@ metadata, and eval results.
 
 ## Architecture
 
-AgentTrace keeps the agent workflow, tool boundary, and model provider separate:
+AgentTrace keeps the agent workflow, observability backend, tool boundary, and
+model provider separate:
 
 ```text
 Customer Service App / Chat UI
+        |
+Customer-Service Agent Service
         |
 Multi-Agent Orchestrator
    |-- MCP tools
@@ -44,8 +47,12 @@ Multi-Agent Orchestrator
       Provider Adapters
         OpenAI | Gemini | Anthropic | Local LLM
 
+        |
+AgentTrace API
+
 AgentTrace observes traces, spans, model calls, tool calls, retrieval, memory,
-approvals, evals, latency, tokens, cost, and failures.
+approvals, evals, latency, tokens, cost, and failures. The agent service can be
+called directly by other services without going through the dashboard.
 ```
 
 Deterministic mode is the default so tests and demos are repeatable without API
@@ -58,7 +65,7 @@ OpenRouter, local vLLM, and similar gateways.
 Start the full local stack:
 
 ```bash
-docker compose up -d --build api web mcp-tools
+docker compose up -d --build api web agent-service mcp-tools
 ```
 
 Open:
@@ -66,6 +73,7 @@ Open:
 ```text
 Dashboard: http://localhost:5173
 API docs:  http://localhost:8000/docs
+Agent:     http://localhost:8020/health
 MCP tools: http://localhost:8010/health
 ```
 
@@ -135,7 +143,26 @@ It models a production-style support workflow:
   controls.
 - Customer Response Generator writes the final customer-facing reply.
 
-The API uses the FastMCP tools service in Docker through:
+The standalone agent service runs at:
+
+```text
+http://localhost:8020
+```
+
+Direct run endpoint:
+
+```text
+POST /runs/support-triage
+```
+
+The AgentTrace API delegates chat/workflow execution to this service in Docker
+through:
+
+```text
+AGENTTRACE_AGENT_SERVICE_URL=http://agent-service:8020
+```
+
+The agent service uses the FastMCP tools service through:
 
 ```text
 AGENTTRACE_MCP_TOOLS_URL=http://mcp-tools:8010/mcp/
@@ -222,10 +249,10 @@ LLM_MODEL=...
 LLM_BASE_URL=http://gateway.example/v1
 ```
 
-After changing `.env`, recreate the API container:
+After changing `.env`, recreate the agent service and API containers:
 
 ```bash
-docker compose up -d --force-recreate api
+docker compose up -d --force-recreate agent-service api
 ```
 
 Set `use_openai: true` on workflow or chat requests to use the configured

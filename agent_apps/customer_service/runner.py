@@ -288,33 +288,37 @@ class McpSupportToolsClient(SupportToolsClient):
         self._call_tool = call_tool or self._call_fastmcp_tool
 
     def lookup_customer(self, email: str) -> dict[str, Any]:
-        return _run_async_tool(self._call_tool("lookup_customer_tool", {"email": email}))
+        return _mcp_tool_result(_run_async_tool(self._call_tool("lookup_customer_tool", {"email": email})))
 
     def retrieve_policy(self, topic: str) -> dict[str, Any]:
-        return _run_async_tool(self._call_tool("retrieve_policy_tool", {"topic": topic}))
+        return _mcp_tool_result(_run_async_tool(self._call_tool("retrieve_policy_tool", {"topic": topic})))
 
     def lookup_order(self, order_number: str) -> dict[str, Any]:
-        return _run_async_tool(self._call_tool("lookup_order_tool", {"order_number": order_number}))
+        return _mcp_tool_result(_run_async_tool(self._call_tool("lookup_order_tool", {"order_number": order_number})))
 
     def lookup_charge(self, customer_id: str, charge_id: str | None = None) -> dict[str, Any]:
-        return _run_async_tool(
-            self._call_tool("lookup_charge_tool", {"customer_id": customer_id, "charge_id": charge_id})
+        return _mcp_tool_result(
+            _run_async_tool(self._call_tool("lookup_charge_tool", {"customer_id": customer_id, "charge_id": charge_id}))
         )
 
     def verify_order_owner(self, order_number: str, customer_id: str) -> dict[str, Any]:
-        return _run_async_tool(
-            self._call_tool("verify_order_owner_tool", {"order_number": order_number, "customer_id": customer_id})
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool("verify_order_owner_tool", {"order_number": order_number, "customer_id": customer_id})
+            )
         )
 
     def create_support_action(self, customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
-        return _run_async_tool(
-            self._call_tool(
-                "create_support_action_tool",
-                {
-                    "customer_id": customer_id,
-                    "action_type": action_type,
-                    "reason": reason,
-                },
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "create_support_action_tool",
+                    {
+                        "customer_id": customer_id,
+                        "action_type": action_type,
+                        "reason": reason,
+                    },
+                )
             )
         )
 
@@ -326,16 +330,18 @@ class McpSupportToolsClient(SupportToolsClient):
         amount_usd: int | None = None,
         evidence_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        return _run_async_tool(
-            self._call_tool(
-                "create_refund_review_tool",
-                {
-                    "customer_id": customer_id,
-                    "policy_id": policy_id,
-                    "reason": reason,
-                    "amount_usd": amount_usd,
-                    "evidence_ids": evidence_ids,
-                },
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "create_refund_review_tool",
+                    {
+                        "customer_id": customer_id,
+                        "policy_id": policy_id,
+                        "reason": reason,
+                        "amount_usd": amount_usd,
+                        "evidence_ids": evidence_ids,
+                    },
+                )
             )
         )
 
@@ -346,15 +352,17 @@ class McpSupportToolsClient(SupportToolsClient):
         reason: str,
         evidence_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        return _run_async_tool(
-            self._call_tool(
-                "create_quality_exception_review_tool",
-                {
-                    "customer_id": customer_id,
-                    "order_id": order_id,
-                    "reason": reason,
-                    "evidence_ids": evidence_ids,
-                },
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "create_quality_exception_review_tool",
+                    {
+                        "customer_id": customer_id,
+                        "order_id": order_id,
+                        "reason": reason,
+                        "evidence_ids": evidence_ids,
+                    },
+                )
             )
         )
 
@@ -945,15 +953,23 @@ def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_co
     if not use_openai:
         llm_client: LLMClient = StaticLLMClient()
     elif openai_api == "responses":
-        llm_client = OpenAIResponsesClient()
+        llm_client = OpenAIResponsesClient(timeout_seconds=_llm_timeout_seconds())
     else:
-        llm_client = OpenAIChatCompletionsClient()
+        llm_client = OpenAIChatCompletionsClient(timeout_seconds=_llm_timeout_seconds())
     tools_client: SupportToolsClient
     if os.environ.get("AGENTTRACE_MCP_TOOLS_URL"):
         tools_client = McpSupportToolsClient()
     else:
         tools_client = LocalSupportToolsClient()
     return SupportTriageRunner(llm_client=llm_client, tools_client=tools_client, use_llm_agents=use_openai)
+
+
+def _llm_timeout_seconds() -> float:
+    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "45")
+    try:
+        return max(1.0, float(raw_value))
+    except ValueError:
+        return 45.0
 
 
 def resolve_model_config(
@@ -1090,6 +1106,19 @@ def _run_async_tool(awaitable: Awaitable[dict[str, Any]]) -> dict[str, Any]:
     except RuntimeError:
         return asyncio.run(awaitable)
     raise RuntimeError("McpSupportToolsClient cannot run inside an active event loop")
+
+
+def _mcp_tool_result(data: dict[str, Any]) -> dict[str, Any]:
+    error = data.get("error")
+    if data.get("ok") is False and isinstance(error, dict):
+        error_type = str(error.get("type") or "RuntimeError")
+        message = str(error.get("message") or "MCP tool failed.")
+        if error_type == "TimeoutError":
+            raise TimeoutError(message)
+        if error_type == "ValueError":
+            raise ValueError(message)
+        raise RuntimeError(message)
+    return data
 
 
 def _span(

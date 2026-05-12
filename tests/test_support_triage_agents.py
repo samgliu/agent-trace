@@ -656,6 +656,14 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIsInstance(runner.llm_client, OpenAIChatCompletionsClient)
         self.assertTrue(runner.use_llm_agents)
         self.assertEqual(runner.llm_client.provider_name, "openai-chat-completions")
+        self.assertEqual(runner.llm_client.timeout_seconds, 45.0)
+
+    def test_openai_runner_can_configure_llm_timeout(self) -> None:
+        with patch.dict("os.environ", {"AGENTTRACE_LLM_TIMEOUT_SECONDS": "90"}):
+            runner = build_default_runner(use_openai=True)
+
+        self.assertIsInstance(runner.llm_client, OpenAIChatCompletionsClient)
+        self.assertEqual(runner.llm_client.timeout_seconds, 90.0)
 
     def test_default_openai_runner_can_select_responses_api(self) -> None:
         runner = build_default_runner(use_openai=True, openai_api="responses")
@@ -739,6 +747,21 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 },
             ],
         )
+
+    def test_mcp_support_tools_client_raises_structured_tool_errors(self) -> None:
+        async def call_tool(tool_name: str, arguments: dict) -> dict:
+            return {
+                "ok": False,
+                "error": {
+                    "type": "TimeoutError",
+                    "message": "support-tools-mcp did not respond within 1500ms",
+                },
+            }
+
+        client = McpSupportToolsClient(server_url="http://mcp.test/mcp/", call_tool=call_tool)
+
+        with self.assertRaisesRegex(TimeoutError, "support-tools-mcp did not respond"):
+            client.lookup_customer("timeout@example.com")
 
     def test_default_runner_uses_mcp_tools_when_url_is_configured(self) -> None:
         with patch.dict("os.environ", {"AGENTTRACE_MCP_TOOLS_URL": "http://mcp.test/mcp/"}):

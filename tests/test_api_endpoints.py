@@ -294,6 +294,72 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["metadata"]["source_format"], "agenttrace")
 
+    def test_run_support_triage_workflow_can_delegate_to_agent_service(self) -> None:
+        captured_payloads: list[dict[str, object]] = []
+
+        def post_agent_service_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+            captured_payloads.append({"url": url, "payload": payload})
+            return {
+                "trace": Trace(
+                    trace_id=str(payload["trace_id"]),
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"source": "agent-service-test"},
+                ).to_dict(),
+                "assistant_response": "done",
+            }
+
+        with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
+            with patch("agenttrace.api.main._post_agent_service_json", side_effect=post_agent_service_json):
+                response = self.client.post(
+                    "/workflows/support-triage/runs",
+                    json={
+                        "trace_id": "trace_api_delegated_runner",
+                        "message": "Refund?",
+                        "customer_email": "customer@example.com",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["trace_id"], "trace_api_delegated_runner")
+        self.assertEqual(
+            captured_payloads,
+            [
+                {
+                    "url": "http://agent-service.test/runs/support-triage",
+                    "payload": {
+                        "message": "Refund?",
+                        "customer_email": "customer@example.com",
+                        "trace_id": "trace_api_delegated_runner",
+                        "conversation_history": [],
+                        "use_openai": False,
+                        "openai_api": "chat_completions",
+                    },
+                }
+            ],
+        )
+
+    def test_run_support_triage_workflow_returns_clean_agent_service_timeout(self) -> None:
+        with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
+            with patch("agenttrace.api.main.urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+                response = self.client.post(
+                    "/workflows/support-triage/runs",
+                    json={
+                        "trace_id": "trace_api_delegated_timeout",
+                        "message": "Refund?",
+                        "customer_email": "customer@example.com",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json()["detail"], "Agent service timed out while running the workflow.")
+
+    def test_agent_service_timeout_defaults_to_real_llm_budget(self) -> None:
+        from agenttrace.api.main import _agent_service_timeout_seconds
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_agent_service_timeout_seconds(), 300.0)
+
     def test_live_support_triage_workflow_can_be_polled_until_trace_is_ready(self) -> None:
         response = self.client.post(
             "/workflows/support-triage/runs/live",
@@ -571,6 +637,41 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(captured_history[0], [])
         self.assertEqual([item["role"] for item in captured_history[1]], ["user", "assistant"])
         self.assertEqual(captured_history[1][0]["content"], "First message")
+
+    def test_chat_message_delegates_history_to_agent_service_when_configured(self) -> None:
+        captured_payloads: list[dict[str, object]] = []
+
+        def post_agent_service_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+            captured_payloads.append({"url": url, "payload": payload})
+            return {
+                "trace": Trace(
+                    trace_id=str(payload["trace_id"]),
+                    workflow_name="support-triage",
+                    status="passed",
+                    metadata={"source": "agent-service-test"},
+                ).to_dict(),
+                "assistant_response": "done",
+            }
+
+        session_response = self.client.post(
+            "/chat/sessions",
+            json={"customer_email": "customer@example.com", "title": "Billing support"},
+        )
+        session = session_response.json()
+
+        with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
+            with patch("agenttrace.api.main._post_agent_service_json", side_effect=post_agent_service_json):
+                self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "First"})
+                response = self.client.post(
+                    f"/chat/sessions/{session['session_id']}/messages",
+                    json={"content": "Second"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        second_payload = captured_payloads[1]["payload"]
+        self.assertEqual(second_payload["message"], "Second")
+        self.assertEqual(len(second_payload["conversation_history"]), 2)
+        self.assertEqual(second_payload["conversation_history"][0]["content"], "First")
 
     def test_chat_message_missing_session_returns_404(self) -> None:
         response = self.client.post("/chat/sessions/missing-session/messages", json={"content": "Hello"})
