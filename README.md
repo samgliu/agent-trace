@@ -228,6 +228,7 @@ Gemini through its OpenAI-compatible endpoint:
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 ```
 
@@ -246,8 +247,13 @@ Generic gateway:
 LLM_PROVIDER=openai-compatible
 LLM_API_KEY=...
 LLM_MODEL=...
+LLM_FALLBACK_MODELS=...
 LLM_BASE_URL=http://gateway.example/v1
 ```
+
+Fallback models are comma-separated and tried only for provider capacity errors
+such as HTTP 429, 503, or 529. Provider-specific fallback variables, such as
+`GEMINI_FALLBACK_MODELS`, take precedence over `LLM_FALLBACK_MODELS`.
 
 After changing `.env`, recreate the agent service and API containers:
 

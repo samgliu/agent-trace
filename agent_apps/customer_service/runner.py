@@ -51,6 +51,7 @@ class ModelConfig:
     api_key: str | None
     model: str
     base_url: str
+    fallback_models: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ class OpenAIChatCompletionsClient(LLMClient):
         self.provider_name = f"{config.provider}-chat-completions"
         self.api_key = config.api_key
         self.model = config.model
+        self.models = (config.model, *config.fallback_models)
         self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
@@ -124,20 +126,20 @@ class OpenAIChatCompletionsClient(LLMClient):
                 f"Set {env_prefix}_API_KEY or LLM_API_KEY."
             )
 
-        payload = self._post_json(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
+        payload = _post_with_model_fallback(
+            post_json=self._post_json,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout_seconds=self.timeout_seconds,
+            models=self.models,
+            path="/chat/completions",
+            payload_for_model=lambda model: {
+                "model": model,
                 "messages": [
                     {"role": "system", "content": instructions},
                     {"role": "user", "content": input_text},
                 ],
             },
-            timeout=self.timeout_seconds,
         )
         usage = payload.get("usage") or {}
         choices = payload.get("choices") or []
@@ -166,6 +168,7 @@ class OpenAIResponsesClient(LLMClient):
         self.provider_name = f"{config.provider}-responses"
         self.api_key = config.api_key
         self.model = config.model
+        self.models = (config.model, *config.fallback_models)
         self.base_url = config.base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._post_json = post_json or _post_json
@@ -174,19 +177,19 @@ class OpenAIResponsesClient(LLMClient):
         if not self.api_key:
             raise RuntimeError("LLM API key is required. Set OPENAI_API_KEY or LLM_API_KEY.")
 
-        payload = self._post_json(
-            f"{self.base_url}/responses",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
+        payload = _post_with_model_fallback(
+            post_json=self._post_json,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout_seconds=self.timeout_seconds,
+            models=self.models,
+            path="/responses",
+            payload_for_model=lambda model: {
+                "model": model,
                 "reasoning": {"effort": "low"},
                 "instructions": instructions,
                 "input": input_text,
             },
-            timeout=self.timeout_seconds,
         )
         usage = payload.get("usage") or {}
         return LLMResponse(
@@ -986,6 +989,7 @@ def resolve_model_config(
         api_key=api_key or _first_env(f"{env_prefix}_API_KEY", "LLM_API_KEY", "AGENTTRACE_MODEL_API_KEY", "OPENAI_API_KEY"),
         model=model or _configured_model(env_prefix, provider),
         base_url=base_url or _configured_base_url(env_prefix, provider),
+        fallback_models=_configured_fallback_models(env_prefix),
     )
 
 
@@ -1005,6 +1009,13 @@ def _configured_model(env_prefix: str, provider: str) -> str:
         "local": "local-model",
     }
     return defaults.get(provider, "gpt-5")
+
+
+def _configured_fallback_models(env_prefix: str) -> tuple[str, ...]:
+    configured = _first_env(f"{env_prefix}_FALLBACK_MODELS", "LLM_FALLBACK_MODELS", "AGENTTRACE_MODEL_FALLBACKS")
+    if not configured:
+        return ()
+    return tuple(model.strip() for model in configured.split(",") if model.strip())
 
 
 def _configured_base_url(env_prefix: str, provider: str) -> str:
@@ -1071,6 +1082,41 @@ def _post_json(url: str, *, headers: dict[str, str], json: dict[str, Any], timeo
     except httpx.HTTPError as exc:
         raise RuntimeError(f"LLM provider request failed: {exc}") from exc
     return response.json()
+
+
+def _post_with_model_fallback(
+    *,
+    post_json: PostJson,
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+    models: tuple[str, ...],
+    path: str,
+    payload_for_model: Callable[[str], dict[str, Any]],
+) -> dict[str, Any]:
+    last_error: RuntimeError | None = None
+    for model in models:
+        try:
+            return post_json(
+                f"{base_url}{path}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload_for_model(model),
+                timeout=timeout_seconds,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+            if model == models[-1] or not _is_retryable_model_capacity_error(str(exc)):
+                raise
+    assert last_error is not None
+    raise last_error
+
+
+def _is_retryable_model_capacity_error(message: str) -> bool:
+    retryable_markers = ("HTTP 429", "HTTP 503", "HTTP 529", "RESOURCE_EXHAUSTED", "UNAVAILABLE")
+    return any(marker in message for marker in retryable_markers)
 
 
 def _provider_http_error_message(status_code: int, response_text: str) -> str:

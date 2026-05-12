@@ -24,6 +24,12 @@ export type ChatTurnResponse<Trace = unknown> = {
   trace: Trace;
 };
 
+export type AsyncChatTurnResponse = {
+  session: ChatSession;
+  user_message: ChatMessage;
+  assistant_message: ChatMessage;
+};
+
 export type ChatTransport = <T>(path: string, body?: unknown) => Promise<T>;
 export type ChatGetTransport = <T>(path: string) => Promise<T>;
 export type LLMProvider = "deterministic" | "openai_compatible";
@@ -90,6 +96,10 @@ export function getChatSession(transport: ChatGetTransport, sessionId: string): 
   return transport(`/chat/sessions/${sessionId}`);
 }
 
+export function getChatMessages(transport: ChatGetTransport, sessionId: string): Promise<ChatMessage[]> {
+  return transport(`/chat/sessions/${sessionId}/messages`);
+}
+
 export function createChatSession(
   transport: ChatTransport,
   input: { customerEmail: string; title?: string },
@@ -106,6 +116,18 @@ export function sendChatMessage<Trace>(
   input: { content: string; llmProvider?: LLMProvider; openaiApi?: "chat_completions" | "responses" },
 ): Promise<ChatTurnResponse<Trace>> {
   return transport(`/chat/sessions/${sessionId}/messages`, {
+    content: input.content,
+    use_openai: input.llmProvider === "openai_compatible",
+    openai_api: input.openaiApi ?? "chat_completions",
+  });
+}
+
+export function sendChatMessageAsync(
+  transport: ChatTransport,
+  sessionId: string,
+  input: { content: string; llmProvider?: LLMProvider; openaiApi?: "chat_completions" | "responses" },
+): Promise<AsyncChatTurnResponse> {
+  return transport(`/chat/sessions/${sessionId}/messages/async`, {
     content: input.content,
     use_openai: input.llmProvider === "openai_compatible",
     openai_api: input.openaiApi ?? "chat_completions",

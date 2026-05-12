@@ -491,6 +491,53 @@ class SQLiteTraceStore:
             ).fetchall()
         return [_chat_message_from_row(row) for row in rows]
 
+    def update_chat_message(
+        self,
+        message_id: str,
+        *,
+        content: str | None = None,
+        trace_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT message_id, session_id, role, content, trace_id, metadata_json, created_at
+                FROM chat_messages
+                WHERE message_id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Chat message not found: {message_id}")
+            current = _chat_message_from_row(row)
+            next_content = current["content"] if content is None else content
+            next_trace_id = current["trace_id"] if trace_id is None else trace_id
+            next_metadata = current["metadata"] if metadata is None else metadata
+            connection.execute(
+                """
+                UPDATE chat_messages
+                SET content = ?, trace_id = ?, metadata_json = ?
+                WHERE message_id = ?
+                """,
+                (next_content, next_trace_id, _to_json(next_metadata), message_id),
+            )
+            connection.execute(
+                """
+                UPDATE chat_sessions
+                SET updated_at = ?
+                WHERE session_id = ?
+                """,
+                (_utc_now(), current["session_id"]),
+            )
+            connection.commit()
+        return {
+            **current,
+            "content": next_content,
+            "trace_id": next_trace_id,
+            "metadata": next_metadata,
+        }
+
     def save_trace(self, trace: Trace) -> None:
         with closing(self._connect()) as connection:
             connection.execute(

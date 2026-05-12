@@ -558,6 +558,58 @@ class SupportTriageAgentsTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "HTTP 429"):
             client.generate(instructions="Follow policy.", input_text="Customer context.")
 
+    def test_openai_chat_completions_client_falls_back_on_capacity_errors(self) -> None:
+        calls: list[str] = []
+
+        def post_json(url: str, *, headers: dict, json: dict, timeout: float) -> dict:
+            calls.append(json["model"])
+            if json["model"] == "gemini-primary":
+                raise RuntimeError("LLM provider request failed with HTTP 503: UNAVAILABLE")
+            return {
+                "choices": [{"message": {"content": "Fallback model answered."}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+
+        with patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "gemini", "GEMINI_FALLBACK_MODELS": "gemini-fallback"},
+            clear=True,
+        ):
+            client = OpenAIChatCompletionsClient(
+                api_key="test-key",
+                model="gemini-primary",
+                base_url="http://llm.test/v1",
+                post_json=post_json,
+            )
+
+        response = client.generate(instructions="Follow policy.", input_text="Customer context.")
+
+        self.assertEqual(response.output_text, "Fallback model answered.")
+        self.assertEqual(calls, ["gemini-primary", "gemini-fallback"])
+
+    def test_openai_chat_completions_client_does_not_fallback_on_non_capacity_errors(self) -> None:
+        calls: list[str] = []
+
+        def post_json(url: str, *, headers: dict, json: dict, timeout: float) -> dict:
+            calls.append(json["model"])
+            raise RuntimeError("LLM provider request failed with HTTP 400.")
+
+        with patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "gemini", "GEMINI_FALLBACK_MODELS": "gemini-fallback"},
+            clear=True,
+        ):
+            client = OpenAIChatCompletionsClient(
+                api_key="test-key",
+                model="gemini-primary",
+                base_url="http://llm.test/v1",
+                post_json=post_json,
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "HTTP 400"):
+            client.generate(instructions="Follow policy.", input_text="Customer context.")
+        self.assertEqual(calls, ["gemini-primary"])
+
     def test_provider_http_error_message_includes_provider_detail(self) -> None:
         message = _provider_http_error_message(
             429,
@@ -595,6 +647,23 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(config.api_key, "gemini-key")
         self.assertEqual(config.model, "gemini-test")
         self.assertEqual(config.base_url, "https://generativelanguage.googleapis.com/v1beta/openai")
+
+    def test_model_config_uses_provider_specific_fallback_models(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "LLM_PROVIDER": "gemini",
+                "GEMINI_API_KEY": "gemini-key",
+                "GEMINI_MODEL": "gemini-primary",
+                "GEMINI_FALLBACK_MODELS": "gemini-fallback-a, gemini-fallback-b",
+                "LLM_FALLBACK_MODELS": "generic-fallback",
+            },
+            clear=True,
+        ):
+            config = resolve_model_config()
+
+        self.assertEqual(config.model, "gemini-primary")
+        self.assertEqual(config.fallback_models, ("gemini-fallback-a", "gemini-fallback-b"))
 
     def test_model_config_uses_provider_specific_base_url_before_generic_gateway_settings(self) -> None:
         with patch.dict(

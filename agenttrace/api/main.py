@@ -123,33 +123,6 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         saved_run = workflow_runs.get(run["run_id"]) or run
         return {**saved_run, "trace": _require_trace(trace_store, live_trace_id).to_dict()}
 
-    def run_support_triage_agent(
-        *,
-        message: str,
-        customer_email: str,
-        trace_id: str | None = None,
-        conversation_history: list[dict[str, Any]] | None = None,
-        use_openai: bool = False,
-        openai_api: str = "chat_completions",
-    ) -> Trace:
-        agent_service_url = _agent_service_url()
-        if agent_service_url:
-            return _run_support_triage_via_agent_service(
-                agent_service_url=agent_service_url,
-                message=message,
-                customer_email=customer_email,
-                trace_id=trace_id,
-                conversation_history=conversation_history or [],
-                use_openai=use_openai,
-                openai_api=openai_api,
-            )
-        return build_default_runner(use_openai=use_openai, openai_api=openai_api).run(
-            message=message,
-            customer_email=customer_email,
-            trace_id=trace_id,
-            conversation_history=conversation_history,
-        )
-
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -246,6 +219,39 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             "user_message": user_message,
             "assistant_message": assistant_message,
             "trace": saved_trace.to_dict(),
+        }
+
+    @app.post("/chat/sessions/{session_id}/messages/async")
+    def create_async_chat_message(session_id: str, payload: ChatMessageCreateRequest) -> dict[str, Any]:
+        session = _require_chat_session(trace_store, session_id)
+        previous_messages = trace_store.list_chat_messages(session_id)
+        user_message = trace_store.add_chat_message(
+            session_id,
+            role="user",
+            content=payload.content,
+        )
+        assistant_message = trace_store.add_chat_message(
+            session_id,
+            role="assistant",
+            content="Checking account, policy, and approval context",
+            metadata={
+                "status": "pending",
+                "pending": True,
+                "chat_user_message_id": user_message["message_id"],
+            },
+        )
+        _start_async_chat_turn(
+            trace_store=trace_store,
+            session=session,
+            previous_messages=previous_messages,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            payload=payload,
+        )
+        return {
+            "session": _require_chat_session(trace_store, session_id),
+            "user_message": user_message,
+            "assistant_message": assistant_message,
         }
 
     @app.post("/workflows/support-triage/runs")
@@ -432,6 +438,34 @@ class AgentServiceError(RuntimeError):
         self.status_code = status_code
 
 
+def run_support_triage_agent(
+    *,
+    message: str,
+    customer_email: str,
+    trace_id: str | None = None,
+    conversation_history: list[dict[str, Any]] | None = None,
+    use_openai: bool = False,
+    openai_api: str = "chat_completions",
+) -> Trace:
+    agent_service_url = _agent_service_url()
+    if agent_service_url:
+        return _run_support_triage_via_agent_service(
+            agent_service_url=agent_service_url,
+            message=message,
+            customer_email=customer_email,
+            trace_id=trace_id,
+            conversation_history=conversation_history or [],
+            use_openai=use_openai,
+            openai_api=openai_api,
+        )
+    return build_default_runner(use_openai=use_openai, openai_api=openai_api).run(
+        message=message,
+        customer_email=customer_email,
+        trace_id=trace_id,
+        conversation_history=conversation_history,
+    )
+
+
 def _agent_service_url() -> str | None:
     raw_value = os.environ.get("AGENTTRACE_AGENT_SERVICE_URL", "").strip()
     return raw_value.rstrip("/") if raw_value else None
@@ -609,6 +643,86 @@ def _require_chat_session(store: SQLiteTraceStore, session_id: str) -> dict[str,
     if session is None:
         raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
     return session
+
+
+def _start_async_chat_turn(
+    *,
+    trace_store: SQLiteTraceStore,
+    session: dict[str, Any],
+    previous_messages: list[dict[str, Any]],
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+    payload: ChatMessageCreateRequest,
+) -> None:
+    thread = threading.Thread(
+        target=_complete_async_chat_turn,
+        kwargs={
+            "trace_store": trace_store,
+            "session": session,
+            "previous_messages": previous_messages,
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "payload": payload,
+        },
+        daemon=True,
+    )
+    thread.start()
+
+
+def _complete_async_chat_turn(
+    *,
+    trace_store: SQLiteTraceStore,
+    session: dict[str, Any],
+    previous_messages: list[dict[str, Any]],
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+    payload: ChatMessageCreateRequest,
+) -> None:
+    try:
+        trace = run_support_triage_agent(
+            message=payload.content,
+            customer_email=session["customer_email"],
+            trace_id=f"trace_chat_{user_message['message_id']}",
+            conversation_history=_conversation_history(previous_messages),
+            use_openai=payload.use_openai,
+            openai_api=payload.openai_api,
+        )
+        trace = _with_chat_metadata(trace, session_id=session["session_id"], user_message_id=user_message["message_id"])
+        trace_store.save_trace(trace)
+        saved_trace = _require_trace(trace_store, trace.trace_id)
+        trace_store.update_chat_message(
+            assistant_message["message_id"],
+            content=_assistant_response_from_trace(saved_trace),
+            trace_id=saved_trace.trace_id,
+            metadata={
+                "status": "complete",
+                "pending": False,
+                "trace_status": saved_trace.status,
+                "chat_user_message_id": user_message["message_id"],
+            },
+        )
+    except AgentServiceError as exc:
+        _mark_async_chat_failed(trace_store, assistant_message, user_message, exc.message)
+    except RuntimeError as exc:
+        _mark_async_chat_failed(trace_store, assistant_message, user_message, str(exc))
+
+
+def _mark_async_chat_failed(
+    trace_store: SQLiteTraceStore,
+    assistant_message: dict[str, Any],
+    user_message: dict[str, Any],
+    message: str,
+) -> None:
+    trace_store.update_chat_message(
+        assistant_message["message_id"],
+        content=message,
+        metadata={
+            "status": "failed",
+            "pending": False,
+            "error": message,
+            "chat_user_message_id": user_message["message_id"],
+        },
+    )
 
 
 def _with_chat_metadata(trace: Trace, *, session_id: str, user_message_id: str) -> Trace:
