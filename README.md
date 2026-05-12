@@ -14,7 +14,7 @@ metadata, and eval results.
 - A Dockerized AgentTrace API, standalone agent service, React dashboard,
   SQLite store, and FastMCP tool service.
 - A customer-service multi-agent workflow under `agent_apps/customer_service`.
-- Live workflow execution with partial span polling, cancellation, retry, and
+- Live workflow execution with SSE invalidation, cancellation, retry, and
   trace lifecycle tracking.
 - A live chat monitor where each customer message generates a trace.
 - Approval gates with approve, reject, and revert actions.

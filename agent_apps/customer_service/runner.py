@@ -13,7 +13,7 @@ from typing import Any, Callable, Awaitable
 
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
-from agenttrace.mcp_tools.tools import (
+from agent_apps.customer_service.domain import (
     VALID_ACTIONS,
     create_quality_exception_review,
     create_refund_review,
