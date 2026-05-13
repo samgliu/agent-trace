@@ -19,7 +19,7 @@ metadata, and eval results.
 - A live chat monitor where each customer message generates a trace.
 - Approval gates with approve, reject, and revert actions.
 - Grounding, memory, cost, latency, source, and error summaries.
-- An 11-case deterministic eval suite covering routing, policy selection,
+- An deterministic eval suite covering routing, policy selection,
   response quality, memory health, leakage checks, abuse-risk review, account
   mismatch, and multi-turn continuity.
 - Dockerized Playwright e2e checks for the dashboard, live chat SSE, approval
