@@ -15,6 +15,7 @@ from agent_apps.customer_service.domain import (
     lookup_order,
     lookup_subscription,
     retrieve_policy,
+    verify_account_access,
     verify_order_owner,
 )
 
@@ -33,5 +34,6 @@ __all__ = [
     "lookup_order",
     "lookup_subscription",
     "retrieve_policy",
+    "verify_account_access",
     "verify_order_owner",
 ]

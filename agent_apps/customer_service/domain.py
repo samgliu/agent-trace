@@ -307,6 +307,28 @@ def lookup_subscription(customer_id: str) -> dict[str, Any]:
     return {"found": True, **primary}
 
 
+def verify_account_access(customer_id: str, requested_account_hint: str | None = None) -> dict[str, Any]:
+    """Verify whether the current customer can act on the requested account/resource."""
+    hint = (requested_account_hint or "").strip().lower()
+    mismatch_signals = ("different email", "another email", "spouse", "not my account", "wrong account")
+    if any(signal in hint for signal in mismatch_signals):
+        return {
+            "verified": False,
+            "customer_id": customer_id,
+            "requested_account_hint": requested_account_hint,
+            "reason": "requested_resource_belongs_to_different_account",
+            "missing_fields": ["verified_account_ownership", "matching_order_or_subscription_owner"],
+            "evidence_id": "account_access_mismatch",
+        }
+    return {
+        "verified": True,
+        "customer_id": customer_id,
+        "requested_account_hint": requested_account_hint,
+        "reason": "current_account_verified",
+        "evidence_id": "current_account_verified",
+    }
+
+
 def verify_order_owner(order_number: str, customer_id: str) -> dict[str, Any]:
     """Verify that an order belongs to the current support customer."""
     order = lookup_order(order_number)

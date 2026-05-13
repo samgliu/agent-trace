@@ -23,6 +23,7 @@ from agent_apps.customer_service.domain import (
     lookup_order,
     lookup_subscription,
     retrieve_policy,
+    verify_account_access,
     verify_order_owner,
 )
 
@@ -220,6 +221,9 @@ class SupportToolsClient:
     def verify_order_owner(self, order_number: str, customer_id: str) -> dict[str, Any]:
         raise NotImplementedError
 
+    def verify_account_access(self, customer_id: str, requested_account_hint: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
     def create_support_action(self, customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -261,6 +265,9 @@ class LocalSupportToolsClient(SupportToolsClient):
 
     def verify_order_owner(self, order_number: str, customer_id: str) -> dict[str, Any]:
         return verify_order_owner(order_number=order_number, customer_id=customer_id)
+
+    def verify_account_access(self, customer_id: str, requested_account_hint: str | None = None) -> dict[str, Any]:
+        return verify_account_access(customer_id=customer_id, requested_account_hint=requested_account_hint)
 
     def create_support_action(self, customer_id: str, action_type: str, reason: str) -> dict[str, Any]:
         return create_support_action(customer_id, action_type, reason)
@@ -320,6 +327,16 @@ class McpSupportToolsClient(SupportToolsClient):
         return _mcp_tool_result(
             _run_async_tool(
                 self._call_tool("verify_order_owner_tool", {"order_number": order_number, "customer_id": customer_id})
+            )
+        )
+
+    def verify_account_access(self, customer_id: str, requested_account_hint: str | None = None) -> dict[str, Any]:
+        return _mcp_tool_result(
+            _run_async_tool(
+                self._call_tool(
+                    "verify_account_access_tool",
+                    {"customer_id": customer_id, "requested_account_hint": requested_account_hint},
+                )
             )
         )
 
@@ -446,6 +463,7 @@ class SupportTriageRunner:
             "lookup_customer": _span_id(trace_id, "lookup_customer"),
             "lookup_order": _span_id(trace_id, "lookup_order"),
             "verify_order_owner": _span_id(trace_id, "verify_order_owner"),
+            "verify_account_access": _span_id(trace_id, "verify_account_access"),
             "lookup_subscription": _span_id(trace_id, "lookup_subscription"),
             "handoff_policy": _span_id(trace_id, "handoff_policy"),
             "policy_agent": _span_id(trace_id, "policy_agent"),
@@ -632,11 +650,32 @@ class SupportTriageRunner:
                     span_data=_mcp_span_data("verify_order_owner_tool"),
                 )
             )
+        account_access: dict[str, Any] | None = None
+        if _has_account_mismatch(message.lower()):
+            account_access = self.tools_client.verify_account_access(
+                str(customer.get("customer_id") or "unknown"),
+                message,
+            )
+            emit(
+                _span(
+                    trace_id=trace_id,
+                    span_id=span_ids["verify_account_access"],
+                    name="verify_account_access",
+                    span_type="function_tool",
+                    parent_id=supervisor.span_id,
+                    clock=clock,
+                    duration_ms=100,
+                    input={"customer_id": customer.get("customer_id"), "requested_account_hint": message},
+                    output=account_access,
+                    span_data=_mcp_span_data("verify_account_access_tool"),
+                )
+            )
         agent_state = _agent_state(
             triage=triage,
             customer=customer,
             order=order,
             order_owner=order_owner,
+            account_access=account_access,
         )
         subscription: dict[str, Any] | None = None
         if triage["issue_type"] in {"annual_plan_refund", "stale_subscription_refund"}:
@@ -660,6 +699,7 @@ class SupportTriageRunner:
                 customer=customer,
                 order=order,
                 order_owner=order_owner,
+                account_access=account_access,
                 subscription=subscription,
             )
         working_memory["agent_state"] = agent_state.to_dict()
@@ -813,6 +853,7 @@ class SupportTriageRunner:
             customer=customer,
             order=order,
             order_owner=order_owner,
+            account_access=account_access,
             subscription=subscription,
             proposed_action=action_type,
             policy=policy,
@@ -1463,6 +1504,7 @@ def _agent_state(
     customer: dict[str, Any] | None = None,
     order: dict[str, Any] | None = None,
     order_owner: dict[str, Any] | None = None,
+    account_access: dict[str, Any] | None = None,
     subscription: dict[str, Any] | None = None,
     proposed_action: str | None = None,
     policy: dict[str, Any] | None = None,
@@ -1488,6 +1530,13 @@ def _agent_state(
             evidence_ids.append(str(order_owner.get("reason") or "order_customer_match"))
         else:
             risk_signals.append("order_customer_mismatch")
+    if account_access:
+        evidence_id = account_access.get("evidence_id")
+        if evidence_id:
+            evidence_ids.append(str(evidence_id))
+        if not account_access.get("verified"):
+            risk_signals.append(str(account_access.get("reason") or "account_access_mismatch"))
+            missing_fields.extend(str(field) for field in account_access.get("missing_fields", []))
     if subscription:
         if subscription.get("subscription_id"):
             evidence_ids.append(str(subscription["subscription_id"]))
