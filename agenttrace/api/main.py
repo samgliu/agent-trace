@@ -51,6 +51,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         allow_origins=[
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://web:5173",
         ],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH"],
