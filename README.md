@@ -22,6 +22,8 @@ metadata, and eval results.
 - An 11-case deterministic eval suite covering routing, policy selection,
   response quality, memory health, leakage checks, abuse-risk review, account
   mismatch, and multi-turn continuity.
+- Dockerized Playwright e2e checks for the dashboard, live chat SSE, approval
+  actions, filtering, empty states, pagination, and SSE-driven runs refresh.
 - Optional OpenAI-compatible model calls through provider/gateway environment
   configuration.
 
@@ -79,10 +81,10 @@ MCP tools: http://localhost:8010/health
 
 AgentTrace stores local data in `.agenttrace/agenttrace.db`.
 
-Run the Dockerized browser smoke test:
+Run the Dockerized browser e2e suite:
 
 ```bash
-docker compose run --rm e2e
+docker compose run --rm --build e2e
 ```
 
 The Playwright HTML report is written to:
@@ -90,6 +92,16 @@ The Playwright HTML report is written to:
 ```text
 e2e/playwright-report/index.html
 ```
+
+Current e2e coverage includes:
+
+- dashboard smoke/load
+- live customer-service chat completion through real SSE
+- generated chat trace selection and inspection
+- approval approve/reject/revert
+- Runs Inbox approval filtering and empty-state reset
+- Runs Inbox pagination at 25 traces per page
+- SSE refresh after a trace is ingested
 
 Import demo traces:
 
@@ -418,4 +430,10 @@ Docker build runs backend and frontend tests inside images:
 
 ```bash
 docker compose build
+```
+
+End-to-end integration checks:
+
+```bash
+docker compose run --rm --build e2e
 ```
