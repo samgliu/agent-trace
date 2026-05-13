@@ -333,9 +333,7 @@ function App() {
           }
           return;
         }
-        const traceId = traces.some((trace) => trace.trace_id === selectedTraceId)
-          ? selectedTraceId
-          : traces[0]?.trace_id;
+        const traceId = selectedTraceId ?? traces[0]?.trace_id;
         if (!traceId) {
           if (!cancelled) {
             setSelectedTraceId(null);
@@ -497,6 +495,18 @@ function App() {
     setRefreshKey((value) => value + 1);
   }
 
+  function updateTraceFilters(nextFilters: TraceFilters) {
+    setSelectedTraceId(null);
+    setSelectedSpanId(null);
+    setFilters(nextFilters);
+  }
+
+  function updateTracePage(offset: number) {
+    setSelectedTraceId(null);
+    setSelectedSpanId(null);
+    setFilters((current) => ({ ...current, offset }));
+  }
+
   async function startLiveWorkflow(input: LiveWorkflowInput) {
     setLiveWorkflowError(null);
     try {
@@ -617,10 +627,10 @@ function App() {
               workflows={state.workflows}
               activeChatSessionId={chatSession?.session_id ?? null}
             latestChatTraceId={latestChatTraceId}
-            onFiltersChange={setFilters}
+            onFiltersChange={updateTraceFilters}
             onSelectTrace={setSelectedTraceId}
             onClearSelection={() => setSelectedSpanId(null)}
-            onPageChange={(offset) => setFilters((current) => ({ ...current, offset }))}
+            onPageChange={updateTracePage}
           />
           <main className="main">
             <DashboardSummaryPanel summary={state.dashboard} />
@@ -650,7 +660,7 @@ function App() {
               onSelectTrace={setSelectedTraceId}
               onSubmit={submitChatTurn}
             />
-            <EmptyRunsState onClearFilters={() => setFilters(emptyFilters())} />
+            <EmptyRunsState onClearFilters={() => updateTraceFilters(emptyFilters())} />
           </main>
         </div>
       </Shell>
@@ -668,10 +678,10 @@ function App() {
           workflows={state.workflows}
           activeChatSessionId={chatSession?.session_id ?? null}
           latestChatTraceId={latestChatTraceId}
-          onFiltersChange={setFilters}
+          onFiltersChange={updateTraceFilters}
           onSelectTrace={setSelectedTraceId}
           onClearSelection={() => setSelectedSpanId(null)}
-          onPageChange={(offset) => setFilters((current) => ({ ...current, offset }))}
+          onPageChange={updateTracePage}
         />
 
         <main className="main">
@@ -759,7 +769,7 @@ function RunsSidebar({
   const hasNext = hasNextPage(filters.offset, traceTotal, TRACE_PAGE_SIZE);
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Runs inbox">
       <div className="sidebarHeader">Runs Inbox</div>
       <TraceFiltersPanel
         filters={filters}
@@ -1751,7 +1761,7 @@ function ApprovalQueue({
   }
 
   return (
-    <div className="approvalQueue">
+    <section className="approvalQueue" aria-label="Approval gates">
       <div className="approvalQueueHeader">
         <div>
           <strong>Approval gates</strong>
@@ -1776,7 +1786,7 @@ function ApprovalQueue({
           </div>
         );
       })}
-    </div>
+    </section>
   );
 }
 
