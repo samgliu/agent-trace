@@ -68,3 +68,20 @@ services:
       - "5173:5173"
     depends_on:
       - api
+
+  e2e:
+    build:
+      context: ./e2e
+    image: agenttrace-e2e:local
+    environment:
+      PLAYWRIGHT_BASE_URL: http://web:5173
+      PLAYWRIGHT_BROWSER_API_BASE_URL: http://localhost:8000
+      PLAYWRIGHT_DOCKER_API_BASE_URL: http://api:8000
+    volumes:
+      - ./e2e/playwright-report:/app/e2e/playwright-report
+      - ./e2e/test-results:/app/e2e/test-results
+    depends_on:
+      - web
+      - api
+      - agent-service
+      - mcp-tools

@@ -79,6 +79,18 @@ MCP tools: http://localhost:8010/health
 
 AgentTrace stores local data in `.agenttrace/agenttrace.db`.
 
+Run the Dockerized browser smoke test:
+
+```bash
+docker compose run --rm e2e
+```
+
+The Playwright HTML report is written to:
+
+```text
+e2e/playwright-report/index.html
+```
+
 Import demo traces:
 
 ```bash

@@ -962,7 +962,7 @@ function ChatMonitor({
   }
 
   return (
-    <section className="chatMonitor">
+    <section className="chatMonitor" aria-label="Live customer-service agent">
       <div className="chatHeader">
         <div>
           <small>Live customer-service agent</small>
