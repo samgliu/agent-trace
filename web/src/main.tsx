@@ -1075,7 +1075,7 @@ function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; execution
   const ingestedAt = stringMetadata(trace.metadata.ingested_at);
 
   return (
-    <section className="traceHeader">
+    <section className="traceHeader" aria-label="Selected trace">
       <div>
         <div className="eyebrow">{trace.trace_id}</div>
         <h2>{trace.workflow_name}</h2>
