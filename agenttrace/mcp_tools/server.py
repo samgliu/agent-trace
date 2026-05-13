@@ -15,7 +15,9 @@ from agenttrace.mcp_tools.tools import (
     lookup_charge,
     lookup_customer,
     lookup_order,
+    lookup_subscription,
     retrieve_policy,
+    verify_account_access,
     verify_order_owner,
 )
 
@@ -50,9 +52,23 @@ def lookup_charge_tool(customer_id: str, charge_id: str | None = None) -> dict:
 
 
 @mcp.tool
+def lookup_subscription_tool(customer_id: str) -> dict:
+    """Look up active subscription evidence by customer."""
+    return _tool_result(lambda: lookup_subscription(customer_id=customer_id))
+
+
+@mcp.tool
 def verify_order_owner_tool(order_number: str, customer_id: str) -> dict:
     """Verify that an order belongs to a customer."""
     return _tool_result(lambda: verify_order_owner(order_number=order_number, customer_id=customer_id))
+
+
+@mcp.tool
+def verify_account_access_tool(customer_id: str, requested_account_hint: str | None = None) -> dict:
+    """Verify whether the current customer can act on a requested account/resource."""
+    return _tool_result(
+        lambda: verify_account_access(customer_id=customer_id, requested_account_hint=requested_account_hint)
+    )
 
 
 @mcp.tool

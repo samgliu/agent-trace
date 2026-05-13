@@ -7,7 +7,9 @@ from agenttrace.mcp_tools.tools import (
     lookup_charge,
     lookup_customer,
     lookup_order,
+    lookup_subscription,
     retrieve_policy,
+    verify_account_access,
     verify_order_owner,
 )
 
@@ -63,6 +65,14 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(result["found"])
         self.assertEqual(result["charges"][0]["charge_id"], "chg_dup_001")
 
+    def test_lookup_subscription_returns_subscription_evidence(self) -> None:
+        result = lookup_subscription("cus_annual_800")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["subscription_id"], "sub_annual_800")
+        self.assertEqual(result["plan"], "Annual Pro")
+        self.assertEqual(result["billing_period"], "annual")
+
     def test_verify_order_owner_records_match_and_mismatch(self) -> None:
         matched = verify_order_owner("#1234", "cus_123")
         mismatched = verify_order_owner("#1234", "cus_other")
@@ -70,6 +80,16 @@ class McpToolsTest(unittest.TestCase):
         self.assertTrue(matched["verified"])
         self.assertFalse(mismatched["verified"])
         self.assertEqual(mismatched["reason"], "order_customer_mismatch")
+
+    def test_verify_account_access_records_cross_account_boundary(self) -> None:
+        result = verify_account_access(
+            customer_id="cus_123",
+            requested_account_hint="spouse different email",
+        )
+
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["reason"], "requested_resource_belongs_to_different_account")
+        self.assertIn("verified_account_ownership", result["missing_fields"])
 
     def test_create_support_action_returns_action_record(self) -> None:
         result = create_support_action(

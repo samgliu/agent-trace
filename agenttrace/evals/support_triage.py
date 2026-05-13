@@ -153,6 +153,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="recovered",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_tool_names=("lookup_subscription_tool",),
+        expected_evidence_ids=("sub_annual_800",),
     ),
     EvalCase(
         case_id="stale-subscription-refund-approval",
@@ -167,6 +169,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="recovered",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_tool_names=("lookup_subscription_tool",),
+        expected_evidence_ids=("sub_cus_123_pro",),
         expected_response_excludes=("duplicate charge", "$20"),
     ),
     EvalCase(
@@ -317,6 +321,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_tool_names=("verify_account_access_tool",),
+        expected_evidence_ids=("account_access_mismatch",),
         expected_response_contains=("account", "detail"),
         expected_response_excludes=("refund review", "duplicate"),
     ),

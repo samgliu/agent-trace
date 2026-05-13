@@ -263,14 +263,36 @@ class SupportTriageAgentsTest(unittest.TestCase):
 
         triage = next(span for span in trace.spans if span.name == "Triage Agent")
         policy = next(span for span in trace.spans if span.name == "Policy Agent")
+        subscription = next(span for span in trace.spans if span.name == "lookup_subscription")
         retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
         validator = next(span for span in trace.spans if span.name == "Validator Agent")
         self.assertEqual(trace.status, "recovered")
         self.assertEqual(triage.output["issue_type"], "stale_subscription_refund")
         self.assertEqual(policy.output["retrieval_query"], "stale_subscription_refund")
+        self.assertEqual(subscription.output["subscription_id"], "sub_cus_123_pro")
+        self.assertEqual(subscription.span_data["tool_name"], "lookup_subscription_tool")
         self.assertEqual(retrieval.output["policy_id"], "policy_stale_subscription_refund")
         self.assertTrue(validator.output["approval_required"])
+        self.assertIn("sub_cus_123_pro", validator.output["evidence"])
         self.assertEqual(retrieval.output["topic"], "stale_subscription_refund")
+
+    def test_annual_plan_refund_uses_subscription_evidence(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="Can you refund my annual plan?",
+            customer_email="annual@example.com",
+            trace_id="trace_runner_annual_subscription_evidence",
+        )
+
+        subscription = next(span for span in trace.spans if span.name == "lookup_subscription")
+        action = next(span for span in trace.spans if span.name == "create_refund_review")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(subscription.output["subscription_id"], "sub_annual_800")
+        self.assertEqual(subscription.output["billing_period"], "annual")
+        self.assertEqual(action.output["amount_usd"], 800)
+        self.assertIn("sub_annual_800", action.output["evidence_ids"])
+        self.assertIn("sub_annual_800", validator.output["evidence"])
 
     def test_static_customer_response_uses_selected_policy_context(self) -> None:
         runner = SupportTriageRunner()
@@ -364,6 +386,26 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertNotIn("duplicate", response.output["response"].lower())
         self.assertNotIn("$20", response.output["response"])
         self.assertEqual(trace.metadata["conversation_history_count"], 2)
+
+    def test_account_mismatch_uses_scoped_verification_tool(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="The order is under my spouse's different email. Can you refund it from this account?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_account_mismatch",
+        )
+
+        verification = next(span for span in trace.spans if span.name == "verify_account_access")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertFalse(verification.output["verified"])
+        self.assertEqual(verification.output["reason"], "requested_resource_belongs_to_different_account")
+        self.assertEqual(verification.span_data["tool_name"], "verify_account_access_tool")
+        self.assertEqual(action.output["action_type"], "clarification_request")
+        self.assertIn("account_access_mismatch", validator.output["evidence"])
+        self.assertNotIn("refund review", response.output["response"].lower())
 
     def test_validator_requires_human_review_for_high_abuse_risk_refund(self) -> None:
         runner = SupportTriageRunner()
@@ -753,6 +795,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 return {"found": True, "order_id": "ord_test"}
             if tool_name == "lookup_charge_tool":
                 return {"found": True, "charges": [{"charge_id": "chg_test"}]}
+            if tool_name == "lookup_subscription_tool":
+                return {"found": True, "subscription_id": "sub_test"}
+            if tool_name == "verify_account_access_tool":
+                return {"verified": False, "reason": "requested_resource_belongs_to_different_account"}
             if tool_name == "verify_order_owner_tool":
                 return {"verified": True, "order_id": "ord_test"}
             return {"action_id": "act_test", "status": "created"}
@@ -767,6 +813,8 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
         self.assertEqual(client.lookup_order("#1234")["order_id"], "ord_test")
         self.assertEqual(client.lookup_charge("cus_test")["charges"][0]["charge_id"], "chg_test")
+        self.assertEqual(client.lookup_subscription("cus_test")["subscription_id"], "sub_test")
+        self.assertFalse(client.verify_account_access("cus_test", "spouse different email")["verified"])
         self.assertTrue(client.verify_order_owner("#1234", "cus_test")["verified"])
         self.assertEqual(
             client.create_refund_review("cus_test", "policy_test", "reason", 20, ["cus_test"])["action_id"],
@@ -791,6 +839,14 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 },
                 {"tool_name": "lookup_order_tool", "arguments": {"order_number": "#1234"}},
                 {"tool_name": "lookup_charge_tool", "arguments": {"customer_id": "cus_test", "charge_id": None}},
+                {"tool_name": "lookup_subscription_tool", "arguments": {"customer_id": "cus_test"}},
+                {
+                    "tool_name": "verify_account_access_tool",
+                    "arguments": {
+                        "customer_id": "cus_test",
+                        "requested_account_hint": "spouse different email",
+                    },
+                },
                 {
                     "tool_name": "verify_order_owner_tool",
                     "arguments": {"order_number": "#1234", "customer_id": "cus_test"},
