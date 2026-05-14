@@ -1,10 +1,17 @@
 import unittest
 
 from agenttrace.evals.support_triage import (
+    EvalCase,
+    EvalCaseResult,
+    EvalCheck,
+    EvalSuiteResult,
     SUPPORT_TRIAGE_EVAL_CASES,
+    build_eval_report,
+    format_eval_report,
     list_support_triage_eval_suites,
     run_support_triage_eval_suite,
 )
+from agenttrace.core.models import Trace
 
 
 class SupportTriageEvalsTest(unittest.TestCase):
@@ -50,6 +57,50 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertIn("response_contains:order number", check_names)
         self.assertIn("response_excludes:duplicate", check_names)
         self.assertTrue(follow_up.passed)
+
+    def test_builds_ci_friendly_eval_report(self) -> None:
+        result = run_support_triage_eval_suite()
+        report = build_eval_report(result)
+
+        self.assertEqual(report["suite_id"], "support-triage-core")
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["passed"], 11)
+        self.assertEqual(report["failed_cases"], [])
+        self.assertIn("Status: passed", format_eval_report(report))
+
+    def test_eval_report_groups_failed_checks_by_category(self) -> None:
+        suite_result = EvalSuiteResult(
+            suite_id="support-triage-core",
+            name="Support triage core",
+            results=[
+                EvalCaseResult(
+                    case=EvalCase(
+                        case_id="approval-regression",
+                        name="Approval regression",
+                        message="refund me",
+                        customer_email="customer@example.com",
+                        expected_trace_status="passed",
+                    ),
+                    trace=Trace(
+                        trace_id="trace_eval_support_triage_approval_regression",
+                        workflow_name="support-triage",
+                        status="passed",
+                    ),
+                    checks=[
+                        EvalCheck("approval_required", True, False, False),
+                        EvalCheck("response_excludes:duplicate", "duplicate", "duplicate charge", False),
+                    ],
+                )
+            ],
+        )
+
+        report = build_eval_report(suite_result)
+        formatted = format_eval_report(report)
+
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["failed_check_categories"], {"Governance": 1, "Response": 1})
+        self.assertIn("approval-regression", formatted)
+        self.assertIn("Failed check categories:", formatted)
 
 
 if __name__ == "__main__":

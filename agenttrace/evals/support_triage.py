@@ -127,6 +127,79 @@ class EvalSuiteResult:
         }
 
 
+def build_eval_report(result: EvalSuiteResult) -> dict[str, Any]:
+    failed_cases = []
+    category_counts: dict[str, int] = {}
+    for case_result in result.results:
+        failed_checks = [check for check in case_result.checks if not check.passed]
+        if not failed_checks:
+            continue
+        failed_cases.append(
+            {
+                "case_id": case_result.case.case_id,
+                "name": case_result.case.name,
+                "trace_id": case_result.trace.trace_id,
+                "score": case_result.score,
+                "failed_checks": [check.to_dict() for check in failed_checks],
+            }
+        )
+        for check in failed_checks:
+            category = eval_check_category(check.name)
+            category_counts[category] = category_counts.get(category, 0) + 1
+    return {
+        "suite_id": result.suite_id,
+        "name": result.name,
+        "status": "passed" if result.failed == 0 else "failed",
+        "total": result.total,
+        "passed": result.passed,
+        "failed": result.failed,
+        "pass_rate": result.pass_rate,
+        "failed_cases": failed_cases,
+        "failed_check_categories": category_counts,
+    }
+
+
+def format_eval_report(report: dict[str, Any]) -> str:
+    lines = [
+        f"Eval suite: {report['name']} ({report['suite_id']})",
+        f"Status: {report['status']}",
+        f"Cases: {report['passed']}/{report['total']} passed",
+        f"Pass rate: {report['pass_rate']:.1%}",
+    ]
+    failed_cases = report.get("failed_cases", [])
+    if not failed_cases:
+        lines.append("Failed cases: none")
+        return "\n".join(lines)
+
+    lines.append("Failed cases:")
+    for case in failed_cases:
+        lines.append(f"- {case['case_id']} ({case['score']:.1%}) trace={case['trace_id']}")
+        for check in case["failed_checks"]:
+            lines.append(f"  - {check['name']}: expected {check['expected']}, got {check['actual']}")
+    categories = report.get("failed_check_categories") or {}
+    if categories:
+        lines.append("Failed check categories:")
+        for category, count in sorted(categories.items()):
+            lines.append(f"- {category}: {count}")
+    return "\n".join(lines)
+
+
+def eval_check_category(name: str) -> str:
+    if name in {"trace_status", "error_count"}:
+        return "Reliability"
+    if name in {"issue_type", "policy_id", "action_type"}:
+        return "Routing"
+    if name.startswith("tool_used") or name.startswith("evidence_id") or name.startswith("agent_state"):
+        return "Evidence"
+    if name == "approval_required" or name == "approval_reason":
+        return "Governance"
+    if name == "grounding_status" or name.startswith("response_"):
+        return "Response"
+    if name.startswith("memory_"):
+        return "Memory"
+    return "Other"
+
+
 SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
     EvalCase(
         case_id="duplicate-charge-refund",

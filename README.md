@@ -19,7 +19,7 @@ metadata, and eval results.
 - A live chat monitor where each customer message generates a trace.
 - Approval gates with approve, reject, and revert actions.
 - Grounding, memory, cost, latency, source, and error summaries.
-- An deterministic eval suite covering routing, policy selection,
+- A deterministic eval suite covering routing, policy selection,
   response quality, memory health, leakage checks, abuse-risk review, account
   mismatch, and multi-turn continuity.
 - Dockerized Playwright e2e checks for the dashboard, live chat SSE, approval
@@ -212,6 +212,16 @@ Run the eval suite from the dashboard or API:
 ```bash
 curl -X POST http://localhost:8000/evals/support-triage/run
 ```
+
+Run the same suite as a CI-friendly local report:
+
+```bash
+python3 -m agenttrace.cli eval support-triage
+python3 -m agenttrace.cli eval support-triage --json
+```
+
+The CLI returns a non-zero exit code when eval checks fail. Use `--no-fail` if
+you want report-only behavior.
 
 The current suite has 11 deterministic cases, including:
 

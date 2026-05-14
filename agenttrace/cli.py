@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from agenttrace.core.importer import load_trace_file
+from agenttrace.evals.support_triage import (
+    build_eval_report,
+    format_eval_report,
+    run_support_triage_eval_suite,
+)
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -71,12 +76,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delay between emitted spans in seconds.",
     )
 
+    eval_parser = subparsers.add_parser("eval", help="Run eval suites and print a CI-friendly report.")
+    eval_subparsers = eval_parser.add_subparsers(dest="suite", required=True)
+    support_eval_parser = eval_subparsers.add_parser("support-triage", help="Run the support-triage core eval suite.")
+    support_eval_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the compact eval report as JSON.",
+    )
+    support_eval_parser.add_argument(
+        "--no-fail",
+        action="store_true",
+        help="Return exit code 0 even when eval checks fail.",
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "eval":
+        if args.suite == "support-triage":
+            result = run_support_triage_eval_suite()
+            report = build_eval_report(result)
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print(format_eval_report(report))
+            return 0 if args.no_fail or report["status"] == "passed" else 1
+
     store = SQLiteTraceStore(Path(args.db))
     store.initialize()
 
