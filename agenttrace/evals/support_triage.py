@@ -30,6 +30,10 @@ class EvalCase:
     expected_error_count: int | None = None
     expected_tool_names: tuple[str, ...] = ()
     expected_evidence_ids: tuple[str, ...] = ()
+    expected_next_required_step: str | None = None
+    expected_missing_fields: tuple[str, ...] = ()
+    expected_risk_signals: tuple[str, ...] = ()
+    expected_approval_reason_contains: str | None = None
     expected_response_contains: tuple[str, ...] = ()
     expected_response_excludes: tuple[str, ...] = ()
 
@@ -139,6 +143,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("create_refund_review_tool",),
         expected_evidence_ids=("cus_123", "policy_refund_duplicate_charge"),
+        expected_next_required_step="create_support_action",
     ),
     EvalCase(
         case_id="annual-refund-approval",
@@ -155,6 +160,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_subscription_tool",),
         expected_evidence_ids=("sub_annual_800",),
+        expected_next_required_step="human_approval",
+        expected_approval_reason_contains="Policy requires human approval.",
     ),
     EvalCase(
         case_id="stale-subscription-refund-approval",
@@ -171,6 +178,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_subscription_tool",),
         expected_evidence_ids=("sub_cus_123_pro",),
+        expected_next_required_step="human_approval",
+        expected_approval_reason_contains="Policy requires human approval.",
         expected_response_excludes=("duplicate charge", "$20"),
     ),
     EvalCase(
@@ -186,6 +195,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=3,
         expected_error_count=0,
+        expected_next_required_step="collect_missing_information",
+        expected_missing_fields=("verified_email",),
     ),
     EvalCase(
         case_id="lookup-timeout-failure",
@@ -209,6 +220,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_next_required_step="collect_missing_information",
+        expected_missing_fields=("order_number_or_receipt", "product_issue_reason"),
         expected_response_contains=("fully consumed", "quality"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -237,6 +250,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_order_tool", "verify_order_owner_tool"),
         expected_evidence_ids=("cus_123", "ord_1234", "order_customer_match"),
+        expected_next_required_step="create_support_action",
         expected_response_contains=("order number", "normal return"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -264,6 +278,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_memory_warning_count=0,
         expected_error_count=0,
         expected_response_contains=("duplicate",),
+        expected_next_required_step="create_support_action",
     ),
     EvalCase(
         case_id="consumed-product-quality-exception",
@@ -290,6 +305,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_order_tool", "verify_order_owner_tool", "create_quality_exception_review_tool"),
         expected_evidence_ids=("cus_123", "ord_1234", "policy_consumed_product_return"),
+        expected_next_required_step="create_support_action",
         expected_response_contains=("quality", "courtesy credit"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -306,6 +322,9 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="recovered",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_next_required_step="human_review",
+        expected_risk_signals=("high_prior_refund_count", "recent_chargebacks", "unverified_payment_method", "new_account"),
+        expected_approval_reason_contains="Human review required by abuse-risk controls.",
         expected_response_contains=("review",),
     ),
     EvalCase(
@@ -323,6 +342,9 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("verify_account_access_tool",),
         expected_evidence_ids=("account_access_mismatch",),
+        expected_next_required_step="collect_missing_information",
+        expected_missing_fields=("verified_account_ownership", "matching_order_or_subscription_owner"),
+        expected_risk_signals=("requested_resource_belongs_to_different_account",),
         expected_response_contains=("account", "detail"),
         expected_response_excludes=("refund review", "duplicate"),
     ),
@@ -387,6 +409,14 @@ def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str
         checks.append(_includes_check(f"tool_used:{tool_name}", actual["tool_names"], tool_name))
     for evidence_id in case.expected_evidence_ids:
         checks.append(_includes_check(f"evidence_id:{evidence_id}", actual["evidence_ids"], evidence_id))
+    if case.expected_next_required_step is not None:
+        checks.append(_check("agent_state.next_required_step", case.expected_next_required_step, actual["agent_state"].get("next_required_step")))
+    for field in case.expected_missing_fields:
+        checks.append(_includes_check(f"agent_state.missing_field:{field}", actual["agent_state"].get("missing_fields", []), field))
+    for signal in case.expected_risk_signals:
+        checks.append(_includes_check(f"agent_state.risk_signal:{signal}", actual["agent_state"].get("risk_signals", []), signal))
+    if case.expected_approval_reason_contains is not None:
+        checks.append(_contains_check("approval_reason", actual["approval_reason"], case.expected_approval_reason_contains))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
 
 
@@ -396,6 +426,8 @@ def _actual_values(trace: Trace) -> dict[str, Any]:
     action_span = _find_span(trace, "Action Agent")
     validator_span = _find_span(trace, "Validator Agent")
     response_span = _find_span(trace, "Customer Response Generator")
+    approval_span = _find_span(trace, "Human Approval Gate")
+    state_span = _find_span(trace, "Update Agent State") or _find_span(trace, "Write Working Memory")
     summary = build_trace_summary(trace)
     return {
         "issue_type": _dict_value(triage_span.output if triage_span else None, "issue_type"),
@@ -406,6 +438,8 @@ def _actual_values(trace: Trace) -> dict[str, Any]:
         "memory_warning_count": summary["memory_warning_count"],
         "error_count": summary["error_count"],
         "response": _dict_value(response_span.output if response_span else None, "response") or "",
+        "approval_reason": _dict_value(approval_span.output if approval_span else None, "reason") or "",
+        "agent_state": _agent_state_from_span(state_span),
         "tool_names": _tool_names(trace),
         "evidence_ids": _evidence_ids(trace),
     }
@@ -419,6 +453,13 @@ def _dict_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return None
+
+
+def _agent_state_from_span(span: Any) -> dict[str, Any]:
+    output = span.output if span else None
+    if isinstance(output, dict) and isinstance(output.get("agent_state"), dict):
+        return output["agent_state"]
+    return {}
 
 
 def _tool_names(trace: Trace) -> list[str]:

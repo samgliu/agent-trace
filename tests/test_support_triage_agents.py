@@ -92,6 +92,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 "retrieve_policy",
                 "Read Customer Memory",
                 "Action Agent",
+                "Update Agent State",
                 "create_refund_review",
                 "Validator Agent",
                 "Customer Response Generator",
@@ -502,9 +503,11 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
 
         memory_spans = [span for span in trace.spans if span.span_type in {"memory_read", "memory_write"}]
-        self.assertEqual([span.span_type for span in memory_spans], ["memory_write", "memory_read"])
+        self.assertEqual([span.span_type for span in memory_spans], ["memory_write", "memory_read", "memory_write"])
         self.assertEqual(memory_spans[0].span_data["memory_type"], "short_term")
         self.assertEqual(memory_spans[1].span_data["memory_type"], "long_term")
+        self.assertEqual(memory_spans[2].span_data["memory_type"], "short_term")
+        self.assertEqual(memory_spans[2].output["agent_state"]["next_required_step"], "human_approval")
         self.assertEqual(memory_spans[1].span_data["retrieved_memory_count"], 1)
         self.assertGreater(memory_spans[1].span_data["memory_relevance_score"], 0.8)
         self.assertTrue(memory_spans[1].span_data["memory_used_in_response"])
