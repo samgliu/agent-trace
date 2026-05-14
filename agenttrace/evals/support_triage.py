@@ -30,6 +30,10 @@ class EvalCase:
     expected_error_count: int | None = None
     expected_tool_names: tuple[str, ...] = ()
     expected_evidence_ids: tuple[str, ...] = ()
+    expected_next_required_step: str | None = None
+    expected_missing_fields: tuple[str, ...] = ()
+    expected_risk_signals: tuple[str, ...] = ()
+    expected_approval_reason_contains: str | None = None
     expected_response_contains: tuple[str, ...] = ()
     expected_response_excludes: tuple[str, ...] = ()
 
@@ -123,6 +127,79 @@ class EvalSuiteResult:
         }
 
 
+def build_eval_report(result: EvalSuiteResult) -> dict[str, Any]:
+    failed_cases = []
+    category_counts: dict[str, int] = {}
+    for case_result in result.results:
+        failed_checks = [check for check in case_result.checks if not check.passed]
+        if not failed_checks:
+            continue
+        failed_cases.append(
+            {
+                "case_id": case_result.case.case_id,
+                "name": case_result.case.name,
+                "trace_id": case_result.trace.trace_id,
+                "score": case_result.score,
+                "failed_checks": [check.to_dict() for check in failed_checks],
+            }
+        )
+        for check in failed_checks:
+            category = eval_check_category(check.name)
+            category_counts[category] = category_counts.get(category, 0) + 1
+    return {
+        "suite_id": result.suite_id,
+        "name": result.name,
+        "status": "passed" if result.failed == 0 else "failed",
+        "total": result.total,
+        "passed": result.passed,
+        "failed": result.failed,
+        "pass_rate": result.pass_rate,
+        "failed_cases": failed_cases,
+        "failed_check_categories": category_counts,
+    }
+
+
+def format_eval_report(report: dict[str, Any]) -> str:
+    lines = [
+        f"Eval suite: {report['name']} ({report['suite_id']})",
+        f"Status: {report['status']}",
+        f"Cases: {report['passed']}/{report['total']} passed",
+        f"Pass rate: {report['pass_rate']:.1%}",
+    ]
+    failed_cases = report.get("failed_cases", [])
+    if not failed_cases:
+        lines.append("Failed cases: none")
+        return "\n".join(lines)
+
+    lines.append("Failed cases:")
+    for case in failed_cases:
+        lines.append(f"- {case['case_id']} ({case['score']:.1%}) trace={case['trace_id']}")
+        for check in case["failed_checks"]:
+            lines.append(f"  - {check['name']}: expected {check['expected']}, got {check['actual']}")
+    categories = report.get("failed_check_categories") or {}
+    if categories:
+        lines.append("Failed check categories:")
+        for category, count in sorted(categories.items()):
+            lines.append(f"- {category}: {count}")
+    return "\n".join(lines)
+
+
+def eval_check_category(name: str) -> str:
+    if name in {"trace_status", "error_count"}:
+        return "Reliability"
+    if name in {"issue_type", "policy_id", "action_type"}:
+        return "Routing"
+    if name.startswith("tool_used") or name.startswith("evidence_id") or name.startswith("agent_state"):
+        return "Evidence"
+    if name == "approval_required" or name == "approval_reason":
+        return "Governance"
+    if name == "grounding_status" or name.startswith("response_"):
+        return "Response"
+    if name.startswith("memory_"):
+        return "Memory"
+    return "Other"
+
+
 SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
     EvalCase(
         case_id="duplicate-charge-refund",
@@ -139,6 +216,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("create_refund_review_tool",),
         expected_evidence_ids=("cus_123", "policy_refund_duplicate_charge"),
+        expected_next_required_step="create_support_action",
     ),
     EvalCase(
         case_id="annual-refund-approval",
@@ -155,6 +233,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_subscription_tool",),
         expected_evidence_ids=("sub_annual_800",),
+        expected_next_required_step="human_approval",
+        expected_approval_reason_contains="Policy requires human approval.",
     ),
     EvalCase(
         case_id="stale-subscription-refund-approval",
@@ -171,6 +251,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_subscription_tool",),
         expected_evidence_ids=("sub_cus_123_pro",),
+        expected_next_required_step="human_approval",
+        expected_approval_reason_contains="Policy requires human approval.",
         expected_response_excludes=("duplicate charge", "$20"),
     ),
     EvalCase(
@@ -186,6 +268,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=3,
         expected_error_count=0,
+        expected_next_required_step="collect_missing_information",
+        expected_missing_fields=("verified_email",),
     ),
     EvalCase(
         case_id="lookup-timeout-failure",
@@ -209,6 +293,8 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="grounded",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_next_required_step="collect_missing_information",
+        expected_missing_fields=("order_number_or_receipt", "product_issue_reason"),
         expected_response_contains=("fully consumed", "quality"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -237,6 +323,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_order_tool", "verify_order_owner_tool"),
         expected_evidence_ids=("cus_123", "ord_1234", "order_customer_match"),
+        expected_next_required_step="create_support_action",
         expected_response_contains=("order number", "normal return"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -264,6 +351,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_memory_warning_count=0,
         expected_error_count=0,
         expected_response_contains=("duplicate",),
+        expected_next_required_step="create_support_action",
     ),
     EvalCase(
         case_id="consumed-product-quality-exception",
@@ -290,6 +378,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("lookup_order_tool", "verify_order_owner_tool", "create_quality_exception_review_tool"),
         expected_evidence_ids=("cus_123", "ord_1234", "policy_consumed_product_return"),
+        expected_next_required_step="create_support_action",
         expected_response_contains=("quality", "courtesy credit"),
         expected_response_excludes=("duplicate", "$20"),
     ),
@@ -306,6 +395,9 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_grounding_status="recovered",
         expected_memory_warning_count=0,
         expected_error_count=0,
+        expected_next_required_step="human_review",
+        expected_risk_signals=("high_prior_refund_count", "recent_chargebacks", "unverified_payment_method", "new_account"),
+        expected_approval_reason_contains="Human review required by abuse-risk controls.",
         expected_response_contains=("review",),
     ),
     EvalCase(
@@ -323,6 +415,9 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_error_count=0,
         expected_tool_names=("verify_account_access_tool",),
         expected_evidence_ids=("account_access_mismatch",),
+        expected_next_required_step="collect_missing_information",
+        expected_missing_fields=("verified_account_ownership", "matching_order_or_subscription_owner"),
+        expected_risk_signals=("requested_resource_belongs_to_different_account",),
         expected_response_contains=("account", "detail"),
         expected_response_excludes=("refund review", "duplicate"),
     ),
@@ -387,6 +482,14 @@ def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str
         checks.append(_includes_check(f"tool_used:{tool_name}", actual["tool_names"], tool_name))
     for evidence_id in case.expected_evidence_ids:
         checks.append(_includes_check(f"evidence_id:{evidence_id}", actual["evidence_ids"], evidence_id))
+    if case.expected_next_required_step is not None:
+        checks.append(_check("agent_state.next_required_step", case.expected_next_required_step, actual["agent_state"].get("next_required_step")))
+    for field in case.expected_missing_fields:
+        checks.append(_includes_check(f"agent_state.missing_field:{field}", actual["agent_state"].get("missing_fields", []), field))
+    for signal in case.expected_risk_signals:
+        checks.append(_includes_check(f"agent_state.risk_signal:{signal}", actual["agent_state"].get("risk_signals", []), signal))
+    if case.expected_approval_reason_contains is not None:
+        checks.append(_contains_check("approval_reason", actual["approval_reason"], case.expected_approval_reason_contains))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
 
 
@@ -396,6 +499,8 @@ def _actual_values(trace: Trace) -> dict[str, Any]:
     action_span = _find_span(trace, "Action Agent")
     validator_span = _find_span(trace, "Validator Agent")
     response_span = _find_span(trace, "Customer Response Generator")
+    approval_span = _find_span(trace, "Human Approval Gate")
+    state_span = _find_span(trace, "Update Agent State") or _find_span(trace, "Write Working Memory")
     summary = build_trace_summary(trace)
     return {
         "issue_type": _dict_value(triage_span.output if triage_span else None, "issue_type"),
@@ -406,6 +511,8 @@ def _actual_values(trace: Trace) -> dict[str, Any]:
         "memory_warning_count": summary["memory_warning_count"],
         "error_count": summary["error_count"],
         "response": _dict_value(response_span.output if response_span else None, "response") or "",
+        "approval_reason": _dict_value(approval_span.output if approval_span else None, "reason") or "",
+        "agent_state": _agent_state_from_span(state_span),
         "tool_names": _tool_names(trace),
         "evidence_ids": _evidence_ids(trace),
     }
@@ -419,6 +526,13 @@ def _dict_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return None
+
+
+def _agent_state_from_span(span: Any) -> dict[str, Any]:
+    output = span.output if span else None
+    if isinstance(output, dict) and isinstance(output.get("agent_state"), dict):
+        return output["agent_state"]
+    return {}
 
 
 def _tool_names(trace: Trace) -> list[str]:

@@ -470,6 +470,7 @@ class SupportTriageRunner:
             "retrieve_policy": _span_id(trace_id, "retrieve_policy"),
             "customer_memory_read": _span_id(trace_id, "customer_memory_read"),
             "action_agent": _span_id(trace_id, "action_agent"),
+            "agent_state_update": _span_id(trace_id, "agent_state_update"),
             "create_action": _span_id(trace_id, "create_action"),
             "validator": _span_id(trace_id, "validator"),
             "approval_required": _span_id(trace_id, "approval_required"),
@@ -858,6 +859,28 @@ class SupportTriageRunner:
             proposed_action=action_type,
             policy=policy,
         )
+        previous_agent_state = working_memory.get("agent_state")
+        working_memory["agent_state"] = agent_state.to_dict()
+        emit(
+            _span(
+                trace_id=trace_id,
+                span_id=span_ids["agent_state_update"],
+                name="Update Agent State",
+                span_type="memory_write",
+                parent_id=span_ids["action_agent"],
+                clock=clock,
+                duration_ms=50,
+                input={"previous_state": previous_agent_state, "action_type": action_type},
+                output=working_memory,
+                span_data={
+                    "memory_type": "short_term",
+                    "memory_operation": "write",
+                    "memory_store": "conversation_working_memory",
+                    "memory_key": working_memory["memory_key"],
+                    "memory_used_in_response": True,
+                },
+            )
+        )
         action, action_tool_name = _create_domain_action(
             self.tools_client,
             customer=customer,
@@ -952,7 +975,6 @@ class SupportTriageRunner:
                 )
             )
 
-        working_memory["agent_state"] = agent_state.to_dict()
         llm_response = self.llm_client.generate(
             instructions=_customer_response_instructions(),
             input_text=_customer_response_input(message, customer, policy, action, validation, working_memory, customer_memory),
@@ -1516,8 +1538,22 @@ def _agent_state(
 
     if triage.get("missing_information"):
         missing_fields.append(str(triage["missing_information"]))
-    if customer and customer.get("customer_id"):
-        evidence_ids.append(str(customer["customer_id"]))
+    if customer:
+        if customer.get("customer_id"):
+            evidence_ids.append(str(customer["customer_id"]))
+        if not customer.get("found", True):
+            missing_fields.extend(str(field) for field in customer.get("missing_fields", []))
+        prior_refunds = int(customer.get("prior_refunds_12m") or 0)
+        chargebacks = int(customer.get("chargeback_count_12m") or 0)
+        account_age_days = int(customer.get("account_age_days") or 0)
+        if prior_refunds > 3:
+            risk_signals.append("high_prior_refund_count")
+        if chargebacks > 0:
+            risk_signals.append("recent_chargebacks")
+        if customer.get("found") and not customer.get("payment_method_verified", True):
+            risk_signals.append("unverified_payment_method")
+        if account_age_days and account_age_days < 30:
+            risk_signals.append("new_account")
     if policy and policy.get("policy_id"):
         evidence_ids.append(str(policy["policy_id"]))
     if order:
