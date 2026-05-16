@@ -11,7 +11,7 @@ import queue
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
@@ -34,7 +34,7 @@ from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
 from agenttrace.core.summary import build_dashboard_summary
-from agenttrace.evals.support_triage import list_support_triage_eval_suites, run_support_triage_eval_suite
+from agenttrace.evals.support_triage import EvalExecutionMode, list_support_triage_eval_suites, run_support_triage_eval_suite
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -171,10 +171,20 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         return run
 
     @app.post("/evals/support-triage/run")
-    def run_support_triage_evals() -> dict[str, Any]:
-        result = run_support_triage_eval_suite()
+    def run_support_triage_evals(
+        mode: str = Query("deterministic", pattern="^(deterministic|llm)$"),
+        openai_api: str = Query("chat_completions", pattern="^(chat_completions|responses)$"),
+    ) -> dict[str, Any]:
+        result = run_support_triage_eval_suite(execution_mode=cast(EvalExecutionMode, mode), openai_api=openai_api)
         for case_result in result.results:
-            trace = _with_eval_metadata(case_result.trace, suite_id=result.suite_id, case_id=case_result.case.case_id)
+            trace = _with_eval_metadata(
+                case_result.trace,
+                suite_id=result.suite_id,
+                case_id=case_result.case.case_id,
+                execution_mode=result.execution_mode,
+                model_provider=result.model_provider,
+                model_name=result.model_name,
+            )
             trace_store.save_trace(trace)
             _publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = trace_store.save_eval_run(result.to_dict())
@@ -618,11 +628,22 @@ def _agent_service_error_message(exc: urllib.error.HTTPError) -> str:
     return f"Agent service request failed with HTTP {exc.code}."
 
 
-def _with_eval_metadata(trace: Trace, *, suite_id: str, case_id: str) -> Trace:
+def _with_eval_metadata(
+    trace: Trace,
+    *,
+    suite_id: str,
+    case_id: str,
+    execution_mode: str,
+    model_provider: str,
+    model_name: str,
+) -> Trace:
     metadata = {
         **trace.metadata,
         "eval_suite_id": suite_id,
         "eval_case_id": case_id,
+        "eval_execution_mode": execution_mode,
+        "model_provider": model_provider,
+        "model_name": model_name,
         "source_kind": "eval_run",
     }
     return Trace(

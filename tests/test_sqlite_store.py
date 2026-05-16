@@ -325,6 +325,9 @@ class SQLiteTraceStoreTest(unittest.TestCase):
                 {
                     "suite_id": "support-triage-core",
                     "name": "Support triage core",
+                    "execution_mode": "llm",
+                    "model_provider": "gemini",
+                    "model_name": "gemini-test",
                     "total": 1,
                     "passed": 1,
                     "failed": 0,
@@ -356,9 +359,13 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             detail = reopened.get_eval_run("eval_1")
 
             self.assertEqual(saved["status"], "passed")
+            self.assertEqual(saved["execution_mode"], "llm")
+            self.assertEqual(saved["model_provider"], "gemini")
             self.assertEqual(listed["total"], 1)
             self.assertEqual(listed["items"][0]["run_id"], "eval_1")
+            self.assertEqual(listed["items"][0]["execution_mode"], "llm")
             assert detail is not None
+            self.assertEqual(detail["model_name"], "gemini-test")
             self.assertEqual(detail["results"][0]["case_id"], "duplicate-charge-refund")
             self.assertEqual(detail["results"][0]["checks"][0]["name"], "trace_status")
 

@@ -38,12 +38,14 @@ import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrac
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
   evalCategorySummaries,
+  evalModeLabel,
   evalPassRateLabel,
   evalStatusLabel,
   failedEvalCases,
   failedChecksByCategory,
   listEvalRuns,
   runSupportTriageEvalSuite,
+  type EvalExecutionMode,
   type EvalRunSummary,
   type EvalSuiteRun,
 } from "./utils/evals";
@@ -232,6 +234,7 @@ function App() {
   const [evalRun, setEvalRun] = useState<EvalSuiteRun | null>(null);
   const [evalHistory, setEvalHistory] = useState<EvalRunSummary[]>([]);
   const [evalRunStatus, setEvalRunStatus] = useState<EvalRunStatus>({ status: "idle" });
+  const [evalMode, setEvalMode] = useState<EvalExecutionMode>("deterministic");
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
@@ -561,7 +564,7 @@ function App() {
   async function runEvals() {
     setEvalRunStatus({ status: "running" });
     try {
-      const result = await runSupportTriageEvalSuite(apiPostJson);
+      const result = await runSupportTriageEvalSuite(apiPostJson, evalMode);
       setEvalRun(result);
       setEvalHistory((history) => [result, ...history.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setEvalRunStatus({ status: "idle" });
@@ -638,6 +641,8 @@ function App() {
               run={evalRun}
               history={evalHistory}
               status={evalRunStatus}
+              mode={evalMode}
+              onModeChange={setEvalMode}
               onRun={runEvals}
               onSelectTrace={setSelectedTraceId}
             />
@@ -690,6 +695,8 @@ function App() {
             run={evalRun}
             history={evalHistory}
             status={evalRunStatus}
+            mode={evalMode}
+            onModeChange={setEvalMode}
             onRun={runEvals}
             onSelectTrace={setSelectedTraceId}
           />
@@ -1158,12 +1165,16 @@ function EvalDashboardPanel({
   run,
   history,
   status,
+  mode,
+  onModeChange,
   onRun,
   onSelectTrace,
 }: {
   run: EvalSuiteRun | null;
   history: EvalRunSummary[];
   status: EvalRunStatus;
+  mode: EvalExecutionMode;
+  onModeChange: (mode: EvalExecutionMode) => void;
   onRun: () => Promise<void>;
   onSelectTrace: (traceId: string) => void;
 }) {
@@ -1178,13 +1189,20 @@ function EvalDashboardPanel({
           <small>Evaluation dashboard</small>
           <h2>Support agent quality</h2>
         </div>
-        <button type="button" onClick={() => void onRun()} disabled={running}>
-          {running ? <Activity size={15} /> : <FlaskConical size={15} />}
-          Run evals
-        </button>
+        <div className="evalRunControls">
+          <select value={mode} onChange={(event) => onModeChange(event.target.value as EvalExecutionMode)} disabled={running}>
+            <option value="deterministic">Deterministic baseline</option>
+            <option value="llm">Configured LLM</option>
+          </select>
+          <button type="button" onClick={() => void onRun()} disabled={running}>
+            {running ? <Activity size={15} /> : <FlaskConical size={15} />}
+            Run evals
+          </button>
+        </div>
       </div>
       <div className="evalSummaryGrid">
         <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
+        <SummaryFact icon={<Bot size={16} />} label="Mode" value={run ? evalModeLabel(run.execution_mode) : evalModeLabel(mode)} />
         <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
         <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? `${run.passed}/${run.total}` : "-"} />
         <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
@@ -1230,7 +1248,7 @@ function EvalDashboardPanel({
             <div className={item.failed === 0 ? "passed" : "failed"} key={item.run_id}>
               <span>{formatShortTimestamp(item.created_at)}</span>
               <strong>{evalPassRateLabel(item.pass_rate)}</strong>
-              <em>{item.failed === 0 ? "passing" : `${item.failed} failed`}</em>
+              <em>{evalModeLabel(item.execution_mode)}</em>
             </div>
           ))}
         </div>

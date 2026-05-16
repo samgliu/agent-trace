@@ -80,6 +80,18 @@ def build_parser() -> argparse.ArgumentParser:
     eval_subparsers = eval_parser.add_subparsers(dest="suite", required=True)
     support_eval_parser = eval_subparsers.add_parser("support-triage", help="Run the support-triage core eval suite.")
     support_eval_parser.add_argument(
+        "--mode",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Eval execution mode. Deterministic is stable; llm uses configured model provider.",
+    )
+    support_eval_parser.add_argument(
+        "--openai-api",
+        choices=["chat_completions", "responses"],
+        default="chat_completions",
+        help="Model API surface to use for --mode llm.",
+    )
+    support_eval_parser.add_argument(
         "--json",
         action="store_true",
         help="Print the compact eval report as JSON.",
@@ -99,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "eval":
         if args.suite == "support-triage":
-            result = run_support_triage_eval_suite()
+            result = run_support_triage_eval_suite(execution_mode=args.mode, openai_api=args.openai_api)
             report = build_eval_report(result)
             if args.json:
                 print(json.dumps(report, indent=2, sort_keys=True))

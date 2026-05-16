@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evalCategorySummaries,
   evalCheckCategory,
+  evalModeLabel,
   evalPassRateLabel,
   evalStatusLabel,
   failedEvalCases,
@@ -16,6 +17,9 @@ const sampleRun: EvalSuiteRun = {
   run_id: "eval_1",
   suite_id: "support-triage-core",
   name: "Support triage core",
+  execution_mode: "deterministic",
+  model_provider: "static",
+  model_name: "deterministic",
   status: "failed",
   total: 2,
   passed: 1,
@@ -37,7 +41,18 @@ describe("eval helpers", () => {
     });
 
     expect(result.suite_id).toBe("support-triage-core");
-    expect(calls).toEqual([{ path: "/evals/support-triage/run", body: undefined }]);
+    expect(calls).toEqual([{ path: "/evals/support-triage/run?mode=deterministic", body: undefined }]);
+  });
+
+  it("runs LLM-backed support triage evals through the API helper", async () => {
+    const calls: unknown[] = [];
+    const result = await runSupportTriageEvalSuite(async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return { ...sampleRun, execution_mode: "llm", model_provider: "gemini", model_name: "gemini-2.5-flash" } as T;
+    }, "llm");
+
+    expect(result.execution_mode).toBe("llm");
+    expect(calls).toEqual([{ path: "/evals/support-triage/run?mode=llm", body: undefined }]);
   });
 
   it("lists recent eval runs", async () => {
@@ -47,6 +62,9 @@ describe("eval helpers", () => {
           run_id: sampleRun.run_id,
           suite_id: sampleRun.suite_id,
           name: sampleRun.name,
+          execution_mode: sampleRun.execution_mode,
+          model_provider: sampleRun.model_provider,
+          model_name: sampleRun.model_name,
           status: sampleRun.status,
           total: sampleRun.total,
           passed: sampleRun.passed,
@@ -70,6 +88,8 @@ describe("eval helpers", () => {
 
   it("formats eval summary state", () => {
     expect(evalPassRateLabel(0.875)).toBe("88%");
+    expect(evalModeLabel("deterministic")).toBe("Deterministic");
+    expect(evalModeLabel("llm")).toBe("LLM-backed");
     expect(evalStatusLabel(null)).toBe("Not run");
     expect(evalStatusLabel(sampleRun)).toBe("Needs review");
     expect(failedEvalCases(sampleRun).map((result) => result.case_id)).toEqual(["fail"]);

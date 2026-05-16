@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import patch
 
+from agent_apps.customer_service.runner import build_default_runner
 from agenttrace.evals.support_triage import (
     EvalCase,
     EvalCaseResult,
@@ -26,6 +28,9 @@ class SupportTriageEvalsTest(unittest.TestCase):
         result = run_support_triage_eval_suite()
 
         self.assertEqual(result.suite_id, "support-triage-core")
+        self.assertEqual(result.execution_mode, "deterministic")
+        self.assertEqual(result.model_provider, "static")
+        self.assertEqual(result.model_name, "deterministic")
         self.assertEqual(result.total, 11)
         self.assertEqual(result.passed, 11)
         self.assertEqual(result.failed, 0)
@@ -45,6 +50,8 @@ class SupportTriageEvalsTest(unittest.TestCase):
         payload = run_support_triage_eval_suite().to_dict()
 
         self.assertEqual(payload["passed"], 11)
+        self.assertEqual(payload["execution_mode"], "deterministic")
+        self.assertEqual(payload["model_provider"], "static")
         self.assertEqual(payload["results"][0]["trace_id"], "trace_eval_support_triage_duplicate_charge_refund")
         self.assertNotIn("trace", payload["results"][0])
         self.assertTrue(all(check["passed"] for check in payload["results"][0]["checks"]))
@@ -63,10 +70,32 @@ class SupportTriageEvalsTest(unittest.TestCase):
         report = build_eval_report(result)
 
         self.assertEqual(report["suite_id"], "support-triage-core")
+        self.assertEqual(report["execution_mode"], "deterministic")
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["passed"], 11)
         self.assertEqual(report["failed_cases"], [])
         self.assertIn("Status: passed", format_eval_report(report))
+        self.assertIn("Mode: deterministic (static/deterministic)", format_eval_report(report))
+
+    def test_llm_eval_mode_uses_configured_runner_and_metadata(self) -> None:
+        calls: list[bool] = []
+
+        def make_runner():
+            calls.append(True)
+            return build_default_runner(use_openai=False)
+
+        with patch.dict("os.environ", {"LLM_PROVIDER": "gemini", "GEMINI_MODEL": "gemini-test"}, clear=True):
+            result = run_support_triage_eval_suite(
+                execution_mode="llm",
+                runner_factory=make_runner,
+                trace_id_prefix="trace_eval_support_triage_llm_test",
+            )
+
+        self.assertEqual(result.execution_mode, "llm")
+        self.assertEqual(result.model_provider, "gemini")
+        self.assertEqual(result.model_name, "gemini-test")
+        self.assertEqual(len(calls), 11)
+        self.assertTrue(result.results[0].trace.trace_id.startswith("trace_eval_support_triage_llm_test_"))
 
     def test_eval_report_groups_failed_checks_by_category(self) -> None:
         suite_result = EvalSuiteResult(

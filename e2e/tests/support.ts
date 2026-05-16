@@ -52,8 +52,16 @@ export async function prepareApp(page: Page, options: PrepareAppOptions = {}): P
       return;
     }
     const url = request.url().replace(browserApiBaseURL, dockerApiBaseURL);
-    const response = await route.fetch({ url });
-    await route.fulfill({ response });
+    try {
+      const response = await route.fetch({ url });
+      await route.fulfill({ response });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (page.isClosed() || message.includes("Target page, context or browser has been closed")) {
+        return;
+      }
+      throw error;
+    }
   });
 }
 

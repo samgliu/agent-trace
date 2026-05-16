@@ -18,6 +18,9 @@ export type EvalSuiteRun = {
   run_id: string;
   suite_id: string;
   name: string;
+  execution_mode: EvalExecutionMode;
+  model_provider: string;
+  model_name: string;
   status: string;
   total: number;
   passed: number;
@@ -28,6 +31,8 @@ export type EvalSuiteRun = {
 };
 
 export type EvalRunSummary = Omit<EvalSuiteRun, "results">;
+
+export type EvalExecutionMode = "deterministic" | "llm";
 
 export type EvalRunListResponse = {
   items: EvalRunSummary[];
@@ -52,8 +57,15 @@ export type EvalFailedCheckGroup = {
 export type EvalSuiteTransport = <T>(path: string, body?: unknown) => Promise<T>;
 export type EvalSuiteGetTransport = <T>(path: string) => Promise<T>;
 
-export function runSupportTriageEvalSuite(transport: EvalSuiteTransport): Promise<EvalSuiteRun> {
-  return transport("/evals/support-triage/run");
+export function runSupportTriageEvalSuite(
+  transport: EvalSuiteTransport,
+  mode: EvalExecutionMode = "deterministic",
+): Promise<EvalSuiteRun> {
+  return transport(`/evals/support-triage/run?mode=${mode}`);
+}
+
+export function evalModeLabel(mode: EvalExecutionMode): string {
+  return mode === "llm" ? "LLM-backed" : "Deterministic";
 }
 
 export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunListResponse> {

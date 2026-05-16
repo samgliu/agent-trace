@@ -576,6 +576,30 @@ h2 {
   cursor: not-allowed;
 }
 
+.evalRunControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.evalRunControls select {
+  min-height: 36px;
+  padding: 0 10px;
+  color: #243036;
+  background: #ffffff;
+  border: 1px solid #cfd9de;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.evalRunControls select:disabled {
+  color: #7f8b92;
+  background: #f5f7f8;
+}
+
 .evalSummaryGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

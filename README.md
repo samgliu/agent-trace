@@ -211,19 +211,25 @@ Run the eval suite from the dashboard or API:
 
 ```bash
 curl -X POST http://localhost:8000/evals/support-triage/run
+curl -X POST 'http://localhost:8000/evals/support-triage/run?mode=llm'
 ```
 
 Run the same suite as a CI-friendly local report:
 
 ```bash
 python3 -m agenttrace.cli eval support-triage
+python3 -m agenttrace.cli eval support-triage --mode llm
 python3 -m agenttrace.cli eval support-triage --json
 ```
 
 The CLI returns a non-zero exit code when eval checks fail. Use `--no-fail` if
 you want report-only behavior.
 
-The current suite has 11 deterministic cases, including:
+Deterministic mode is the stable baseline for CI and local regression checks.
+LLM mode runs the same cases through the configured provider/model so real agent
+behavior can be evaluated separately from the simulation baseline.
+
+The current suite has 11 cases, including:
 
 - duplicate-charge refund
 - annual refund approval

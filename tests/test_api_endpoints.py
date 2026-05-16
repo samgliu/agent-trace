@@ -57,6 +57,8 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertIn("run_id", payload)
         self.assertEqual(payload["suite_id"], "support-triage-core")
+        self.assertEqual(payload["execution_mode"], "deterministic")
+        self.assertEqual(payload["model_provider"], "static")
         self.assertEqual(payload["passed"], 11)
         self.assertEqual(payload["failed"], 0)
         history_response = self.client.get("/eval-runs")
@@ -70,7 +72,31 @@ class ApiEndpointsTest(unittest.TestCase):
         trace = trace_response.json()
         self.assertEqual(trace["status"], "recovered")
         self.assertEqual(trace["metadata"]["eval_suite_id"], "support-triage-core")
+        self.assertEqual(trace["metadata"]["eval_execution_mode"], "deterministic")
         self.assertEqual(trace["metadata"]["source_kind"], "eval_run")
+
+    def test_run_support_triage_evals_supports_llm_mode_metadata(self) -> None:
+        from agent_apps.customer_service.runner import build_default_runner
+
+        calls: list[dict[str, object]] = []
+
+        def fake_build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_completions"):
+            calls.append({"use_openai": use_openai, "openai_api": openai_api})
+            return build_default_runner(use_openai=False)
+
+        with patch("agenttrace.evals.support_triage.build_default_runner", side_effect=fake_build_default_runner):
+            with patch.dict("os.environ", {"LLM_PROVIDER": "gemini", "GEMINI_MODEL": "gemini-test"}, clear=True):
+                response = self.client.post("/evals/support-triage/run?mode=llm")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_mode"], "llm")
+        self.assertEqual(payload["model_provider"], "gemini")
+        self.assertEqual(payload["model_name"], "gemini-test")
+        self.assertEqual(calls[0], {"use_openai": True, "openai_api": "chat_completions"})
+        trace_response = self.client.get("/traces/trace_eval_support_triage_llm_annual_refund_approval")
+        self.assertEqual(trace_response.status_code, 200)
+        self.assertEqual(trace_response.json()["metadata"]["eval_execution_mode"], "llm")
 
     def test_get_missing_eval_run_returns_404(self) -> None:
         response = self.client.get("/eval-runs/missing")
