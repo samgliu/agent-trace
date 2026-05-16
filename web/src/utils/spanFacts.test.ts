@@ -11,6 +11,7 @@ describe("buildSpanFacts", () => {
         estimated_cost: 0.0007,
         span_data: {
           model: "gpt-5.4",
+          model_fallback_used: true,
           tool_name: "lookup_customer",
           tool_server: "support-tools-mcp",
         },
@@ -20,6 +21,7 @@ describe("buildSpanFacts", () => {
       { label: "Tokens", value: "120/45" },
       { label: "Cost", value: "$0.0007" },
       { label: "Model", value: "gpt-5.4" },
+      { label: "Model fallback", value: "used" },
       { label: "Tool", value: "lookup_customer · support-tools-mcp" },
     ]);
   });

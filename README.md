@@ -299,6 +299,8 @@ LLM_BASE_URL=http://gateway.example/v1
 Fallback models are comma-separated and tried only for provider capacity errors
 such as HTTP 429, 503, or 529. Provider-specific fallback variables, such as
 `GEMINI_FALLBACK_MODELS`, take precedence over `LLM_FALLBACK_MODELS`.
+Trace spans record the selected model, model attempts, and whether fallback was
+used, so LLM-backed evals and chat runs can explain provider capacity behavior.
 
 After changing `.env`, recreate the agent service and API containers:
 
