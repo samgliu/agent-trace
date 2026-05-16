@@ -626,6 +626,62 @@ h2 {
   border: 1px solid #edf1f3;
 }
 
+.evalProgressPanel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  color: #172026;
+  background: #ffffff;
+  border: 1px solid #bdd7d0;
+  border-radius: 5px;
+  box-shadow: 0 1px 0 rgba(23, 32, 38, 0.04);
+}
+
+.evalProgressHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.evalProgressHeader div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.evalProgressHeader strong {
+  font-size: 14px;
+}
+
+.evalProgressHeader span,
+.evalProgressHeader em {
+  color: #637179;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.evalProgressHeader em {
+  flex: 0 0 auto;
+}
+
+.evalProgressTrack {
+  height: 8px;
+  overflow: hidden;
+  background: #edf1f3;
+  border-radius: 999px;
+}
+
+.evalProgressBar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #246b5b, #347f9d);
+  border-radius: inherit;
+  transition: width 180ms ease;
+}
+
 .evalCases {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

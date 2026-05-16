@@ -5,6 +5,8 @@ import {
   evalComparisonStatusLabel,
   evalModeLabel,
   evalPassRateLabel,
+  evalProgress,
+  evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
   failedChecksByCategory,
@@ -159,6 +161,33 @@ describe("eval helpers", () => {
     expect(evalStatusLabel(null)).toBe("Not run");
     expect(evalStatusLabel(sampleRun)).toBe("Needs review");
     expect(failedEvalCases(sampleRun).map((result) => result.case_id)).toEqual(["fail"]);
+  });
+
+  it("describes active eval progress from partial results", () => {
+    const run: EvalSuiteRun = {
+      ...sampleRun,
+      status: "running",
+      total: 4,
+      passed: 1,
+      failed: 0,
+      pass_rate: 0.25,
+      results: sampleRun.results.slice(0, 1),
+    };
+
+    expect(evalRunIsActive(run)).toBe(true);
+    expect(evalRunIsActive(sampleRun)).toBe(false);
+    expect(evalProgress(run)).toEqual({
+      completed: 1,
+      total: 4,
+      percent: 25,
+      label: "1/4 cases complete",
+    });
+    expect(evalProgress(null)).toEqual({
+      completed: 0,
+      total: 0,
+      percent: 0,
+      label: "No eval run",
+    });
   });
 
   it("categorizes eval checks by product-facing failure area", () => {

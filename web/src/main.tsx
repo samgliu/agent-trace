@@ -41,6 +41,8 @@ import {
   evalComparisonStatusLabel,
   evalModeLabel,
   evalPassRateLabel,
+  evalProgress,
+  evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
   failedChecksByCategory,
@@ -1216,7 +1218,10 @@ function EvalDashboardPanel({
 }) {
   const failures = failedEvalCases(run);
   const categorySummaries = evalCategorySummaries(run);
-  const running = status.status === "running";
+  const activeRun = evalRunIsActive(run);
+  const running = status.status === "running" || activeRun;
+  const progress = evalProgress(run);
+  const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
 
   return (
     <section className="evalDashboard">
@@ -1240,9 +1245,23 @@ function EvalDashboardPanel({
         <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
         <SummaryFact icon={<Bot size={16} />} label="Mode" value={run ? evalModeLabel(run.execution_mode) : evalModeLabel(mode)} />
         <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
-        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? `${run.passed}/${run.total}` : "-"} />
+        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? (activeRun ? `${progress.completed}/${progress.total}` : `${run.passed}/${run.total}`) : "-"} />
         <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
       </div>
+      {activeRun ? (
+        <div className="evalProgressPanel" role="status" aria-live="polite">
+          <div className="evalProgressHeader">
+            <div>
+              <strong>LLM eval is running</strong>
+              <span>Completed cases appear below as they finish.</span>
+            </div>
+            <em>{progress.label}</em>
+          </div>
+          <div className="evalProgressTrack" aria-label={progress.label}>
+            <span className="evalProgressBar" style={{ width: `${progress.percent}%` }} />
+          </div>
+        </div>
+      ) : null}
       <div className="evalCategoryStrip">
         {categorySummaries.map((summary) => (
           <span className={summary.failed > 0 ? "failed" : "passed"} key={summary.category}>
@@ -1267,9 +1286,9 @@ function EvalDashboardPanel({
         </span>
       </div>
       {status.status === "error" ? <p className="evalError">{status.message}</p> : null}
-      {run ? (
+      {run && visibleResults.length > 0 ? (
         <div className="evalCases">
-          {(failures.length > 0 ? failures : run.results).slice(0, 4).map((result) => (
+          {visibleResults.map((result) => (
             <div className={result.passed ? "evalCaseCard passed" : "evalCaseCard failed"} key={result.case_id}>
               <button type="button" onClick={() => onSelectTrace(result.trace_id)}>
                 <span>{result.name}</span>
@@ -1290,6 +1309,8 @@ function EvalDashboardPanel({
             </div>
           ))}
         </div>
+      ) : activeRun ? (
+        <p className="evalEmpty">Waiting for the first case result...</p>
       ) : (
         <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
       )}

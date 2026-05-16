@@ -71,6 +71,13 @@ export type EvalCategorySummary = {
   total: number;
 };
 
+export type EvalProgress = {
+  completed: number;
+  total: number;
+  percent: number;
+  label: string;
+};
+
 export type EvalFailedCheckGroup = {
   category: EvalCheckCategory;
   checks: EvalCheck[];
@@ -125,6 +132,18 @@ export function evalStatusLabel(run: EvalSuiteRun | null): string {
     return "Running";
   }
   return run.failed === 0 ? "Passing" : "Needs review";
+}
+
+export function evalRunIsActive(run: EvalSuiteRun | null): boolean {
+  return run?.status === "running";
+}
+
+export function evalProgress(run: EvalSuiteRun | null): EvalProgress {
+  const completed = run?.results.length ?? 0;
+  const total = run?.total ?? 0;
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const label = total > 0 ? `${completed}/${total} cases complete` : "No eval run";
+  return { completed, total, percent, label };
 }
 
 export function evalComparisonStatusLabel(comparison: EvalComparison | null): string {
