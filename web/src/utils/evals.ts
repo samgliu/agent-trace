@@ -41,6 +41,27 @@ export type EvalRunListResponse = {
   total: number;
 };
 
+export type EvalComparisonCase = {
+  case_id: string;
+  name: string;
+  deterministic_trace_id: string;
+  llm_trace_id: string;
+  deterministic_score: number;
+  llm_score: number;
+  failed_checks: EvalCheck[];
+};
+
+export type EvalComparison = {
+  suite_id: string;
+  status: "ready" | "missing_runs" | "missing_deterministic" | "missing_llm";
+  deterministic_run: EvalRunSummary | null;
+  llm_run: EvalRunSummary | null;
+  pass_rate_delta: number | null;
+  llm_regressions: EvalComparisonCase[];
+  llm_improvements: EvalComparisonCase[];
+  both_failed: EvalComparisonCase[];
+};
+
 export type EvalCheckCategory = "Routing" | "Policy" | "Memory" | "Response" | "Reliability";
 
 export type EvalCategorySummary = {
@@ -72,6 +93,10 @@ export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunL
   return transport("/eval-runs?limit=5");
 }
 
+export function getSupportTriageEvalComparison(transport: EvalSuiteGetTransport): Promise<EvalComparison> {
+  return transport("/eval-runs/support-triage/comparison");
+}
+
 export function evalPassRateLabel(passRate: number): string {
   return `${Math.round(passRate * 100)}%`;
 }
@@ -85,6 +110,15 @@ export function evalStatusLabel(run: EvalSuiteRun | null): string {
     return "Not run";
   }
   return run.failed === 0 ? "Passing" : "Needs review";
+}
+
+export function evalComparisonStatusLabel(comparison: EvalComparison | null): string {
+  if (comparison === null) return "Run both modes";
+  if (comparison.status === "missing_runs") return "Run both modes";
+  if (comparison.status === "missing_deterministic") return "Run deterministic baseline";
+  if (comparison.status === "missing_llm") return "Run LLM eval";
+  if ((comparison.llm_regressions?.length ?? 0) > 0) return "LLM drift detected";
+  return "Aligned";
 }
 
 export function evalCheckCategory(checkName: string): EvalCheckCategory {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import threading
 import uuid
@@ -163,6 +164,12 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def list_eval_runs(limit: int = Query(10, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict[str, Any]:
         return trace_store.list_eval_runs(limit=limit, offset=offset)
 
+    @app.get("/eval-runs/support-triage/comparison")
+    def get_support_triage_eval_comparison() -> dict[str, Any]:
+        deterministic = trace_store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="deterministic")
+        llm = trace_store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="llm")
+        return _build_eval_comparison(suite_id="support-triage-core", deterministic=deterministic, llm=llm)
+
     @app.get("/eval-runs/{run_id}")
     def get_eval_run(run_id: str) -> dict[str, Any]:
         run = trace_store.get_eval_run(run_id)
@@ -175,7 +182,10 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         mode: str = Query("deterministic", pattern="^(deterministic|llm)$"),
         openai_api: str = Query("chat_completions", pattern="^(chat_completions|responses)$"),
     ) -> dict[str, Any]:
-        result = run_support_triage_eval_suite(execution_mode=cast(EvalExecutionMode, mode), openai_api=openai_api)
+        try:
+            result = run_support_triage_eval_suite(execution_mode=cast(EvalExecutionMode, mode), openai_api=openai_api)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=_llm_runtime_error_status(str(exc)), detail=str(exc)) from exc
         for case_result in result.results:
             trace = _with_eval_metadata(
                 case_result.trace,
@@ -657,6 +667,93 @@ def _with_eval_metadata(
         ended_at=trace.ended_at,
         spans=trace.spans,
     )
+
+
+def _build_eval_comparison(
+    *,
+    suite_id: str,
+    deterministic: dict[str, Any] | None,
+    llm: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if deterministic is None and llm is None:
+        status = "missing_runs"
+    elif deterministic is None:
+        status = "missing_deterministic"
+    elif llm is None:
+        status = "missing_llm"
+    else:
+        status = "ready"
+
+    comparison: dict[str, Any] = {
+        "suite_id": suite_id,
+        "status": status,
+        "deterministic_run": _eval_run_summary(deterministic),
+        "llm_run": _eval_run_summary(llm),
+        "pass_rate_delta": None,
+        "llm_regressions": [],
+        "llm_improvements": [],
+        "both_failed": [],
+    }
+    if deterministic is None or llm is None:
+        return comparison
+
+    comparison["pass_rate_delta"] = round(llm["pass_rate"] - deterministic["pass_rate"], 4)
+    deterministic_cases = {case["case_id"]: case for case in deterministic.get("results", [])}
+    for llm_case in llm.get("results", []):
+        baseline_case = deterministic_cases.get(llm_case["case_id"])
+        if baseline_case is None:
+            continue
+        case_summary = {
+            "case_id": llm_case["case_id"],
+            "name": llm_case["name"],
+            "deterministic_trace_id": baseline_case["trace_id"],
+            "llm_trace_id": llm_case["trace_id"],
+            "deterministic_score": baseline_case["score"],
+            "llm_score": llm_case["score"],
+            "failed_checks": [check for check in llm_case.get("checks", []) if not check.get("passed")],
+        }
+        if baseline_case["passed"] and not llm_case["passed"]:
+            comparison["llm_regressions"].append(case_summary)
+        elif not baseline_case["passed"] and llm_case["passed"]:
+            comparison["llm_improvements"].append(case_summary)
+        elif not baseline_case["passed"] and not llm_case["passed"]:
+            comparison["both_failed"].append(case_summary)
+    return comparison
+
+
+def _eval_run_summary(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    return {
+        "run_id": run["run_id"],
+        "suite_id": run["suite_id"],
+        "name": run["name"],
+        "execution_mode": run["execution_mode"],
+        "model_provider": run["model_provider"],
+        "model_name": run["model_name"],
+        "status": run["status"],
+        "total": run["total"],
+        "passed": run["passed"],
+        "failed": run["failed"],
+        "pass_rate": run["pass_rate"],
+        "created_at": run["created_at"],
+    }
+
+
+def _llm_runtime_error_status(message: str) -> int:
+    if "missing API key" in message or "API key is required" in message or "not configured" in message:
+        return 400
+    match = re.search(r"HTTP (\d{3})", message)
+    if match is None:
+        return 502
+    upstream_status = int(match.group(1))
+    if upstream_status == 429:
+        return 429
+    if upstream_status in {500, 502, 503, 504, 529}:
+        return 502 if upstream_status == 500 else upstream_status
+    if 400 <= upstream_status < 500:
+        return upstream_status
+    return 502
 
 
 class WorkflowRunRegistry:

@@ -212,6 +212,7 @@ Run the eval suite from the dashboard or API:
 ```bash
 curl -X POST http://localhost:8000/evals/support-triage/run
 curl -X POST 'http://localhost:8000/evals/support-triage/run?mode=llm'
+curl http://localhost:8000/eval-runs/support-triage/comparison
 ```
 
 Run the same suite as a CI-friendly local report:
@@ -228,6 +229,8 @@ you want report-only behavior.
 Deterministic mode is the stable baseline for CI and local regression checks.
 LLM mode runs the same cases through the configured provider/model so real agent
 behavior can be evaluated separately from the simulation baseline.
+The comparison endpoint pairs the latest deterministic and LLM-backed runs and
+highlights LLM regressions, improvements, shared failures, and pass-rate delta.
 
 The current suite has 11 cases, including:
 

@@ -98,6 +98,74 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(trace_response.status_code, 200)
         self.assertEqual(trace_response.json()["metadata"]["eval_execution_mode"], "llm")
 
+    def test_eval_comparison_pairs_latest_deterministic_and_llm_runs(self) -> None:
+        for trace_id in ("trace_eval_det_case", "trace_eval_llm_case"):
+            self.store.save_trace(Trace(trace_id=trace_id, workflow_name="support-triage", status="passed"))
+
+        def eval_payload(*, mode: str, trace_id: str, passed: bool) -> dict[str, object]:
+            return {
+                "suite_id": "support-triage-core",
+                "name": "Support triage core",
+                "execution_mode": mode,
+                "model_provider": "static" if mode == "deterministic" else "gemini",
+                "model_name": "deterministic" if mode == "deterministic" else "gemini-test",
+                "total": 1,
+                "passed": 1 if passed else 0,
+                "failed": 0 if passed else 1,
+                "pass_rate": 1.0 if passed else 0.0,
+                "results": [
+                    {
+                        "case_id": "duplicate-charge-refund",
+                        "name": "Duplicate charge refund",
+                        "trace_id": trace_id,
+                        "passed": passed,
+                        "score": 1.0 if passed else 0.5,
+                        "checks": [
+                            {"name": "response_excludes:duplicate", "expected": "no duplicate", "actual": "duplicate", "passed": passed}
+                        ],
+                    }
+                ],
+            }
+
+        self.store.save_eval_run(
+            eval_payload(mode="deterministic", trace_id="trace_eval_det_case", passed=True),
+            run_id="eval_det",
+        )
+        self.store.save_eval_run(
+            eval_payload(mode="llm", trace_id="trace_eval_llm_case", passed=False),
+            run_id="eval_llm",
+        )
+
+        response = self.client.get("/eval-runs/support-triage/comparison")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["deterministic_run"]["run_id"], "eval_det")
+        self.assertEqual(payload["llm_run"]["model_provider"], "gemini")
+        self.assertEqual(payload["pass_rate_delta"], -1.0)
+        self.assertEqual(payload["llm_regressions"][0]["case_id"], "duplicate-charge-refund")
+
+    def test_llm_eval_provider_failure_returns_clean_error(self) -> None:
+        with patch(
+            "agenttrace.api.main.run_support_triage_eval_suite",
+            side_effect=RuntimeError("LLM provider request failed with HTTP 500: upstream internal error"),
+        ):
+            response = self.client.post("/evals/support-triage/run?mode=llm")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"], "LLM provider request failed with HTTP 500: upstream internal error")
+
+    def test_llm_eval_missing_key_returns_configuration_error(self) -> None:
+        with patch(
+            "agenttrace.api.main.run_support_triage_eval_suite",
+            side_effect=RuntimeError("LLM provider 'gemini' is not configured: missing API key."),
+        ):
+            response = self.client.post("/evals/support-triage/run?mode=llm")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("missing API key", response.json()["detail"])
+
     def test_get_missing_eval_run_returns_404(self) -> None:
         response = self.client.get("/eval-runs/missing")
 

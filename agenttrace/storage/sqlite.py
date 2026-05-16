@@ -291,6 +291,22 @@ class SQLiteTraceStore:
             "total": total,
         }
 
+    def get_latest_eval_run(self, *, suite_id: str, execution_mode: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT run_id
+                FROM eval_runs
+                WHERE suite_id = ? AND execution_mode = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (suite_id, execution_mode),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_eval_run(row["run_id"])
+
     def create_workflow_run(
         self,
         *,

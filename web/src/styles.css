@@ -757,6 +757,40 @@ h2 {
   border-color: #e9a7a0;
 }
 
+.evalComparison {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(3, minmax(90px, auto));
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+}
+
+.evalComparison.drift {
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
+.evalComparison small,
+.evalComparison span {
+  color: #637179;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evalComparison small {
+  display: block;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+
+.evalComparison strong {
+  color: #172026;
+}
+
 .evalHistory strong,
 .evalHistory em {
   font-style: normal;
