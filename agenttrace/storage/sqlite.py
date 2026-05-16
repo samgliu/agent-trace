@@ -143,7 +143,11 @@ class SQLiteTraceStore:
                     run_id TEXT PRIMARY KEY,
                     suite_id TEXT NOT NULL,
                     name TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL DEFAULT 'deterministic',
+                    model_provider TEXT NOT NULL DEFAULT 'static',
+                    model_name TEXT NOT NULL DEFAULT 'deterministic',
                     status TEXT NOT NULL,
+                    error TEXT,
                     total INTEGER NOT NULL,
                     passed INTEGER NOT NULL,
                     failed INTEGER NOT NULL,
@@ -187,6 +191,16 @@ class SQLiteTraceStore:
                     "memory_average_relevance": "REAL",
                 },
             )
+            _ensure_columns(
+                connection,
+                "eval_runs",
+                {
+                    "execution_mode": "TEXT NOT NULL DEFAULT 'deterministic'",
+                    "model_provider": "TEXT NOT NULL DEFAULT 'static'",
+                    "model_name": "TEXT NOT NULL DEFAULT 'deterministic'",
+                    "error": "TEXT",
+                },
+            )
         self._backfill_trace_summaries()
 
     def save_eval_run(self, result: dict[str, Any], *, run_id: str | None = None) -> dict[str, Any]:
@@ -195,21 +209,26 @@ class SQLiteTraceStore:
             "run_id": run_id or f"eval_{uuid.uuid4().hex[:12]}",
             "suite_id": result["suite_id"],
             "name": result["name"],
-            "status": "passed" if result["failed"] == 0 else "failed",
+            "execution_mode": result.get("execution_mode", "deterministic"),
+            "model_provider": result.get("model_provider", "static"),
+            "model_name": result.get("model_name", "deterministic"),
+            "status": result.get("status") or ("passed" if result["failed"] == 0 else "failed"),
+            "error": result.get("error"),
             "total": result["total"],
             "passed": result["passed"],
             "failed": result["failed"],
             "pass_rate": result["pass_rate"],
-            "created_at": created_at,
+            "created_at": result.get("created_at") or created_at,
             "results": result["results"],
         }
         with closing(self._connect()) as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO eval_runs (
-                    run_id, suite_id, name, status, total, passed, failed, pass_rate, created_at
+                    run_id, suite_id, name, execution_mode, model_provider, model_name,
+                    status, error, total, passed, failed, pass_rate, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _eval_run_row(saved_run),
             )
@@ -233,7 +252,8 @@ class SQLiteTraceStore:
         with closing(self._connect()) as connection:
             run_row = connection.execute(
                 """
-                SELECT run_id, suite_id, name, status, total, passed, failed, pass_rate, created_at
+                SELECT run_id, suite_id, name, execution_mode, model_provider, model_name,
+                    status, error, total, passed, failed, pass_rate, created_at
                 FROM eval_runs
                 WHERE run_id = ?
                 """,
@@ -259,7 +279,8 @@ class SQLiteTraceStore:
             total = connection.execute("SELECT COUNT(*) AS total FROM eval_runs").fetchone()["total"]
             rows = connection.execute(
                 """
-                SELECT run_id, suite_id, name, status, total, passed, failed, pass_rate, created_at
+                SELECT run_id, suite_id, name, execution_mode, model_provider, model_name,
+                    status, error, total, passed, failed, pass_rate, created_at
                 FROM eval_runs
                 ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
@@ -272,6 +293,22 @@ class SQLiteTraceStore:
             "offset": offset,
             "total": total,
         }
+
+    def get_latest_eval_run(self, *, suite_id: str, execution_mode: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT run_id
+                FROM eval_runs
+                WHERE suite_id = ? AND execution_mode = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (suite_id, execution_mode),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_eval_run(row["run_id"])
 
     def create_workflow_run(
         self,
@@ -1084,7 +1121,11 @@ def _eval_run_row(run: dict[str, Any]) -> tuple[Any, ...]:
         run["run_id"],
         run["suite_id"],
         run["name"],
+        run["execution_mode"],
+        run["model_provider"],
+        run["model_name"],
         run["status"],
+        run["error"],
         run["total"],
         run["passed"],
         run["failed"],
@@ -1110,7 +1151,11 @@ def _eval_run_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "run_id": row["run_id"],
         "suite_id": row["suite_id"],
         "name": row["name"],
+        "execution_mode": row["execution_mode"],
+        "model_provider": row["model_provider"],
+        "model_name": row["model_name"],
         "status": row["status"],
+        "error": row["error"],
         "total": row["total"],
         "passed": row["passed"],
         "failed": row["failed"],

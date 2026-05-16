@@ -2,12 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   evalCategorySummaries,
   evalCheckCategory,
+  evalComparisonStatusLabel,
+  evalModeLabel,
   evalPassRateLabel,
+  evalProgress,
+  evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
   failedChecksByCategory,
+  getEvalRun,
+  getSupportTriageEvalComparison,
   listEvalRuns,
   runSupportTriageEvalSuite,
+  startSupportTriageEvalSuite,
   type EvalRunListResponse,
   type EvalSuiteRun,
 } from "./evals";
@@ -16,6 +23,9 @@ const sampleRun: EvalSuiteRun = {
   run_id: "eval_1",
   suite_id: "support-triage-core",
   name: "Support triage core",
+  execution_mode: "deterministic",
+  model_provider: "static",
+  model_name: "deterministic",
   status: "failed",
   total: 2,
   passed: 1,
@@ -37,7 +47,29 @@ describe("eval helpers", () => {
     });
 
     expect(result.suite_id).toBe("support-triage-core");
-    expect(calls).toEqual([{ path: "/evals/support-triage/run", body: undefined }]);
+    expect(calls).toEqual([{ path: "/evals/support-triage/run?mode=deterministic", body: undefined }]);
+  });
+
+  it("runs LLM-backed support triage evals through the API helper", async () => {
+    const calls: unknown[] = [];
+    const result = await runSupportTriageEvalSuite(async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return { ...sampleRun, execution_mode: "llm", model_provider: "gemini", model_name: "gemini-2.5-flash" } as T;
+    }, "llm");
+
+    expect(result.execution_mode).toBe("llm");
+    expect(calls).toEqual([{ path: "/evals/support-triage/run?mode=llm", body: undefined }]);
+  });
+
+  it("starts async LLM-backed support triage evals through the API helper", async () => {
+    const calls: unknown[] = [];
+    const result = await startSupportTriageEvalSuite(async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return { ...sampleRun, execution_mode: "llm", status: "running", passed: 0, failed: 0, pass_rate: 0 } as T;
+    });
+
+    expect(result.status).toBe("running");
+    expect(calls).toEqual([{ path: "/evals/support-triage/run/async?mode=llm", body: undefined }]);
   });
 
   it("lists recent eval runs", async () => {
@@ -47,6 +79,9 @@ describe("eval helpers", () => {
           run_id: sampleRun.run_id,
           suite_id: sampleRun.suite_id,
           name: sampleRun.name,
+          execution_mode: sampleRun.execution_mode,
+          model_provider: sampleRun.model_provider,
+          model_name: sampleRun.model_name,
           status: sampleRun.status,
           total: sampleRun.total,
           passed: sampleRun.passed,
@@ -68,11 +103,91 @@ describe("eval helpers", () => {
     expect(result.items[0].run_id).toBe("eval_1");
   });
 
+  it("gets support triage eval comparison", async () => {
+    const result = await getSupportTriageEvalComparison(async <T>(path: string): Promise<T> => {
+      expect(path).toBe("/eval-runs/support-triage/comparison");
+      return {
+        suite_id: "support-triage-core",
+        status: "ready",
+        deterministic_run: sampleRun,
+        llm_run: { ...sampleRun, execution_mode: "llm", model_provider: "gemini", model_name: "gemini-test" },
+        pass_rate_delta: -0.25,
+        llm_regressions: [],
+        llm_improvements: [],
+        both_failed: [],
+      } as T;
+    });
+
+    expect(result.pass_rate_delta).toBe(-0.25);
+  });
+
+  it("gets eval run detail", async () => {
+    const result = await getEvalRun(async <T>(path: string): Promise<T> => {
+      expect(path).toBe("/eval-runs/eval_1");
+      return sampleRun as T;
+    }, "eval_1");
+
+    expect(result.run_id).toBe("eval_1");
+  });
+
   it("formats eval summary state", () => {
     expect(evalPassRateLabel(0.875)).toBe("88%");
+    expect(evalModeLabel("deterministic")).toBe("Deterministic");
+    expect(evalModeLabel("llm")).toBe("LLM-backed");
+    expect(evalComparisonStatusLabel(null)).toBe("Run both modes");
+    expect(evalStatusLabel({ ...sampleRun, status: "running", failed: 0 })).toBe("Running");
+    expect(
+      evalComparisonStatusLabel({
+        suite_id: "support-triage-core",
+        status: "ready",
+        deterministic_run: sampleRun,
+        llm_run: { ...sampleRun, execution_mode: "llm" },
+        pass_rate_delta: -0.5,
+        llm_regressions: [
+          {
+            case_id: "case",
+            name: "Case",
+            deterministic_trace_id: "trace_det",
+            llm_trace_id: "trace_llm",
+            deterministic_score: 1,
+            llm_score: 0.5,
+            failed_checks: [],
+          },
+        ],
+        llm_improvements: [],
+        both_failed: [],
+      }),
+    ).toBe("LLM drift detected");
     expect(evalStatusLabel(null)).toBe("Not run");
     expect(evalStatusLabel(sampleRun)).toBe("Needs review");
     expect(failedEvalCases(sampleRun).map((result) => result.case_id)).toEqual(["fail"]);
+  });
+
+  it("describes active eval progress from partial results", () => {
+    const run: EvalSuiteRun = {
+      ...sampleRun,
+      status: "running",
+      total: 4,
+      passed: 1,
+      failed: 0,
+      pass_rate: 0.25,
+      results: sampleRun.results.slice(0, 1),
+    };
+
+    expect(evalRunIsActive(run)).toBe(true);
+    expect(evalRunIsActive(sampleRun)).toBe(false);
+    expect(evalProgress(run)).toEqual({
+      completed: 1,
+      total: 4,
+      percent: 25,
+      label: "1/4 cases complete",
+    });
+    expect(evalProgress(null)).toEqual({
+      completed: 0,
+      total: 0,
+      percent: 0,
+      label: "No eval run",
+    });
   });
 
   it("categorizes eval checks by product-facing failure area", () => {

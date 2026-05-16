@@ -49,6 +49,11 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
     facts.push({ label: "Model", value: model });
   }
 
+  const modelFallbackUsed = booleanValue(span.span_data.model_fallback_used);
+  if (modelFallbackUsed) {
+    facts.push({ label: "Model fallback", value: "used" });
+  }
+
   const toolName = stringValue(span.span_data.tool_name);
   const toolServer = stringValue(span.span_data.tool_server);
   if (toolName || toolServer) {

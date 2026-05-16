@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import threading
 import uuid
@@ -11,7 +12,7 @@ import queue
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
@@ -34,7 +35,14 @@ from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
 from agenttrace.core.summary import build_dashboard_summary
-from agenttrace.evals.support_triage import list_support_triage_eval_suites, run_support_triage_eval_suite
+from agenttrace.evals.support_triage import (
+    SUPPORT_TRIAGE_EVAL_CASES,
+    EvalExecutionMode,
+    eval_model_metadata,
+    list_support_triage_eval_suites,
+    run_support_triage_eval_case,
+    run_support_triage_eval_suite,
+)
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -163,6 +171,12 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
     def list_eval_runs(limit: int = Query(10, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict[str, Any]:
         return trace_store.list_eval_runs(limit=limit, offset=offset)
 
+    @app.get("/eval-runs/support-triage/comparison")
+    def get_support_triage_eval_comparison() -> dict[str, Any]:
+        deterministic = trace_store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="deterministic")
+        llm = trace_store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="llm")
+        return _build_eval_comparison(suite_id="support-triage-core", deterministic=deterministic, llm=llm)
+
     @app.get("/eval-runs/{run_id}")
     def get_eval_run(run_id: str) -> dict[str, Any]:
         run = trace_store.get_eval_run(run_id)
@@ -171,16 +185,119 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         return run
 
     @app.post("/evals/support-triage/run")
-    def run_support_triage_evals() -> dict[str, Any]:
-        result = run_support_triage_eval_suite()
+    def run_support_triage_evals(
+        mode: str = Query("deterministic", pattern="^(deterministic|llm)$"),
+        openai_api: str = Query("chat_completions", pattern="^(chat_completions|responses)$"),
+    ) -> dict[str, Any]:
+        try:
+            result = run_support_triage_eval_suite(execution_mode=cast(EvalExecutionMode, mode), openai_api=openai_api)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=_llm_runtime_error_status(str(exc)), detail=str(exc)) from exc
         for case_result in result.results:
-            trace = _with_eval_metadata(case_result.trace, suite_id=result.suite_id, case_id=case_result.case.case_id)
+            trace = _with_eval_metadata(
+                case_result.trace,
+                suite_id=result.suite_id,
+                case_id=case_result.case.case_id,
+                execution_mode=result.execution_mode,
+                model_provider=result.model_provider,
+                model_name=result.model_name,
+            )
             trace_store.save_trace(trace)
             _publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = trace_store.save_eval_run(result.to_dict())
         event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=saved["run_id"])
         event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
         return saved
+
+    @app.post("/evals/support-triage/run/async")
+    def start_support_triage_eval_run(
+        mode: str = Query("llm", pattern="^(deterministic|llm)$"),
+        openai_api: str = Query("chat_completions", pattern="^(chat_completions|responses)$"),
+    ) -> dict[str, Any]:
+        execution_mode = cast(EvalExecutionMode, mode)
+        run_id = f"eval_{uuid.uuid4().hex[:12]}"
+        created_at = _utc_now()
+        try:
+            model_provider, model_name = eval_model_metadata(execution_mode=execution_mode)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=_llm_runtime_error_status(str(exc)), detail=str(exc)) from exc
+        run = _save_eval_progress(
+            trace_store,
+            run_id=run_id,
+            created_at=created_at,
+            execution_mode=execution_mode,
+            model_provider=model_provider,
+            model_name=model_name,
+            status="running",
+            results=[],
+        )
+        event_bus.publish("eval_run.created", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+
+        def execute() -> None:
+            results = []
+            status = "running"
+            for case in SUPPORT_TRIAGE_EVAL_CASES:
+                try:
+                    case_result = run_support_triage_eval_case(
+                        case,
+                        execution_mode=execution_mode,
+                        openai_api=openai_api,
+                    )
+                    trace = _with_eval_metadata(
+                        case_result.trace,
+                        suite_id="support-triage-core",
+                        case_id=case.case_id,
+                        execution_mode=execution_mode,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                    )
+                    trace_store.save_trace(trace)
+                    _publish_trace_events(event_bus, "trace.created", trace.trace_id)
+                    results.append(case_result.to_dict())
+                    _save_eval_progress(
+                        trace_store,
+                        run_id=run_id,
+                        created_at=created_at,
+                        execution_mode=execution_mode,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                        status=status,
+                        results=results,
+                    )
+                    event_bus.publish("eval_run.updated", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+                except RuntimeError as exc:
+                    status = "failed"
+                    _save_eval_progress(
+                        trace_store,
+                        run_id=run_id,
+                        created_at=created_at,
+                        execution_mode=execution_mode,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                        status=status,
+                        results=results,
+                        error=str(exc),
+                    )
+                    event_bus.publish("eval_run.failed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+                    event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+                    return
+            status = "passed" if all(result["passed"] for result in results) else "failed"
+            _save_eval_progress(
+                trace_store,
+                run_id=run_id,
+                created_at=created_at,
+                execution_mode=execution_mode,
+                model_provider=model_provider,
+                model_name=model_name,
+                status=status,
+                results=results,
+            )
+            event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+            event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+
+        thread = threading.Thread(target=execute, name=f"agenttrace-eval-{run_id}", daemon=True)
+        thread.start()
+        return run
 
     @app.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
@@ -618,11 +735,22 @@ def _agent_service_error_message(exc: urllib.error.HTTPError) -> str:
     return f"Agent service request failed with HTTP {exc.code}."
 
 
-def _with_eval_metadata(trace: Trace, *, suite_id: str, case_id: str) -> Trace:
+def _with_eval_metadata(
+    trace: Trace,
+    *,
+    suite_id: str,
+    case_id: str,
+    execution_mode: str,
+    model_provider: str,
+    model_name: str,
+) -> Trace:
     metadata = {
         **trace.metadata,
         "eval_suite_id": suite_id,
         "eval_case_id": case_id,
+        "eval_execution_mode": execution_mode,
+        "model_provider": model_provider,
+        "model_name": model_name,
         "source_kind": "eval_run",
     }
     return Trace(
@@ -636,6 +764,129 @@ def _with_eval_metadata(trace: Trace, *, suite_id: str, case_id: str) -> Trace:
         ended_at=trace.ended_at,
         spans=trace.spans,
     )
+
+
+def _build_eval_comparison(
+    *,
+    suite_id: str,
+    deterministic: dict[str, Any] | None,
+    llm: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if deterministic is None and llm is None:
+        status = "missing_runs"
+    elif deterministic is None:
+        status = "missing_deterministic"
+    elif llm is None:
+        status = "missing_llm"
+    else:
+        status = "ready"
+
+    comparison: dict[str, Any] = {
+        "suite_id": suite_id,
+        "status": status,
+        "deterministic_run": _eval_run_summary(deterministic),
+        "llm_run": _eval_run_summary(llm),
+        "pass_rate_delta": None,
+        "llm_regressions": [],
+        "llm_improvements": [],
+        "both_failed": [],
+    }
+    if deterministic is None or llm is None:
+        return comparison
+
+    comparison["pass_rate_delta"] = round(llm["pass_rate"] - deterministic["pass_rate"], 4)
+    deterministic_cases = {case["case_id"]: case for case in deterministic.get("results", [])}
+    for llm_case in llm.get("results", []):
+        baseline_case = deterministic_cases.get(llm_case["case_id"])
+        if baseline_case is None:
+            continue
+        case_summary = {
+            "case_id": llm_case["case_id"],
+            "name": llm_case["name"],
+            "deterministic_trace_id": baseline_case["trace_id"],
+            "llm_trace_id": llm_case["trace_id"],
+            "deterministic_score": baseline_case["score"],
+            "llm_score": llm_case["score"],
+            "failed_checks": [check for check in llm_case.get("checks", []) if not check.get("passed")],
+        }
+        if baseline_case["passed"] and not llm_case["passed"]:
+            comparison["llm_regressions"].append(case_summary)
+        elif not baseline_case["passed"] and llm_case["passed"]:
+            comparison["llm_improvements"].append(case_summary)
+        elif not baseline_case["passed"] and not llm_case["passed"]:
+            comparison["both_failed"].append(case_summary)
+    return comparison
+
+
+def _eval_run_summary(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    return {
+        "run_id": run["run_id"],
+        "suite_id": run["suite_id"],
+        "name": run["name"],
+        "execution_mode": run["execution_mode"],
+        "model_provider": run["model_provider"],
+        "model_name": run["model_name"],
+        "status": run["status"],
+        "error": run.get("error"),
+        "total": run["total"],
+        "passed": run["passed"],
+        "failed": run["failed"],
+        "pass_rate": run["pass_rate"],
+        "created_at": run["created_at"],
+    }
+
+
+def _save_eval_progress(
+    store: SQLiteTraceStore,
+    *,
+    run_id: str,
+    created_at: str,
+    execution_mode: str,
+    model_provider: str,
+    model_name: str,
+    status: str,
+    results: list[dict[str, Any]],
+    error: str | None = None,
+) -> dict[str, Any]:
+    passed = sum(1 for result in results if result.get("passed"))
+    total = len(SUPPORT_TRIAGE_EVAL_CASES)
+    failed = 0 if status == "running" else total - passed
+    return store.save_eval_run(
+        {
+            "suite_id": "support-triage-core",
+            "name": "Support triage core",
+            "execution_mode": execution_mode,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "status": status,
+            "error": error,
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "pass_rate": round(passed / total, 4) if total else 0.0,
+            "created_at": created_at,
+            "results": [dict(result) for result in results],
+        },
+        run_id=run_id,
+    )
+
+
+def _llm_runtime_error_status(message: str) -> int:
+    if "missing API key" in message or "API key is required" in message or "not configured" in message:
+        return 400
+    match = re.search(r"HTTP (\d{3})", message)
+    if match is None:
+        return 502
+    upstream_status = int(match.group(1))
+    if upstream_status == 429:
+        return 429
+    if upstream_status in {500, 502, 503, 504, 529}:
+        return 502 if upstream_status == 500 else upstream_status
+    if 400 <= upstream_status < 500:
+        return upstream_status
+    return 502
 
 
 class WorkflowRunRegistry:

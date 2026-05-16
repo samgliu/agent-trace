@@ -211,19 +211,30 @@ Run the eval suite from the dashboard or API:
 
 ```bash
 curl -X POST http://localhost:8000/evals/support-triage/run
+curl -X POST 'http://localhost:8000/evals/support-triage/run?mode=llm'
+curl http://localhost:8000/eval-runs/support-triage/comparison
 ```
 
 Run the same suite as a CI-friendly local report:
 
 ```bash
 python3 -m agenttrace.cli eval support-triage
+python3 -m agenttrace.cli eval support-triage --mode llm
 python3 -m agenttrace.cli eval support-triage --json
 ```
 
 The CLI returns a non-zero exit code when eval checks fail. Use `--no-fail` if
 you want report-only behavior.
 
-The current suite has 11 deterministic cases, including:
+Deterministic mode is the stable baseline for CI and local regression checks.
+LLM mode runs the same cases through the configured provider/model so real agent
+behavior can be evaluated separately from the simulation baseline.
+From the dashboard, LLM evals run asynchronously and update through SSE so a
+slow provider does not block the UI request.
+The comparison endpoint pairs the latest deterministic and LLM-backed runs and
+highlights LLM regressions, improvements, shared failures, and pass-rate delta.
+
+The current suite has 11 cases, including:
 
 - duplicate-charge refund
 - annual refund approval
@@ -288,6 +299,8 @@ LLM_BASE_URL=http://gateway.example/v1
 Fallback models are comma-separated and tried only for provider capacity errors
 such as HTTP 429, 503, or 529. Provider-specific fallback variables, such as
 `GEMINI_FALLBACK_MODELS`, take precedence over `LLM_FALLBACK_MODELS`.
+Trace spans record the selected model, model attempts, and whether fallback was
+used, so LLM-backed evals and chat runs can explain provider capacity behavior.
 
 After changing `.env`, recreate the agent service and API containers:
 

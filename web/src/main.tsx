@@ -38,12 +38,21 @@ import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrac
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
   evalCategorySummaries,
+  evalComparisonStatusLabel,
+  evalModeLabel,
   evalPassRateLabel,
+  evalProgress,
+  evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
   failedChecksByCategory,
+  getEvalRun,
+  getSupportTriageEvalComparison,
   listEvalRuns,
   runSupportTriageEvalSuite,
+  startSupportTriageEvalSuite,
+  type EvalComparison,
+  type EvalExecutionMode,
   type EvalRunSummary,
   type EvalSuiteRun,
 } from "./utils/evals";
@@ -231,7 +240,9 @@ function App() {
   const [liveWorkflowError, setLiveWorkflowError] = useState<string | null>(null);
   const [evalRun, setEvalRun] = useState<EvalSuiteRun | null>(null);
   const [evalHistory, setEvalHistory] = useState<EvalRunSummary[]>([]);
+  const [evalComparison, setEvalComparison] = useState<EvalComparison | null>(null);
   const [evalRunStatus, setEvalRunStatus] = useState<EvalRunStatus>({ status: "idle" });
+  const [evalMode, setEvalMode] = useState<EvalExecutionMode>("deterministic");
   const [filters, setFilters] = useState<TraceFilters>({
     status: "",
     workflowName: "",
@@ -283,7 +294,10 @@ function App() {
       "span.updated",
       "approval.updated",
       "dashboard.updated",
+      "eval_run.created",
+      "eval_run.updated",
       "eval_run.completed",
+      "eval_run.failed",
     ].forEach((eventType) => {
       events.addEventListener(eventType, (rawEvent) => {
         handleServerEvent(parseServerEvent(rawEvent));
@@ -392,8 +406,24 @@ function App() {
     try {
       const history = await listEvalRuns(fetchJson);
       setEvalHistory(history.items);
+      setEvalComparison(await getSupportTriageEvalComparison(fetchJson));
     } catch {
       setEvalHistory([]);
+      setEvalComparison(null);
+    }
+  }
+
+  async function loadEvalRun(runId: string) {
+    try {
+      const run = await getEvalRun(fetchJson, runId);
+      setEvalRun(run);
+      if (run.error) {
+        setEvalRunStatus({ status: "error", message: run.error });
+      } else {
+        setEvalRunStatus(run.status === "running" ? { status: "running" } : { status: "idle" });
+      }
+    } catch {
+      // Leave the current eval state unchanged during transient SSE refresh races.
     }
   }
 
@@ -416,7 +446,10 @@ function App() {
     ) {
       setRefreshKey((value) => value + 1);
     }
-    if (event.type === "eval_run.completed") {
+    if (event.type.startsWith("eval_run.")) {
+      if (event.run_id) {
+        loadEvalRun(event.run_id);
+      }
       loadEvalRuns();
       setRefreshKey((value) => value + 1);
     }
@@ -561,10 +594,14 @@ function App() {
   async function runEvals() {
     setEvalRunStatus({ status: "running" });
     try {
-      const result = await runSupportTriageEvalSuite(apiPostJson);
+      const result =
+        evalMode === "llm"
+          ? await startSupportTriageEvalSuite(apiPostJson, evalMode)
+          : await runSupportTriageEvalSuite(apiPostJson, evalMode);
       setEvalRun(result);
       setEvalHistory((history) => [result, ...history.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
-      setEvalRunStatus({ status: "idle" });
+      setEvalComparison(await getSupportTriageEvalComparison(fetchJson));
+      setEvalRunStatus(result.status === "running" ? { status: "running" } : { status: "idle" });
       setRefreshKey((value) => value + 1);
     } catch (error) {
       setEvalRunStatus({ status: "error", message: error instanceof Error ? error.message : "Could not run evals." });
@@ -637,7 +674,10 @@ function App() {
             <EvalDashboardPanel
               run={evalRun}
               history={evalHistory}
+              comparison={evalComparison}
               status={evalRunStatus}
+              mode={evalMode}
+              onModeChange={setEvalMode}
               onRun={runEvals}
               onSelectTrace={setSelectedTraceId}
             />
@@ -689,7 +729,10 @@ function App() {
           <EvalDashboardPanel
             run={evalRun}
             history={evalHistory}
+            comparison={evalComparison}
             status={evalRunStatus}
+            mode={evalMode}
+            onModeChange={setEvalMode}
             onRun={runEvals}
             onSelectTrace={setSelectedTraceId}
           />
@@ -1157,19 +1200,28 @@ function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
 function EvalDashboardPanel({
   run,
   history,
+  comparison,
   status,
+  mode,
+  onModeChange,
   onRun,
   onSelectTrace,
 }: {
   run: EvalSuiteRun | null;
   history: EvalRunSummary[];
+  comparison: EvalComparison | null;
   status: EvalRunStatus;
+  mode: EvalExecutionMode;
+  onModeChange: (mode: EvalExecutionMode) => void;
   onRun: () => Promise<void>;
   onSelectTrace: (traceId: string) => void;
 }) {
   const failures = failedEvalCases(run);
   const categorySummaries = evalCategorySummaries(run);
-  const running = status.status === "running";
+  const activeRun = evalRunIsActive(run);
+  const running = status.status === "running" || activeRun;
+  const progress = evalProgress(run);
+  const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
 
   return (
     <section className="evalDashboard">
@@ -1178,17 +1230,38 @@ function EvalDashboardPanel({
           <small>Evaluation dashboard</small>
           <h2>Support agent quality</h2>
         </div>
-        <button type="button" onClick={() => void onRun()} disabled={running}>
-          {running ? <Activity size={15} /> : <FlaskConical size={15} />}
-          Run evals
-        </button>
+        <div className="evalRunControls">
+          <select value={mode} onChange={(event) => onModeChange(event.target.value as EvalExecutionMode)} disabled={running}>
+            <option value="deterministic">Deterministic baseline</option>
+            <option value="llm">Configured LLM</option>
+          </select>
+          <button type="button" onClick={() => void onRun()} disabled={running}>
+            {running ? <Activity size={15} /> : <FlaskConical size={15} />}
+            Run evals
+          </button>
+        </div>
       </div>
       <div className="evalSummaryGrid">
         <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
+        <SummaryFact icon={<Bot size={16} />} label="Mode" value={run ? evalModeLabel(run.execution_mode) : evalModeLabel(mode)} />
         <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
-        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? `${run.passed}/${run.total}` : "-"} />
+        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? (activeRun ? `${progress.completed}/${progress.total}` : `${run.passed}/${run.total}`) : "-"} />
         <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
       </div>
+      {activeRun ? (
+        <div className="evalProgressPanel" role="status" aria-live="polite">
+          <div className="evalProgressHeader">
+            <div>
+              <strong>LLM eval is running</strong>
+              <span>Completed cases appear below as they finish.</span>
+            </div>
+            <em>{progress.label}</em>
+          </div>
+          <div className="evalProgressTrack" aria-label={progress.label}>
+            <span className="evalProgressBar" style={{ width: `${progress.percent}%` }} />
+          </div>
+        </div>
+      ) : null}
       <div className="evalCategoryStrip">
         {categorySummaries.map((summary) => (
           <span className={summary.failed > 0 ? "failed" : "passed"} key={summary.category}>
@@ -1196,10 +1269,26 @@ function EvalDashboardPanel({
           </span>
         ))}
       </div>
+      <div className={comparison?.status === "ready" && comparison.llm_regressions.length > 0 ? "evalComparison drift" : "evalComparison"}>
+        <div>
+          <small>Deterministic vs LLM</small>
+          <strong>{evalComparisonStatusLabel(comparison)}</strong>
+        </div>
+        <span>
+          Delta{" "}
+          <strong>{comparison?.pass_rate_delta === null || comparison?.pass_rate_delta === undefined ? "-" : `${Math.round(comparison.pass_rate_delta * 100)} pts`}</strong>
+        </span>
+        <span>
+          Regressions <strong>{comparison?.llm_regressions.length ?? "-"}</strong>
+        </span>
+        <span>
+          Model <strong>{comparison?.llm_run ? `${comparison.llm_run.model_provider}/${comparison.llm_run.model_name}` : "-"}</strong>
+        </span>
+      </div>
       {status.status === "error" ? <p className="evalError">{status.message}</p> : null}
-      {run ? (
+      {run && visibleResults.length > 0 ? (
         <div className="evalCases">
-          {(failures.length > 0 ? failures : run.results).slice(0, 4).map((result) => (
+          {visibleResults.map((result) => (
             <div className={result.passed ? "evalCaseCard passed" : "evalCaseCard failed"} key={result.case_id}>
               <button type="button" onClick={() => onSelectTrace(result.trace_id)}>
                 <span>{result.name}</span>
@@ -1220,6 +1309,8 @@ function EvalDashboardPanel({
             </div>
           ))}
         </div>
+      ) : activeRun ? (
+        <p className="evalEmpty">Waiting for the first case result...</p>
       ) : (
         <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
       )}
@@ -1230,7 +1321,7 @@ function EvalDashboardPanel({
             <div className={item.failed === 0 ? "passed" : "failed"} key={item.run_id}>
               <span>{formatShortTimestamp(item.created_at)}</span>
               <strong>{evalPassRateLabel(item.pass_rate)}</strong>
-              <em>{item.failed === 0 ? "passing" : `${item.failed} failed`}</em>
+              <em>{evalModeLabel(item.execution_mode)}</em>
             </div>
           ))}
         </div>
@@ -2064,7 +2155,7 @@ type ApprovalAction = "approve" | "reject" | "revert";
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+    throw new Error(await responseErrorMessage(response));
   }
   return response.json() as Promise<T>;
 }
@@ -2197,7 +2288,7 @@ async function postJson<T>(path: string): Promise<T> {
     method: "POST",
   });
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+    throw new Error(await responseErrorMessage(response));
   }
   return response.json() as Promise<T>;
 }
@@ -2209,9 +2300,21 @@ async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+    throw new Error(await responseErrorMessage(response));
   }
   return response.json() as Promise<T>;
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = (await response.clone().json()) as { detail?: unknown };
+    if (typeof payload.detail === "string" && payload.detail.trim()) {
+      return payload.detail;
+    }
+  } catch {
+    // Fall back to the HTTP status when the backend did not return JSON.
+  }
+  return `Request failed: ${response.status} ${response.statusText}`;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from agenttrace.core.importer import load_trace_file
 from agenttrace.core.models import Span, Trace, parse_datetime
@@ -325,6 +326,9 @@ class SQLiteTraceStoreTest(unittest.TestCase):
                 {
                     "suite_id": "support-triage-core",
                     "name": "Support triage core",
+                    "execution_mode": "llm",
+                    "model_provider": "gemini",
+                    "model_name": "gemini-test",
                     "total": 1,
                     "passed": 1,
                     "failed": 0,
@@ -356,11 +360,58 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             detail = reopened.get_eval_run("eval_1")
 
             self.assertEqual(saved["status"], "passed")
+            self.assertEqual(saved["execution_mode"], "llm")
+            self.assertEqual(saved["model_provider"], "gemini")
             self.assertEqual(listed["total"], 1)
             self.assertEqual(listed["items"][0]["run_id"], "eval_1")
+            self.assertEqual(listed["items"][0]["execution_mode"], "llm")
             assert detail is not None
+            self.assertEqual(detail["model_name"], "gemini-test")
             self.assertEqual(detail["results"][0]["case_id"], "duplicate-charge-refund")
             self.assertEqual(detail["results"][0]["checks"][0]["name"], "trace_status")
+
+    def test_get_latest_eval_run_filters_by_suite_and_mode(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = SQLiteTraceStore(Path(temp_dir) / "agenttrace.db")
+            store.initialize()
+            for trace_id in ("trace_eval_old", "trace_eval_new"):
+                store.save_trace(Trace(trace_id=trace_id, workflow_name="support-triage", status="passed"))
+
+            def payload(trace_id: str, mode: str) -> dict[str, object]:
+                return {
+                    "suite_id": "support-triage-core",
+                    "name": "Support triage core",
+                    "execution_mode": mode,
+                    "model_provider": "static" if mode == "deterministic" else "gemini",
+                    "model_name": "deterministic" if mode == "deterministic" else "gemini-test",
+                    "total": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "pass_rate": 1.0,
+                    "results": [
+                        {
+                            "case_id": "case",
+                            "name": "Case",
+                            "trace_id": trace_id,
+                            "passed": True,
+                            "score": 1.0,
+                            "checks": [],
+                        }
+                    ],
+                }
+
+            with patch(
+                "agenttrace.storage.sqlite._utc_now",
+                side_effect=["2026-05-01T00:00:00Z", "2026-05-02T00:00:00Z"],
+            ):
+                store.save_eval_run(payload("trace_eval_old", "llm"), run_id="eval_old")
+                store.save_eval_run(payload("trace_eval_new", "llm"), run_id="eval_new")
+
+            latest = store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="llm")
+
+            assert latest is not None
+            self.assertEqual(latest["run_id"], "eval_new")
+            self.assertIsNone(store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="deterministic"))
 
     def test_trace_summary_includes_chat_metadata(self) -> None:
         with TemporaryDirectory() as temp_dir:

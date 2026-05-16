@@ -57,6 +57,13 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class ModelCallResult:
+    payload: dict[str, Any]
+    model: str
+    attempts: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
 class AgentState:
     active_issue: str
     missing_fields: tuple[str, ...] = ()
@@ -128,7 +135,7 @@ class OpenAIChatCompletionsClient(LLMClient):
                 f"Set {env_prefix}_API_KEY or LLM_API_KEY."
             )
 
-        payload = _post_with_model_fallback(
+        result = _post_with_model_fallback(
             post_json=self._post_json,
             base_url=self.base_url,
             api_key=self.api_key,
@@ -143,6 +150,7 @@ class OpenAIChatCompletionsClient(LLMClient):
                 ],
             },
         )
+        payload = result.payload
         usage = payload.get("usage") or {}
         choices = payload.get("choices") or []
         message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
@@ -150,7 +158,7 @@ class OpenAIChatCompletionsClient(LLMClient):
             output_text=str((message or {}).get("content") or ""),
             input_tokens=usage.get("prompt_tokens") or usage.get("input_tokens"),
             output_tokens=usage.get("completion_tokens") or usage.get("output_tokens"),
-            raw_response=payload,
+            raw_response=_with_model_call_metadata(payload, result),
         )
 
 
@@ -179,7 +187,7 @@ class OpenAIResponsesClient(LLMClient):
         if not self.api_key:
             raise RuntimeError("LLM API key is required. Set OPENAI_API_KEY or LLM_API_KEY.")
 
-        payload = _post_with_model_fallback(
+        result = _post_with_model_fallback(
             post_json=self._post_json,
             base_url=self.base_url,
             api_key=self.api_key,
@@ -193,12 +201,13 @@ class OpenAIResponsesClient(LLMClient):
                 "input": input_text,
             },
         )
+        payload = result.payload
         usage = payload.get("usage") or {}
         return LLMResponse(
             output_text=str(payload.get("output_text") or ""),
             input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"),
-            raw_response=payload,
+            raw_response=_with_model_call_metadata(payload, result),
         )
 
 
@@ -990,7 +999,11 @@ class SupportTriageRunner:
                 duration_ms=650,
                 input={"message": message},
                 output={"response": llm_response.output_text},
-                span_data={"model_provider": self.llm_client.provider_name, "raw_response": llm_response.raw_response},
+                span_data={
+                    "model_provider": self.llm_client.provider_name,
+                    **_model_call_span_data(llm_response.raw_response),
+                    "raw_response": llm_response.raw_response,
+                },
                 input_tokens=llm_response.input_tokens,
                 output_tokens=llm_response.output_tokens,
                 estimated_cost=llm_response.estimated_cost,
@@ -1194,11 +1207,12 @@ def _post_with_model_fallback(
     models: tuple[str, ...],
     path: str,
     payload_for_model: Callable[[str], dict[str, Any]],
-) -> dict[str, Any]:
+) -> ModelCallResult:
     last_error: RuntimeError | None = None
+    attempts: list[dict[str, Any]] = []
     for model in models:
         try:
-            return post_json(
+            payload = post_json(
                 f"{base_url}{path}",
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -1207,12 +1221,24 @@ def _post_with_model_fallback(
                 json=payload_for_model(model),
                 timeout=timeout_seconds,
             )
+            attempts.append({"model": model, "status": "succeeded"})
+            return ModelCallResult(payload=payload, model=model, attempts=tuple(attempts))
         except RuntimeError as exc:
             last_error = exc
+            attempts.append({"model": model, "status": "failed", "error": str(exc)})
             if model == models[-1] or not _is_retryable_model_capacity_error(str(exc)):
                 raise
     assert last_error is not None
     raise last_error
+
+
+def _with_model_call_metadata(payload: dict[str, Any], result: ModelCallResult) -> dict[str, Any]:
+    return {
+        **payload,
+        "agenttrace_model": result.model,
+        "agenttrace_model_attempts": list(result.attempts),
+        "agenttrace_model_fallback_used": len(result.attempts) > 1,
+    }
 
 
 def _is_retryable_model_capacity_error(message: str) -> bool:
@@ -1764,12 +1790,30 @@ def _agent_decision_span_data(response: LLMResponse) -> dict[str, Any]:
         "decision_source": decision_source,
         "prompt_version": PROMPT_VERSION,
     }
+    model_metadata = _model_call_span_data(raw_response.get("raw_response") if isinstance(raw_response.get("raw_response"), dict) else raw_response)
+    span_data.update(model_metadata)
     fallback_reason = raw_response.get("fallback_reason")
     if fallback_reason:
         span_data["fallback_reason"] = fallback_reason
     model_output_text = raw_response.get("model_output_text")
     if isinstance(model_output_text, str):
         span_data["model_output_text"] = model_output_text
+    return span_data
+
+
+def _model_call_span_data(raw_response: dict[str, Any] | None) -> dict[str, Any]:
+    if not raw_response:
+        return {}
+    span_data: dict[str, Any] = {}
+    model = raw_response.get("agenttrace_model")
+    if isinstance(model, str) and model:
+        span_data["model"] = model
+    attempts = raw_response.get("agenttrace_model_attempts")
+    if isinstance(attempts, list):
+        span_data["model_attempts"] = attempts
+    fallback_used = raw_response.get("agenttrace_model_fallback_used")
+    if isinstance(fallback_used, bool):
+        span_data["model_fallback_used"] = fallback_used
     return span_data
 
 

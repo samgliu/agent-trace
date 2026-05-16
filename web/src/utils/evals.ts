@@ -18,7 +18,11 @@ export type EvalSuiteRun = {
   run_id: string;
   suite_id: string;
   name: string;
+  execution_mode: EvalExecutionMode;
+  model_provider: string;
+  model_name: string;
   status: string;
+  error?: string | null;
   total: number;
   passed: number;
   failed: number;
@@ -29,11 +33,34 @@ export type EvalSuiteRun = {
 
 export type EvalRunSummary = Omit<EvalSuiteRun, "results">;
 
+export type EvalExecutionMode = "deterministic" | "llm";
+
 export type EvalRunListResponse = {
   items: EvalRunSummary[];
   limit: number;
   offset: number;
   total: number;
+};
+
+export type EvalComparisonCase = {
+  case_id: string;
+  name: string;
+  deterministic_trace_id: string;
+  llm_trace_id: string;
+  deterministic_score: number;
+  llm_score: number;
+  failed_checks: EvalCheck[];
+};
+
+export type EvalComparison = {
+  suite_id: string;
+  status: "ready" | "missing_runs" | "missing_deterministic" | "missing_llm";
+  deterministic_run: EvalRunSummary | null;
+  llm_run: EvalRunSummary | null;
+  pass_rate_delta: number | null;
+  llm_regressions: EvalComparisonCase[];
+  llm_improvements: EvalComparisonCase[];
+  both_failed: EvalComparisonCase[];
 };
 
 export type EvalCheckCategory = "Routing" | "Policy" | "Memory" | "Response" | "Reliability";
@@ -44,6 +71,13 @@ export type EvalCategorySummary = {
   total: number;
 };
 
+export type EvalProgress = {
+  completed: number;
+  total: number;
+  percent: number;
+  label: string;
+};
+
 export type EvalFailedCheckGroup = {
   category: EvalCheckCategory;
   checks: EvalCheck[];
@@ -52,12 +86,34 @@ export type EvalFailedCheckGroup = {
 export type EvalSuiteTransport = <T>(path: string, body?: unknown) => Promise<T>;
 export type EvalSuiteGetTransport = <T>(path: string) => Promise<T>;
 
-export function runSupportTriageEvalSuite(transport: EvalSuiteTransport): Promise<EvalSuiteRun> {
-  return transport("/evals/support-triage/run");
+export function runSupportTriageEvalSuite(
+  transport: EvalSuiteTransport,
+  mode: EvalExecutionMode = "deterministic",
+): Promise<EvalSuiteRun> {
+  return transport(`/evals/support-triage/run?mode=${mode}`);
+}
+
+export function startSupportTriageEvalSuite(
+  transport: EvalSuiteTransport,
+  mode: EvalExecutionMode = "llm",
+): Promise<EvalSuiteRun> {
+  return transport(`/evals/support-triage/run/async?mode=${mode}`);
+}
+
+export function evalModeLabel(mode: EvalExecutionMode): string {
+  return mode === "llm" ? "LLM-backed" : "Deterministic";
 }
 
 export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunListResponse> {
   return transport("/eval-runs?limit=5");
+}
+
+export function getSupportTriageEvalComparison(transport: EvalSuiteGetTransport): Promise<EvalComparison> {
+  return transport("/eval-runs/support-triage/comparison");
+}
+
+export function getEvalRun(transport: EvalSuiteGetTransport, runId: string): Promise<EvalSuiteRun> {
+  return transport(`/eval-runs/${runId}`);
 }
 
 export function evalPassRateLabel(passRate: number): string {
@@ -72,7 +128,31 @@ export function evalStatusLabel(run: EvalSuiteRun | null): string {
   if (run === null) {
     return "Not run";
   }
+  if (run.status === "running") {
+    return "Running";
+  }
   return run.failed === 0 ? "Passing" : "Needs review";
+}
+
+export function evalRunIsActive(run: EvalSuiteRun | null): boolean {
+  return run?.status === "running";
+}
+
+export function evalProgress(run: EvalSuiteRun | null): EvalProgress {
+  const completed = run?.results.length ?? 0;
+  const total = run?.total ?? 0;
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const label = total > 0 ? `${completed}/${total} cases complete` : "No eval run";
+  return { completed, total, percent, label };
+}
+
+export function evalComparisonStatusLabel(comparison: EvalComparison | null): string {
+  if (comparison === null) return "Run both modes";
+  if (comparison.status === "missing_runs") return "Run both modes";
+  if (comparison.status === "missing_deterministic") return "Run deterministic baseline";
+  if (comparison.status === "missing_llm") return "Run LLM eval";
+  if ((comparison.llm_regressions?.length ?? 0) > 0) return "LLM drift detected";
+  return "Aligned";
 }
 
 export function evalCheckCategory(checkName: string): EvalCheckCategory {

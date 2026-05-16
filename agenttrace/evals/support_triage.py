@@ -1,16 +1,17 @@
-"""Deterministic eval suite for the support-triage workflow."""
+"""Eval suite for the support-triage workflow."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
-from agent_apps.customer_service.runner import SupportTriageRunner, build_default_runner
+from agent_apps.customer_service.runner import SupportTriageRunner, build_default_runner, resolve_model_config
 from agenttrace.core.models import Trace
 from agenttrace.core.summary import build_trace_summary
 
 SUITE_ID = "support-triage-core"
 SUITE_NAME = "Support triage core"
+EvalExecutionMode = Literal["deterministic", "llm"]
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,9 @@ class EvalSuiteResult:
     suite_id: str
     name: str
     results: list[EvalCaseResult]
+    execution_mode: EvalExecutionMode = "deterministic"
+    model_provider: str = "static"
+    model_name: str = "deterministic"
 
     @property
     def total(self) -> int:
@@ -119,6 +123,9 @@ class EvalSuiteResult:
         return {
             "suite_id": self.suite_id,
             "name": self.name,
+            "execution_mode": self.execution_mode,
+            "model_provider": self.model_provider,
+            "model_name": self.model_name,
             "total": self.total,
             "passed": self.passed,
             "failed": self.failed,
@@ -149,6 +156,9 @@ def build_eval_report(result: EvalSuiteResult) -> dict[str, Any]:
     return {
         "suite_id": result.suite_id,
         "name": result.name,
+        "execution_mode": result.execution_mode,
+        "model_provider": result.model_provider,
+        "model_name": result.model_name,
         "status": "passed" if result.failed == 0 else "failed",
         "total": result.total,
         "passed": result.passed,
@@ -162,6 +172,7 @@ def build_eval_report(result: EvalSuiteResult) -> dict[str, Any]:
 def format_eval_report(report: dict[str, Any]) -> str:
     lines = [
         f"Eval suite: {report['name']} ({report['suite_id']})",
+        f"Mode: {report['execution_mode']} ({report['model_provider']}/{report['model_name']})",
         f"Status: {report['status']}",
         f"Cases: {report['passed']}/{report['total']} passed",
         f"Pass rate: {report['pass_rate']:.1%}",
@@ -438,15 +449,52 @@ def list_support_triage_eval_suites() -> list[dict[str, Any]]:
 
 def run_support_triage_eval_suite(
     *,
+    execution_mode: EvalExecutionMode = "deterministic",
+    openai_api: str = "chat_completions",
     runner_factory: Callable[[], SupportTriageRunner] | None = None,
-    trace_id_prefix: str = "trace_eval_support_triage",
+    trace_id_prefix: str | None = None,
 ) -> EvalSuiteResult:
-    make_runner = runner_factory or (lambda: build_default_runner(use_openai=False))
+    if execution_mode not in {"deterministic", "llm"}:
+        raise ValueError(f"Unsupported eval execution mode: {execution_mode}")
+    use_openai = execution_mode == "llm"
+    make_runner = runner_factory or (lambda: build_default_runner(use_openai=use_openai, openai_api=openai_api))
+    prefix = trace_id_prefix or ("trace_eval_support_triage_llm" if use_openai else "trace_eval_support_triage")
+    model_provider, model_name = eval_model_metadata(execution_mode=execution_mode)
     results = [
-        _run_eval_case(case, runner=make_runner(), trace_id=f"{trace_id_prefix}_{case.case_id.replace('-', '_')}")
+        _run_eval_case(case, runner=make_runner(), trace_id=f"{prefix}_{case.case_id.replace('-', '_')}")
         for case in SUPPORT_TRIAGE_EVAL_CASES
     ]
-    return EvalSuiteResult(suite_id=SUITE_ID, name=SUITE_NAME, results=results)
+    return EvalSuiteResult(
+        suite_id=SUITE_ID,
+        name=SUITE_NAME,
+        results=results,
+        execution_mode=execution_mode,
+        model_provider=model_provider,
+        model_name=model_name,
+    )
+
+
+def eval_model_metadata(*, execution_mode: EvalExecutionMode) -> tuple[str, str]:
+    if execution_mode == "deterministic":
+        return "static", "deterministic"
+    config = resolve_model_config()
+    return config.provider, config.model
+
+
+def run_support_triage_eval_case(
+    case: EvalCase,
+    *,
+    execution_mode: EvalExecutionMode = "deterministic",
+    openai_api: str = "chat_completions",
+    runner_factory: Callable[[], SupportTriageRunner] | None = None,
+    trace_id_prefix: str | None = None,
+) -> EvalCaseResult:
+    if execution_mode not in {"deterministic", "llm"}:
+        raise ValueError(f"Unsupported eval execution mode: {execution_mode}")
+    use_openai = execution_mode == "llm"
+    make_runner = runner_factory or (lambda: build_default_runner(use_openai=use_openai, openai_api=openai_api))
+    prefix = trace_id_prefix or ("trace_eval_support_triage_llm" if use_openai else "trace_eval_support_triage")
+    return _run_eval_case(case, runner=make_runner(), trace_id=f"{prefix}_{case.case_id.replace('-', '_')}")
 
 
 def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str) -> EvalCaseResult:

@@ -15,6 +15,7 @@ class CliTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("Eval suite: Support triage core", output.getvalue())
+        self.assertIn("Mode: deterministic", output.getvalue())
         self.assertIn("Status: passed", output.getvalue())
         self.assertIn("Cases: 11/11 passed", output.getvalue())
 
@@ -27,6 +28,7 @@ class CliTest(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["suite_id"], "support-triage-core")
+        self.assertEqual(payload["execution_mode"], "deterministic")
         self.assertEqual(payload["status"], "passed")
         self.assertEqual(payload["failed_cases"], [])
 

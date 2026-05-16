@@ -576,6 +576,30 @@ h2 {
   cursor: not-allowed;
 }
 
+.evalRunControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.evalRunControls select {
+  min-height: 36px;
+  padding: 0 10px;
+  color: #243036;
+  background: #ffffff;
+  border: 1px solid #cfd9de;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.evalRunControls select:disabled {
+  color: #7f8b92;
+  background: #f5f7f8;
+}
+
 .evalSummaryGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -600,6 +624,62 @@ h2 {
   color: #3e4a50;
   background: #f8fafb;
   border: 1px solid #edf1f3;
+}
+
+.evalProgressPanel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  color: #172026;
+  background: #ffffff;
+  border: 1px solid #bdd7d0;
+  border-radius: 5px;
+  box-shadow: 0 1px 0 rgba(23, 32, 38, 0.04);
+}
+
+.evalProgressHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.evalProgressHeader div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.evalProgressHeader strong {
+  font-size: 14px;
+}
+
+.evalProgressHeader span,
+.evalProgressHeader em {
+  color: #637179;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.evalProgressHeader em {
+  flex: 0 0 auto;
+}
+
+.evalProgressTrack {
+  height: 8px;
+  overflow: hidden;
+  background: #edf1f3;
+  border-radius: 999px;
+}
+
+.evalProgressBar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #246b5b, #347f9d);
+  border-radius: inherit;
+  transition: width 180ms ease;
 }
 
 .evalCases {
@@ -731,6 +811,40 @@ h2 {
   color: #7b1d1d;
   background: #fff0ed;
   border-color: #e9a7a0;
+}
+
+.evalComparison {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(3, minmax(90px, auto));
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+}
+
+.evalComparison.drift {
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
+.evalComparison small,
+.evalComparison span {
+  color: #637179;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evalComparison small {
+  display: block;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+
+.evalComparison strong {
+  color: #172026;
 }
 
 .evalHistory strong,

@@ -631,6 +631,19 @@ class SupportTriageAgentsTest(unittest.TestCase):
 
         self.assertEqual(response.output_text, "Fallback model answered.")
         self.assertEqual(calls, ["gemini-primary", "gemini-fallback"])
+        self.assertEqual(response.raw_response["agenttrace_model"], "gemini-fallback")
+        self.assertTrue(response.raw_response["agenttrace_model_fallback_used"])
+        self.assertEqual(
+            response.raw_response["agenttrace_model_attempts"],
+            [
+                {
+                    "model": "gemini-primary",
+                    "status": "failed",
+                    "error": "LLM provider request failed with HTTP 503: UNAVAILABLE",
+                },
+                {"model": "gemini-fallback", "status": "succeeded"},
+            ],
+        )
 
     def test_openai_chat_completions_client_does_not_fallback_on_non_capacity_errors(self) -> None:
         calls: list[str] = []
