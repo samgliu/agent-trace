@@ -229,6 +229,8 @@ you want report-only behavior.
 Deterministic mode is the stable baseline for CI and local regression checks.
 LLM mode runs the same cases through the configured provider/model so real agent
 behavior can be evaluated separately from the simulation baseline.
+From the dashboard, LLM evals run asynchronously and update through SSE so a
+slow provider does not block the UI request.
 The comparison endpoint pairs the latest deterministic and LLM-backed runs and
 highlights LLM regressions, improvements, shared failures, and pass-rate delta.
 

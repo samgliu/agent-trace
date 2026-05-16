@@ -44,9 +44,11 @@ import {
   evalStatusLabel,
   failedEvalCases,
   failedChecksByCategory,
+  getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
   runSupportTriageEvalSuite,
+  startSupportTriageEvalSuite,
   type EvalComparison,
   type EvalExecutionMode,
   type EvalRunSummary,
@@ -290,7 +292,10 @@ function App() {
       "span.updated",
       "approval.updated",
       "dashboard.updated",
+      "eval_run.created",
+      "eval_run.updated",
       "eval_run.completed",
+      "eval_run.failed",
     ].forEach((eventType) => {
       events.addEventListener(eventType, (rawEvent) => {
         handleServerEvent(parseServerEvent(rawEvent));
@@ -406,6 +411,20 @@ function App() {
     }
   }
 
+  async function loadEvalRun(runId: string) {
+    try {
+      const run = await getEvalRun(fetchJson, runId);
+      setEvalRun(run);
+      if (run.error) {
+        setEvalRunStatus({ status: "error", message: run.error });
+      } else {
+        setEvalRunStatus(run.status === "running" ? { status: "running" } : { status: "idle" });
+      }
+    } catch {
+      // Leave the current eval state unchanged during transient SSE refresh races.
+    }
+  }
+
   function handleServerEvent(event: ServerEvent | null) {
     if (!event) return;
     if (event.type.startsWith("chat.") && event.session_id && event.session_id === chatSessionIdRef.current) {
@@ -425,7 +444,10 @@ function App() {
     ) {
       setRefreshKey((value) => value + 1);
     }
-    if (event.type === "eval_run.completed") {
+    if (event.type.startsWith("eval_run.")) {
+      if (event.run_id) {
+        loadEvalRun(event.run_id);
+      }
       loadEvalRuns();
       setRefreshKey((value) => value + 1);
     }
@@ -570,11 +592,14 @@ function App() {
   async function runEvals() {
     setEvalRunStatus({ status: "running" });
     try {
-      const result = await runSupportTriageEvalSuite(apiPostJson, evalMode);
+      const result =
+        evalMode === "llm"
+          ? await startSupportTriageEvalSuite(apiPostJson, evalMode)
+          : await runSupportTriageEvalSuite(apiPostJson, evalMode);
       setEvalRun(result);
       setEvalHistory((history) => [result, ...history.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setEvalComparison(await getSupportTriageEvalComparison(fetchJson));
-      setEvalRunStatus({ status: "idle" });
+      setEvalRunStatus(result.status === "running" ? { status: "running" } : { status: "idle" });
       setRefreshKey((value) => value + 1);
     } catch (error) {
       setEvalRunStatus({ status: "error", message: error instanceof Error ? error.message : "Could not run evals." });

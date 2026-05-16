@@ -459,7 +459,7 @@ def run_support_triage_eval_suite(
     use_openai = execution_mode == "llm"
     make_runner = runner_factory or (lambda: build_default_runner(use_openai=use_openai, openai_api=openai_api))
     prefix = trace_id_prefix or ("trace_eval_support_triage_llm" if use_openai else "trace_eval_support_triage")
-    model_provider, model_name = _eval_model_metadata(execution_mode=execution_mode)
+    model_provider, model_name = eval_model_metadata(execution_mode=execution_mode)
     results = [
         _run_eval_case(case, runner=make_runner(), trace_id=f"{prefix}_{case.case_id.replace('-', '_')}")
         for case in SUPPORT_TRIAGE_EVAL_CASES
@@ -474,11 +474,27 @@ def run_support_triage_eval_suite(
     )
 
 
-def _eval_model_metadata(*, execution_mode: EvalExecutionMode) -> tuple[str, str]:
+def eval_model_metadata(*, execution_mode: EvalExecutionMode) -> tuple[str, str]:
     if execution_mode == "deterministic":
         return "static", "deterministic"
     config = resolve_model_config()
     return config.provider, config.model
+
+
+def run_support_triage_eval_case(
+    case: EvalCase,
+    *,
+    execution_mode: EvalExecutionMode = "deterministic",
+    openai_api: str = "chat_completions",
+    runner_factory: Callable[[], SupportTriageRunner] | None = None,
+    trace_id_prefix: str | None = None,
+) -> EvalCaseResult:
+    if execution_mode not in {"deterministic", "llm"}:
+        raise ValueError(f"Unsupported eval execution mode: {execution_mode}")
+    use_openai = execution_mode == "llm"
+    make_runner = runner_factory or (lambda: build_default_runner(use_openai=use_openai, openai_api=openai_api))
+    prefix = trace_id_prefix or ("trace_eval_support_triage_llm" if use_openai else "trace_eval_support_triage")
+    return _run_eval_case(case, runner=make_runner(), trace_id=f"{prefix}_{case.case_id.replace('-', '_')}")
 
 
 def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str) -> EvalCaseResult:

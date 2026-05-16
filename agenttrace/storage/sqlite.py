@@ -147,6 +147,7 @@ class SQLiteTraceStore:
                     model_provider TEXT NOT NULL DEFAULT 'static',
                     model_name TEXT NOT NULL DEFAULT 'deterministic',
                     status TEXT NOT NULL,
+                    error TEXT,
                     total INTEGER NOT NULL,
                     passed INTEGER NOT NULL,
                     failed INTEGER NOT NULL,
@@ -197,6 +198,7 @@ class SQLiteTraceStore:
                     "execution_mode": "TEXT NOT NULL DEFAULT 'deterministic'",
                     "model_provider": "TEXT NOT NULL DEFAULT 'static'",
                     "model_name": "TEXT NOT NULL DEFAULT 'deterministic'",
+                    "error": "TEXT",
                 },
             )
         self._backfill_trace_summaries()
@@ -210,12 +212,13 @@ class SQLiteTraceStore:
             "execution_mode": result.get("execution_mode", "deterministic"),
             "model_provider": result.get("model_provider", "static"),
             "model_name": result.get("model_name", "deterministic"),
-            "status": "passed" if result["failed"] == 0 else "failed",
+            "status": result.get("status") or ("passed" if result["failed"] == 0 else "failed"),
+            "error": result.get("error"),
             "total": result["total"],
             "passed": result["passed"],
             "failed": result["failed"],
             "pass_rate": result["pass_rate"],
-            "created_at": created_at,
+            "created_at": result.get("created_at") or created_at,
             "results": result["results"],
         }
         with closing(self._connect()) as connection:
@@ -223,9 +226,9 @@ class SQLiteTraceStore:
                 """
                 INSERT OR REPLACE INTO eval_runs (
                     run_id, suite_id, name, execution_mode, model_provider, model_name,
-                    status, total, passed, failed, pass_rate, created_at
+                    status, error, total, passed, failed, pass_rate, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _eval_run_row(saved_run),
             )
@@ -250,7 +253,7 @@ class SQLiteTraceStore:
             run_row = connection.execute(
                 """
                 SELECT run_id, suite_id, name, execution_mode, model_provider, model_name,
-                    status, total, passed, failed, pass_rate, created_at
+                    status, error, total, passed, failed, pass_rate, created_at
                 FROM eval_runs
                 WHERE run_id = ?
                 """,
@@ -277,7 +280,7 @@ class SQLiteTraceStore:
             rows = connection.execute(
                 """
                 SELECT run_id, suite_id, name, execution_mode, model_provider, model_name,
-                    status, total, passed, failed, pass_rate, created_at
+                    status, error, total, passed, failed, pass_rate, created_at
                 FROM eval_runs
                 ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
@@ -1122,6 +1125,7 @@ def _eval_run_row(run: dict[str, Any]) -> tuple[Any, ...]:
         run["model_provider"],
         run["model_name"],
         run["status"],
+        run["error"],
         run["total"],
         run["passed"],
         run["failed"],
@@ -1151,6 +1155,7 @@ def _eval_run_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "model_provider": row["model_provider"],
         "model_name": row["model_name"],
         "status": row["status"],
+        "error": row["error"],
         "total": row["total"],
         "passed": row["passed"],
         "failed": row["failed"],

@@ -35,7 +35,14 @@ from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
 from agenttrace.core.summary import build_dashboard_summary
-from agenttrace.evals.support_triage import EvalExecutionMode, list_support_triage_eval_suites, run_support_triage_eval_suite
+from agenttrace.evals.support_triage import (
+    SUPPORT_TRIAGE_EVAL_CASES,
+    EvalExecutionMode,
+    eval_model_metadata,
+    list_support_triage_eval_suites,
+    run_support_triage_eval_case,
+    run_support_triage_eval_suite,
+)
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 DEFAULT_DB_PATH = Path(".agenttrace") / "agenttrace.db"
@@ -201,6 +208,96 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=saved["run_id"])
         event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
         return saved
+
+    @app.post("/evals/support-triage/run/async")
+    def start_support_triage_eval_run(
+        mode: str = Query("llm", pattern="^(deterministic|llm)$"),
+        openai_api: str = Query("chat_completions", pattern="^(chat_completions|responses)$"),
+    ) -> dict[str, Any]:
+        execution_mode = cast(EvalExecutionMode, mode)
+        run_id = f"eval_{uuid.uuid4().hex[:12]}"
+        created_at = _utc_now()
+        try:
+            model_provider, model_name = eval_model_metadata(execution_mode=execution_mode)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=_llm_runtime_error_status(str(exc)), detail=str(exc)) from exc
+        run = _save_eval_progress(
+            trace_store,
+            run_id=run_id,
+            created_at=created_at,
+            execution_mode=execution_mode,
+            model_provider=model_provider,
+            model_name=model_name,
+            status="running",
+            results=[],
+        )
+        event_bus.publish("eval_run.created", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+
+        def execute() -> None:
+            results = []
+            status = "running"
+            for case in SUPPORT_TRIAGE_EVAL_CASES:
+                try:
+                    case_result = run_support_triage_eval_case(
+                        case,
+                        execution_mode=execution_mode,
+                        openai_api=openai_api,
+                    )
+                    trace = _with_eval_metadata(
+                        case_result.trace,
+                        suite_id="support-triage-core",
+                        case_id=case.case_id,
+                        execution_mode=execution_mode,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                    )
+                    trace_store.save_trace(trace)
+                    _publish_trace_events(event_bus, "trace.created", trace.trace_id)
+                    results.append(case_result.to_dict())
+                    _save_eval_progress(
+                        trace_store,
+                        run_id=run_id,
+                        created_at=created_at,
+                        execution_mode=execution_mode,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                        status=status,
+                        results=results,
+                    )
+                    event_bus.publish("eval_run.updated", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+                except RuntimeError as exc:
+                    status = "failed"
+                    _save_eval_progress(
+                        trace_store,
+                        run_id=run_id,
+                        created_at=created_at,
+                        execution_mode=execution_mode,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                        status=status,
+                        results=results,
+                        error=str(exc),
+                    )
+                    event_bus.publish("eval_run.failed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+                    event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+                    return
+            status = "passed" if all(result["passed"] for result in results) else "failed"
+            _save_eval_progress(
+                trace_store,
+                run_id=run_id,
+                created_at=created_at,
+                execution_mode=execution_mode,
+                model_provider=model_provider,
+                model_name=model_name,
+                status=status,
+                results=results,
+            )
+            event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+            event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+
+        thread = threading.Thread(target=execute, name=f"agenttrace-eval-{run_id}", daemon=True)
+        thread.start()
+        return run
 
     @app.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
@@ -732,12 +829,48 @@ def _eval_run_summary(run: dict[str, Any] | None) -> dict[str, Any] | None:
         "model_provider": run["model_provider"],
         "model_name": run["model_name"],
         "status": run["status"],
+        "error": run.get("error"),
         "total": run["total"],
         "passed": run["passed"],
         "failed": run["failed"],
         "pass_rate": run["pass_rate"],
         "created_at": run["created_at"],
     }
+
+
+def _save_eval_progress(
+    store: SQLiteTraceStore,
+    *,
+    run_id: str,
+    created_at: str,
+    execution_mode: str,
+    model_provider: str,
+    model_name: str,
+    status: str,
+    results: list[dict[str, Any]],
+    error: str | None = None,
+) -> dict[str, Any]:
+    passed = sum(1 for result in results if result.get("passed"))
+    total = len(SUPPORT_TRIAGE_EVAL_CASES)
+    failed = 0 if status == "running" else total - passed
+    return store.save_eval_run(
+        {
+            "suite_id": "support-triage-core",
+            "name": "Support triage core",
+            "execution_mode": execution_mode,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "status": status,
+            "error": error,
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "pass_rate": round(passed / total, 4) if total else 0.0,
+            "created_at": created_at,
+            "results": [dict(result) for result in results],
+        },
+        run_id=run_id,
+    )
 
 
 def _llm_runtime_error_status(message: str) -> int:

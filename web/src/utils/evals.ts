@@ -22,6 +22,7 @@ export type EvalSuiteRun = {
   model_provider: string;
   model_name: string;
   status: string;
+  error?: string | null;
   total: number;
   passed: number;
   failed: number;
@@ -85,6 +86,13 @@ export function runSupportTriageEvalSuite(
   return transport(`/evals/support-triage/run?mode=${mode}`);
 }
 
+export function startSupportTriageEvalSuite(
+  transport: EvalSuiteTransport,
+  mode: EvalExecutionMode = "llm",
+): Promise<EvalSuiteRun> {
+  return transport(`/evals/support-triage/run/async?mode=${mode}`);
+}
+
 export function evalModeLabel(mode: EvalExecutionMode): string {
   return mode === "llm" ? "LLM-backed" : "Deterministic";
 }
@@ -95,6 +103,10 @@ export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunL
 
 export function getSupportTriageEvalComparison(transport: EvalSuiteGetTransport): Promise<EvalComparison> {
   return transport("/eval-runs/support-triage/comparison");
+}
+
+export function getEvalRun(transport: EvalSuiteGetTransport, runId: string): Promise<EvalSuiteRun> {
+  return transport(`/eval-runs/${runId}`);
 }
 
 export function evalPassRateLabel(passRate: number): string {
@@ -108,6 +120,9 @@ export function failedEvalCases(run: EvalSuiteRun | null): EvalCaseResult[] {
 export function evalStatusLabel(run: EvalSuiteRun | null): string {
   if (run === null) {
     return "Not run";
+  }
+  if (run.status === "running") {
+    return "Running";
   }
   return run.failed === 0 ? "Passing" : "Needs review";
 }

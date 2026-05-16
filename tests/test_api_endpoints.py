@@ -166,6 +166,41 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("missing API key", response.json()["detail"])
 
+    def test_async_llm_eval_run_persists_progress(self) -> None:
+        from agenttrace.evals.support_triage import EvalCaseResult, EvalCheck, SUPPORT_TRIAGE_EVAL_CASES
+
+        def fake_run_case(case, **_kwargs):
+            return EvalCaseResult(
+                case=case,
+                trace=Trace(
+                    trace_id=f"trace_eval_support_triage_llm_{case.case_id.replace('-', '_')}",
+                    workflow_name="support-triage",
+                    status="passed",
+                ),
+                checks=[EvalCheck("trace_status", "passed", "passed", True)],
+            )
+
+        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", SUPPORT_TRIAGE_EVAL_CASES[:1]):
+            with patch("agenttrace.api.main.run_support_triage_eval_case", side_effect=fake_run_case):
+                response = self.client.post("/evals/support-triage/run/async?mode=llm")
+                self.assertEqual(response.status_code, 200)
+                run = response.json()
+                self.assertEqual(run["status"], "running")
+                run_id = run["run_id"]
+                completed = None
+                for _ in range(20):
+                    detail = self.client.get(f"/eval-runs/{run_id}").json()
+                    if detail["status"] != "running":
+                        completed = detail
+                        break
+                    time.sleep(0.01)
+
+        assert completed is not None
+        self.assertEqual(completed["status"], "passed")
+        self.assertEqual(completed["execution_mode"], "llm")
+        self.assertEqual(completed["passed"], 1)
+        self.assertEqual(completed["results"][0]["case_id"], SUPPORT_TRIAGE_EVAL_CASES[0].case_id)
+
     def test_get_missing_eval_run_returns_404(self) -> None:
         response = self.client.get("/eval-runs/missing")
 
