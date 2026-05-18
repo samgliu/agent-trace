@@ -683,6 +683,7 @@ function App() {
               mode={evalMode}
               onModeChange={setEvalMode}
               onRun={runEvals}
+              onSelectEvalRun={loadEvalRun}
               onSelectTrace={setSelectedTraceId}
             />
             <LiveWorkflowPanel
@@ -738,6 +739,7 @@ function App() {
             mode={evalMode}
             onModeChange={setEvalMode}
             onRun={runEvals}
+            onSelectEvalRun={loadEvalRun}
             onSelectTrace={setSelectedTraceId}
           />
           <LiveWorkflowPanel
@@ -1214,6 +1216,7 @@ function EvalDashboardPanel({
   mode,
   onModeChange,
   onRun,
+  onSelectEvalRun,
   onSelectTrace,
 }: {
   run: EvalSuiteRun | null;
@@ -1223,6 +1226,7 @@ function EvalDashboardPanel({
   mode: EvalExecutionMode;
   onModeChange: (mode: EvalExecutionMode) => void;
   onRun: () => Promise<void>;
+  onSelectEvalRun: (runId: string) => Promise<void>;
   onSelectTrace: (traceId: string) => void;
 }) {
   const failures = failedEvalCases(run);
@@ -1329,11 +1333,17 @@ function EvalDashboardPanel({
         <div className="evalHistory">
           <small>Recent eval runs</small>
           {history.map((item) => (
-            <div className={item.failed === 0 ? "passed" : "failed"} key={item.run_id}>
+            <button
+              aria-current={run?.run_id === item.run_id ? "true" : undefined}
+              className={item.failed === 0 ? "passed" : "failed"}
+              key={item.run_id}
+              onClick={() => void onSelectEvalRun(item.run_id)}
+              type="button"
+            >
               <span>{formatShortTimestamp(item.created_at)}</span>
               <strong>{evalPassRateLabel(item.pass_rate)}</strong>
               <em>{evalModeLabel(item.execution_mode)}</em>
-            </div>
+            </button>
           ))}
         </div>
       ) : null}

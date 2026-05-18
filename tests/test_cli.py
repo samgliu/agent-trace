@@ -31,6 +31,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(payload["execution_mode"], "deterministic")
         self.assertEqual(payload["status"], "passed")
         self.assertEqual(payload["failed_cases"], [])
+        self.assertEqual(payload["improvement_plan"], [])
 
 
 if __name__ == "__main__":

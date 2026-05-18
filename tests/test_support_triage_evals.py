@@ -75,6 +75,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["passed"], 11)
         self.assertEqual(report["failed_cases"], [])
+        self.assertEqual(report["improvement_plan"], [])
         self.assertIn("Status: passed", format_eval_report(report))
         self.assertIn("Mode: deterministic (static/deterministic)", format_eval_report(report))
 
@@ -180,8 +181,14 @@ class SupportTriageEvalsTest(unittest.TestCase):
 
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["failed_check_categories"], {"Governance": 1, "Response": 1})
+        self.assertEqual([item["category"] for item in report["improvement_plan"]], ["Governance", "Response"])
+        self.assertEqual(report["improvement_plan"][0]["owner_area"], "approval policy and validator guardrails")
+        self.assertEqual(report["improvement_plan"][0]["cases"][0]["case_id"], "approval-regression")
+        self.assertIn("agent_apps/customer_service/runner.py", report["improvement_plan"][0]["suggested_files"])
         self.assertIn("approval-regression", formatted)
         self.assertIn("Failed check categories:", formatted)
+        self.assertIn("Improvement workflow:", formatted)
+        self.assertIn("owner=approval policy and validator guardrails", formatted)
 
 
 if __name__ == "__main__":
