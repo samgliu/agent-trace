@@ -102,6 +102,7 @@ Current e2e coverage includes:
 - Runs Inbox approval filtering and empty-state reset
 - Runs Inbox pagination at 25 traces per page
 - SSE refresh after a trace is ingested
+- eval dashboard running progress, partial result detail, and model fallback display
 
 Import demo traces:
 
