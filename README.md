@@ -3,6 +3,10 @@
 AgentTrace is an OpenAI Agents-compatible trace operations dashboard for
 debugging, monitoring, and evaluating multi-agent AI workflows.
 
+CI for this repo runs on pushes to `development`, which covers merges into the
+development branch with backend tests, deterministic evals, frontend
+tests/build, and Dockerized Playwright e2e.
+
 The repo includes a monitored customer-service agent as the reference workload.
 Each chat turn or workflow run emits traces with agent spans, handoffs, MCP tool
 calls, retrieval, memory reads/writes, guardrails, approval gates, token/cost
@@ -104,6 +108,7 @@ Current e2e coverage includes:
 - Runs Inbox approval filtering and empty-state reset
 - Runs Inbox pagination at 25 traces per page
 - SSE refresh after a trace is ingested
+- Agent Flow rendering and timeline focus behavior
 - eval dashboard running progress, partial result detail, and model fallback display
 
 Import demo traces:
