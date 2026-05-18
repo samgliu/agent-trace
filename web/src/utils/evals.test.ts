@@ -6,10 +6,13 @@ import {
   evalModeLabel,
   evalPassRateLabel,
   evalProgress,
+  evalModelSummary,
   evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
+  failedEvalChecks,
   failedChecksByCategory,
+  formatEvalValue,
   getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
@@ -161,6 +164,31 @@ describe("eval helpers", () => {
     expect(evalStatusLabel(null)).toBe("Not run");
     expect(evalStatusLabel(sampleRun)).toBe("Needs review");
     expect(failedEvalCases(sampleRun).map((result) => result.case_id)).toEqual(["fail"]);
+    expect(failedEvalChecks(sampleRun.results[1]).map((check) => check.name)).toEqual([]);
+    expect(formatEvalValue(["cus_123", "policy_a"])).toBe("cus_123, policy_a");
+    expect(formatEvalValue({ expected: true })).toBe('{"expected":true}');
+  });
+
+  it("summarizes eval model events with fallback priority", () => {
+    const result = {
+      ...sampleRun.results[0],
+      model_events: [
+        { span_name: "Triage Agent", model: "gemini-primary", fallback_used: false },
+        {
+          span_name: "Policy Agent",
+          model: "gemini-fallback",
+          fallback_used: true,
+          attempts: [
+            { model: "gemini-primary", status: "failed", error: "HTTP 503" },
+            { model: "gemini-fallback", status: "succeeded" },
+          ],
+        },
+      ],
+    };
+
+    expect(evalModelSummary(result)?.span_name).toBe("Policy Agent");
+    expect(evalModelSummary(result)?.model).toBe("gemini-fallback");
+    expect(evalModelSummary({ ...sampleRun.results[0], model_events: [] })).toBeNull();
   });
 
   it("describes active eval progress from partial results", () => {

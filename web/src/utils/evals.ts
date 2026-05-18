@@ -5,6 +5,19 @@ export type EvalCheck = {
   passed: boolean;
 };
 
+export type EvalModelAttempt = {
+  model?: string | null;
+  status?: string | null;
+  error?: string | null;
+};
+
+export type EvalModelEvent = {
+  span_name: string;
+  model?: string | null;
+  fallback_used: boolean;
+  attempts?: EvalModelAttempt[];
+};
+
 export type EvalCaseResult = {
   case_id: string;
   name: string;
@@ -12,6 +25,7 @@ export type EvalCaseResult = {
   passed: boolean;
   score: number;
   checks: EvalCheck[];
+  model_events?: EvalModelEvent[];
 };
 
 export type EvalSuiteRun = {
@@ -122,6 +136,35 @@ export function evalPassRateLabel(passRate: number): string {
 
 export function failedEvalCases(run: EvalSuiteRun | null): EvalCaseResult[] {
   return run?.results.filter((result) => !result.passed) ?? [];
+}
+
+export function failedEvalChecks(result: EvalCaseResult): EvalCheck[] {
+  return result.checks.filter((check) => !check.passed);
+}
+
+export function evalModelSummary(result: EvalCaseResult): EvalModelEvent | null {
+  const events = result.model_events ?? [];
+  return events.find((event) => event.fallback_used) ?? events.find((event) => Boolean(event.model)) ?? null;
+}
+
+export function formatEvalValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map(formatEvalValue).join(", ") : "[]";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 export function evalStatusLabel(run: EvalSuiteRun | null): string {

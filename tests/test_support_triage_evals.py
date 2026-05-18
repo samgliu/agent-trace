@@ -54,6 +54,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(payload["model_provider"], "static")
         self.assertEqual(payload["results"][0]["trace_id"], "trace_eval_support_triage_duplicate_charge_refund")
         self.assertNotIn("trace", payload["results"][0])
+        self.assertEqual(payload["results"][0]["model_events"], [])
         self.assertTrue(all(check["passed"] for check in payload["results"][0]["checks"]))
 
     def test_eval_cases_include_multi_turn_quality_checks(self) -> None:
@@ -145,6 +146,8 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertTrue(triage.span_data["model_fallback_used"])
         self.assertEqual(triage.span_data["model_attempts"][0]["model"], "gemini-primary")
         self.assertEqual(response.span_data["model"], "gemini-fallback")
+        self.assertEqual(result.results[0].to_dict()["model_events"][0]["model"], "gemini-fallback")
+        self.assertTrue(result.results[0].to_dict()["model_events"][0]["fallback_used"])
 
     def test_eval_report_groups_failed_checks_by_category(self) -> None:
         suite_result = EvalSuiteResult(

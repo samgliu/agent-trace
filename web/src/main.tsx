@@ -38,14 +38,17 @@ import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrac
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
   evalCategorySummaries,
+  evalCheckCategory,
   evalComparisonStatusLabel,
   evalModeLabel,
+  evalModelSummary,
   evalPassRateLabel,
   evalProgress,
   evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
-  failedChecksByCategory,
+  failedEvalChecks,
+  formatEvalValue,
   getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
@@ -1294,16 +1297,18 @@ function EvalDashboardPanel({
                 <span>{result.name}</span>
                 <strong>{Math.round(result.score * 100)}%</strong>
               </button>
+              {evalModelSummary(result) ? <EvalModelBadge result={result} /> : null}
               {!result.passed ? (
-                <div className="evalFailedGroups">
-                  {failedChecksByCategory(result).map((group) => (
-                    <div key={group.category}>
-                      <small>{group.category}</small>
-                      {group.checks.slice(0, 3).map((check) => (
-                        <span key={check.name}>{check.name}</span>
-                      ))}
+                <div className="evalCheckDetails">
+                  {failedEvalChecks(result).slice(0, 3).map((check) => (
+                    <div key={check.name}>
+                      <small>{evalCheckCategory(check.name)}</small>
+                      <strong>{check.name}</strong>
+                      <span>Expected: {formatEvalValue(check.expected)}</span>
+                      <span>Actual: {formatEvalValue(check.actual)}</span>
                     </div>
                   ))}
+                  {failedEvalChecks(result).length > 3 ? <em>{failedEvalChecks(result).length - 3} more failed checks</em> : null}
                 </div>
               ) : null}
             </div>
@@ -1327,6 +1332,21 @@ function EvalDashboardPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function EvalModelBadge({ result }: { result: EvalSuiteRun["results"][number] }) {
+  const event = evalModelSummary(result);
+  if (!event) {
+    return null;
+  }
+  const failedAttempt = event.attempts?.find((attempt) => attempt.status === "failed");
+  return (
+    <div className={event.fallback_used ? "evalModelBadge fallback" : "evalModelBadge"}>
+      <span>{event.span_name}</span>
+      <strong>{event.model ?? "model unknown"}</strong>
+      {event.fallback_used ? <em>Fallback used{failedAttempt?.model ? ` after ${failedAttempt.model}` : ""}</em> : null}
+    </div>
   );
 }
 

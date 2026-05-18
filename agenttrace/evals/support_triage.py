@@ -89,6 +89,7 @@ class EvalCaseResult:
             "passed": self.passed,
             "score": self.score,
             "checks": [check.to_dict() for check in self.checks],
+            "model_events": _model_events(self.trace),
         }
 
 
@@ -539,6 +540,25 @@ def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str
     if case.expected_approval_reason_contains is not None:
         checks.append(_contains_check("approval_reason", actual["approval_reason"], case.expected_approval_reason_contains))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
+
+
+def _model_events(trace: Trace) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for span in trace.spans:
+        model = span.span_data.get("model")
+        attempts = span.span_data.get("model_attempts")
+        fallback_used = span.span_data.get("model_fallback_used")
+        if not model and not attempts and not fallback_used:
+            continue
+        event: dict[str, Any] = {
+            "span_name": span.name,
+            "model": model if isinstance(model, str) else None,
+            "fallback_used": fallback_used if isinstance(fallback_used, bool) else False,
+        }
+        if isinstance(attempts, list):
+            event["attempts"] = attempts
+        events.append(event)
+    return events
 
 
 def _actual_values(trace: Trace) -> dict[str, Any]:
