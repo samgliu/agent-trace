@@ -1919,6 +1919,9 @@ function formatDecisionSource(value: unknown): { label: string; className: strin
   if (value === "fallback") {
     return { label: "Fallback decision", className: "fallback" };
   }
+  if (value === "policy_validation") {
+    return { label: "Policy validation", className: "validation" };
+  }
   if (value === "deterministic") {
     return { label: "Deterministic", className: "deterministic" };
   }

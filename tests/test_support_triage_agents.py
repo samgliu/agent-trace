@@ -167,8 +167,8 @@ class SupportTriageAgentsTest(unittest.TestCase):
         create_action = next(span for span in trace.spans if span.name == "create_refund_review")
         self.assertEqual(trace.status, "passed")
         self.assertEqual(action.output["action_type"], "refund_review")
-        self.assertEqual(action.span_data["decision_source"], "fallback")
-        self.assertEqual(action.span_data["fallback_reason"], "unsupported_action_type")
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "unsupported_action_type")
         self.assertEqual(action.span_data["rejected_action_type"], "wire_money")
         self.assertEqual(
             action.span_data["model_output_text"],
@@ -199,7 +199,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         create_action = next(span for span in trace.spans if span.name == "create_refund_review")
         self.assertEqual(trace.status, "passed")
         self.assertEqual(action.output["action_type"], "refund_review")
-        self.assertEqual(action.span_data["fallback_reason"], "refund_review_required_by_policy_path")
+        self.assertEqual(action.span_data["validation_reason"], "refund_review_required_by_policy_path")
         self.assertEqual(action.span_data["rejected_action_type"], "instant_refund")
         self.assertEqual(create_action.span_data["tool_name"], "create_refund_review_tool")
 
@@ -226,7 +226,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         state_update = next(span for span in trace.spans if span.name == "Update Agent State")
         self.assertEqual(trace.status, "recovered")
         self.assertEqual(action.output["action_type"], "refund_review")
-        self.assertEqual(action.span_data["fallback_reason"], "refund_review_required_by_policy_path")
+        self.assertEqual(action.span_data["validation_reason"], "refund_review_required_by_policy_path")
         self.assertEqual(state_update.output["agent_state"]["next_required_step"], "human_approval")
 
     def test_llm_triage_rejects_recent_context_as_issue_type(self) -> None:
@@ -252,7 +252,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         policy = next(span for span in trace.spans if span.name == "Policy Agent")
         self.assertEqual(trace.status, "passed")
         self.assertEqual(triage.output["issue_type"], "general_support")
-        self.assertEqual(triage.span_data["fallback_reason"], "unsupported_issue_type")
+        self.assertEqual(triage.span_data["validation_reason"], "unsupported_issue_type")
         self.assertEqual(policy.output["retrieval_query"], "general_support")
 
     def test_llm_action_enforces_consumed_product_quality_exception(self) -> None:
@@ -291,7 +291,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(trace.status, "passed")
         self.assertTrue(triage.output["quality_exception"])
         self.assertEqual(action.output["action_type"], "courtesy_credit")
-        self.assertEqual(action.span_data["fallback_reason"], "quality_exception_action_required")
+        self.assertEqual(action.span_data["validation_reason"], "quality_exception_action_required")
         self.assertEqual(create_action.span_data["tool_name"], "create_quality_exception_review_tool")
         self.assertIn("courtesy credit", response.output["response"].lower())
 
@@ -319,7 +319,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         state_update = next(span for span in trace.spans if span.name == "Update Agent State")
         self.assertEqual(trace.status, "passed")
         self.assertEqual(action.output["action_type"], "clarification_request")
-        self.assertEqual(action.span_data["fallback_reason"], "clarification_required_by_policy_path")
+        self.assertEqual(action.span_data["validation_reason"], "clarification_required_by_policy_path")
         self.assertFalse(validator.output["approval_required"])
         self.assertEqual(validator.output["grounding_status"], "grounded")
         self.assertEqual(state_update.output["agent_state"]["next_required_step"], "collect_missing_information")
@@ -657,9 +657,9 @@ class SupportTriageAgentsTest(unittest.TestCase):
         policy = next(span for span in trace.spans if span.name == "Policy Agent")
         retrieval = next(span for span in trace.spans if span.name == "retrieve_policy")
         self.assertEqual(triage.output["issue_type"], "stale_subscription_refund")
-        self.assertEqual(triage.span_data["fallback_reason"], "message_policy_signal_mismatch")
+        self.assertEqual(triage.span_data["validation_reason"], "message_policy_signal_mismatch")
         self.assertEqual(policy.output["retrieval_query"], "stale_subscription_refund")
-        self.assertEqual(policy.span_data["fallback_reason"], "policy_topic_mismatch")
+        self.assertEqual(policy.span_data["validation_reason"], "policy_topic_mismatch")
         self.assertEqual(retrieval.output["policy_id"], "policy_stale_subscription_refund")
 
     def test_action_agent_falls_back_when_policy_disallows_action(self) -> None:
@@ -683,8 +683,8 @@ class SupportTriageAgentsTest(unittest.TestCase):
 
         action = next(span for span in trace.spans if span.name == "Action Agent")
         self.assertEqual(action.output["action_type"], "refund_review")
-        self.assertEqual(action.span_data["decision_source"], "fallback")
-        self.assertEqual(action.span_data["fallback_reason"], "action_not_allowed_by_policy")
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "action_not_allowed_by_policy")
         self.assertEqual(action.span_data["rejected_action_type"], "cancel_plan")
 
     def test_runner_can_emit_spans_incrementally(self) -> None:
