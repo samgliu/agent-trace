@@ -38,6 +38,7 @@ import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
+  buildEvalImprovementPlan,
   evalCategorySummaries,
   evalCheckCategory,
   evalComparisonStatusLabel,
@@ -1235,6 +1236,7 @@ function EvalDashboardPanel({
   const running = status.status === "running" || activeRun;
   const progress = evalProgress(run);
   const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
+  const improvementPlan = buildEvalImprovementPlan(run);
 
   return (
     <section className="evalDashboard">
@@ -1329,6 +1331,40 @@ function EvalDashboardPanel({
       ) : (
         <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
       )}
+      {improvementPlan.length > 0 ? (
+        <div className="evalImprovementPlan">
+          <div className="evalImprovementHeader">
+            <small>Improvement plan</small>
+            <strong>Use failures to patch the agent</strong>
+          </div>
+          {improvementPlan.slice(0, 4).map((item) => (
+            <article className="evalImprovementItem" key={item.category}>
+              <div>
+                <span>{item.category}</span>
+                <strong>{item.owner_area}</strong>
+                <p>{item.recommended_action}</p>
+              </div>
+              <div className="evalImprovementFiles">
+                {item.suggested_files.map((file) => (
+                  <code key={file}>{file}</code>
+                ))}
+              </div>
+              <div className="evalImprovementCases">
+                {item.cases.slice(0, 3).map((failure) => (
+                  <button key={`${failure.case_id}-${failure.check}`} type="button" onClick={() => onSelectTrace(failure.trace_id)}>
+                    <span>{failure.case_id}</span>
+                    <strong>{failure.check}</strong>
+                    <em>
+                      {formatEvalValue(failure.expected)} {"->"} {formatEvalValue(failure.actual)}
+                    </em>
+                  </button>
+                ))}
+                {item.cases.length > 3 ? <em>{item.cases.length - 3} more failed checks</em> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
       {history.length > 0 ? (
         <div className="evalHistory">
           <small>Recent eval runs</small>

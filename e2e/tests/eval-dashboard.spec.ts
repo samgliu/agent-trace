@@ -100,6 +100,9 @@ test("eval dashboard shows running progress, fallback model, and failed check de
   await expect(evalPanel.getByText("Fallback used after gemini-primary")).toBeVisible();
   await expect(evalPanel.getByText("Expected: policy_refund_duplicate_charge")).toBeVisible();
   await expect(evalPanel.getByText("Actual: policy_general_refund")).toBeVisible();
+  await expect(evalPanel.getByText("Improvement plan")).toBeVisible();
+  await expect(evalPanel.getByText("multi-agent routing and policy/action planning")).toBeVisible();
+  await expect(evalPanel.getByText("agent_apps/customer_service/runner.py").first()).toBeVisible();
 });
 
 test("recent eval runs can be opened from history", async ({ page }) => {
@@ -181,5 +184,6 @@ test("recent eval runs can be opened from history", async ({ page }) => {
   await expect(evalPanel.getByRole("button", { name: /Historical failure case/ })).toBeVisible();
   await expect(evalPanel.getByText("Expected: true")).toBeVisible();
   await expect(evalPanel.getByText("Actual: false")).toBeVisible();
+  await expect(evalPanel.getByText("approval policy and validator guardrails")).toBeVisible();
   await expect(evalPanel.getByRole("button", { name: /LLM-backed/ })).toHaveAttribute("aria-current", "true");
 });

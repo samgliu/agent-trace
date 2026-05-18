@@ -271,8 +271,9 @@ Use failed evals as the main workflow for improving the customer-service agent:
 2. Run the LLM-backed suite to measure the configured provider/model.
 3. Open failed cases in the dashboard and inspect Agent Flow, failed spans, raw
    model output, grounding, approvals, memory, and tool evidence.
-4. Use `python3 -m agenttrace.cli eval support-triage --json` to get the
-   `improvement_plan`, which groups failures by owner area and suggested files.
+4. Use the dashboard improvement plan, or
+   `python3 -m agenttrace.cli eval support-triage --json`, to group failures by
+   owner area, recommended action, suggested files, and trace-linked cases.
 5. Patch the smallest prompt, domain rule, tool path, memory behavior, or
    guardrail that explains the failure.
 6. Add or update a focused eval/unit test for that behavior.
