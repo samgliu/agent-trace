@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { prepareApp } from "./support";
+import { prepareApp, seedTrace, uniqueId } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await prepareApp(page);
@@ -14,4 +14,19 @@ test("dashboard loads trace operations summary", async ({ page }) => {
   await expect(page.getByText("Approvals waiting")).toBeVisible();
   await expect(page.getByText("Live customer-service agent")).toBeVisible();
   await expect(page.getByText("Trace Timeline")).toBeVisible();
+});
+
+test("agent flow cards focus matching timeline spans", async ({ page }) => {
+  const traceId = uniqueId("trace_e2e_agent_flow");
+  await seedTrace({ traceId, status: "passed", startedAt: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString() });
+
+  await page.goto("/");
+  await page.getByRole("complementary", { name: "Runs inbox" }).getByRole("button", { name: new RegExp(traceId) }).click();
+
+  const flow = page.getByLabel("Agent flow");
+  await expect(flow.getByRole("heading", { name: "Agent Flow" })).toBeVisible();
+  await expect(flow.getByRole("button", { name: /Supervisor/ })).toBeVisible();
+  await flow.getByRole("button", { name: /Customer Response/ }).click();
+
+  await expect(page.locator(".spanRow.selected").filter({ hasText: "Customer Response Generator" })).toBeVisible();
 });

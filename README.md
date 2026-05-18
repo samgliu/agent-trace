@@ -3,6 +3,10 @@
 AgentTrace is an OpenAI Agents-compatible trace operations dashboard for
 debugging, monitoring, and evaluating multi-agent AI workflows.
 
+CI for this repo runs on pushes to `development`, which covers merges into the
+development branch with backend tests, deterministic evals, frontend
+tests/build, and Dockerized Playwright e2e.
+
 The repo includes a monitored customer-service agent as the reference workload.
 Each chat turn or workflow run emits traces with agent spans, handoffs, MCP tool
 calls, retrieval, memory reads/writes, guardrails, approval gates, token/cost
@@ -17,6 +21,8 @@ metadata, and eval results.
 - Live workflow execution with SSE invalidation, cancellation, retry, and
   trace lifecycle tracking.
 - A live chat monitor where each customer message generates a trace.
+- An Agent Flow view that highlights supervisor, specialist, validator, and
+  response-generator steps in a multi-agent run.
 - Approval gates with approve, reject, and revert actions.
 - Grounding, memory, cost, latency, source, and error summaries.
 - A deterministic eval suite covering routing, policy selection,
@@ -102,6 +108,8 @@ Current e2e coverage includes:
 - Runs Inbox approval filtering and empty-state reset
 - Runs Inbox pagination at 25 traces per page
 - SSE refresh after a trace is ingested
+- Agent Flow rendering and timeline focus behavior
+- eval dashboard running progress, partial result detail, and model fallback display
 
 Import demo traces:
 
@@ -254,6 +262,22 @@ response text, and disallowed response text.
 
 Eval runs are saved in SQLite and linked to generated traces for dashboard
 drilldown.
+
+### Eval-to-Agent Improvement Loop
+
+Use failed evals as the main workflow for improving the customer-service agent:
+
+1. Run the deterministic suite first to check stable regressions.
+2. Run the LLM-backed suite to measure the configured provider/model.
+3. Open failed cases in the dashboard and inspect Agent Flow, failed spans, raw
+   model output, grounding, approvals, memory, and tool evidence.
+4. Use the dashboard improvement plan, or
+   `python3 -m agenttrace.cli eval support-triage --json`, to group failures by
+   owner area, recommended action, suggested files, and trace-linked cases.
+5. Patch the smallest prompt, domain rule, tool path, memory behavior, or
+   guardrail that explains the failure.
+6. Add or update a focused eval/unit test for that behavior.
+7. Re-run deterministic and LLM evals before merging.
 
 ## Model Provider Configuration
 
@@ -460,3 +484,6 @@ End-to-end integration checks:
 ```bash
 docker compose run --rm --build e2e
 ```
+
+GitHub Actions runs backend tests, deterministic evals, frontend tests/build,
+and Dockerized Playwright e2e after changes are merged into `development`.

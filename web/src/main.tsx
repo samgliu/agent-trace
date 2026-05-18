@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
+import { buildAgentFlow, type AgentFlowStep } from "./utils/agentFlow";
 import {
   createPendingUserMessage,
   createChatSession,
@@ -37,15 +38,19 @@ import { buildChatMessageChips } from "./utils/chatMessageChips";
 import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
+  buildEvalImprovementPlan,
   evalCategorySummaries,
+  evalCheckCategory,
   evalComparisonStatusLabel,
   evalModeLabel,
+  evalModelSummary,
   evalPassRateLabel,
   evalProgress,
   evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
-  failedChecksByCategory,
+  failedEvalChecks,
+  formatEvalValue,
   getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
@@ -679,6 +684,7 @@ function App() {
               mode={evalMode}
               onModeChange={setEvalMode}
               onRun={runEvals}
+              onSelectEvalRun={loadEvalRun}
               onSelectTrace={setSelectedTraceId}
             />
             <LiveWorkflowPanel
@@ -734,6 +740,7 @@ function App() {
             mode={evalMode}
             onModeChange={setEvalMode}
             onRun={runEvals}
+            onSelectEvalRun={loadEvalRun}
             onSelectTrace={setSelectedTraceId}
           />
           <LiveWorkflowPanel
@@ -759,6 +766,11 @@ function App() {
             <TraceHeader trace={state.selectedTrace} executionStatus={executionStatus(state.selectedTrace.status)} />
             <ExecutiveSummaryPanel trace={state.selectedTrace} metrics={state.metrics} grounding={state.grounding} />
             <MetricGrid metrics={state.metrics} grounding={state.grounding} />
+            <AgentFlowPanel
+              spans={state.selectedTrace.spans}
+              selectedSpanId={selectedSpanId}
+              onSelectSpan={setSelectedSpanId}
+            />
             <section className="workspace">
               <TraceTimeline
                 spans={state.selectedTrace.spans}
@@ -1205,6 +1217,7 @@ function EvalDashboardPanel({
   mode,
   onModeChange,
   onRun,
+  onSelectEvalRun,
   onSelectTrace,
 }: {
   run: EvalSuiteRun | null;
@@ -1214,6 +1227,7 @@ function EvalDashboardPanel({
   mode: EvalExecutionMode;
   onModeChange: (mode: EvalExecutionMode) => void;
   onRun: () => Promise<void>;
+  onSelectEvalRun: (runId: string) => Promise<void>;
   onSelectTrace: (traceId: string) => void;
 }) {
   const failures = failedEvalCases(run);
@@ -1222,6 +1236,7 @@ function EvalDashboardPanel({
   const running = status.status === "running" || activeRun;
   const progress = evalProgress(run);
   const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
+  const improvementPlan = buildEvalImprovementPlan(run);
 
   return (
     <section className="evalDashboard">
@@ -1294,16 +1309,18 @@ function EvalDashboardPanel({
                 <span>{result.name}</span>
                 <strong>{Math.round(result.score * 100)}%</strong>
               </button>
+              {evalModelSummary(result) ? <EvalModelBadge result={result} /> : null}
               {!result.passed ? (
-                <div className="evalFailedGroups">
-                  {failedChecksByCategory(result).map((group) => (
-                    <div key={group.category}>
-                      <small>{group.category}</small>
-                      {group.checks.slice(0, 3).map((check) => (
-                        <span key={check.name}>{check.name}</span>
-                      ))}
+                <div className="evalCheckDetails">
+                  {failedEvalChecks(result).slice(0, 3).map((check) => (
+                    <div key={check.name}>
+                      <small>{evalCheckCategory(check.name)}</small>
+                      <strong>{check.name}</strong>
+                      <span>Expected: {formatEvalValue(check.expected)}</span>
+                      <span>Actual: {formatEvalValue(check.actual)}</span>
                     </div>
                   ))}
+                  {failedEvalChecks(result).length > 3 ? <em>{failedEvalChecks(result).length - 3} more failed checks</em> : null}
                 </div>
               ) : null}
             </div>
@@ -1314,19 +1331,74 @@ function EvalDashboardPanel({
       ) : (
         <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
       )}
+      {improvementPlan.length > 0 ? (
+        <div className="evalImprovementPlan">
+          <div className="evalImprovementHeader">
+            <small>Improvement plan</small>
+            <strong>Use failures to patch the agent</strong>
+          </div>
+          {improvementPlan.slice(0, 4).map((item) => (
+            <article className="evalImprovementItem" key={item.category}>
+              <div>
+                <span>{item.category}</span>
+                <strong>{item.owner_area}</strong>
+                <p>{item.recommended_action}</p>
+              </div>
+              <div className="evalImprovementFiles">
+                {item.suggested_files.map((file) => (
+                  <code key={file}>{file}</code>
+                ))}
+              </div>
+              <div className="evalImprovementCases">
+                {item.cases.slice(0, 3).map((failure) => (
+                  <button key={`${failure.case_id}-${failure.check}`} type="button" onClick={() => onSelectTrace(failure.trace_id)}>
+                    <span>{failure.case_id}</span>
+                    <strong>{failure.check}</strong>
+                    <em>
+                      {formatEvalValue(failure.expected)} {"->"} {formatEvalValue(failure.actual)}
+                    </em>
+                  </button>
+                ))}
+                {item.cases.length > 3 ? <em>{item.cases.length - 3} more failed checks</em> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
       {history.length > 0 ? (
         <div className="evalHistory">
           <small>Recent eval runs</small>
           {history.map((item) => (
-            <div className={item.failed === 0 ? "passed" : "failed"} key={item.run_id}>
+            <button
+              aria-current={run?.run_id === item.run_id ? "true" : undefined}
+              className={item.failed === 0 ? "passed" : "failed"}
+              key={item.run_id}
+              onClick={() => void onSelectEvalRun(item.run_id)}
+              type="button"
+            >
               <span>{formatShortTimestamp(item.created_at)}</span>
               <strong>{evalPassRateLabel(item.pass_rate)}</strong>
               <em>{evalModeLabel(item.execution_mode)}</em>
-            </div>
+            </button>
           ))}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function EvalModelBadge({ result }: { result: EvalSuiteRun["results"][number] }) {
+  const event = evalModelSummary(result);
+  if (!event) {
+    return null;
+  }
+  const failedAttempt = event.attempts?.find((attempt) => attempt.status === "failed");
+  return (
+    <div className={event.fallback_used ? "evalModelBadge fallback" : "evalModelBadge"}>
+      <span>{event.span_name}</span>
+      <strong>{event.model ?? "model unknown"}</strong>
+      {event.fallback_used ? <em>Fallback used{failedAttempt?.model ? ` after ${failedAttempt.model}` : ""}</em> : null}
+    </div>
   );
 }
 
@@ -1655,6 +1727,92 @@ function TraceTimeline({
       </div>
     </section>
   );
+}
+
+function AgentFlowPanel({
+  spans,
+  selectedSpanId,
+  onSelectSpan,
+}: {
+  spans: Span[];
+  selectedSpanId: string | null;
+  onSelectSpan: (spanId: string) => void;
+}) {
+  const steps = useMemo(() => buildAgentFlow(spans), [spans]);
+  if (steps.length === 0) {
+    return null;
+  }
+  return (
+    <section className="agentFlowPanel" aria-label="Agent flow">
+      <div className="panelHeader">
+        <h3>Agent Flow</h3>
+        <span>{steps.length} agents</span>
+      </div>
+      <div className="agentFlow">
+        {steps.map((step, index) => (
+          <React.Fragment key={step.spanId}>
+            <AgentFlowCard
+              step={step}
+              selected={step.spanId === selectedSpanId}
+              onSelectSpan={onSelectSpan}
+            />
+            {index < steps.length - 1 ? (
+              <span className="agentFlowArrow" aria-hidden="true">
+                <ArrowRight size={16} />
+              </span>
+            ) : null}
+          </React.Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AgentFlowCard({
+  step,
+  selected,
+  onSelectSpan,
+}: {
+  step: AgentFlowStep;
+  selected: boolean;
+  onSelectSpan: (spanId: string) => void;
+}) {
+  const decisionSource = formatDecisionSource(step.decisionSource);
+  return (
+    <button
+      className={["agentFlowCard", selected ? "selected" : "", step.approvalPending ? "approvalPending" : "", step.errorCount > 0 ? "errored" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      type="button"
+      onClick={() => onSelectSpan(step.spanId)}
+    >
+      <div className="agentFlowTitle">
+        <span>{agentFlowIcon(step.role)}</span>
+        <strong>{step.label}</strong>
+      </div>
+      <div className="agentFlowFacts">
+        <span>{formatDuration(step.durationMs)}</span>
+        {step.model ? <span>{step.model}</span> : null}
+        {decisionSource ? <span>{decisionSource.label}</span> : null}
+        {step.tokenTotal > 0 ? <span>{step.tokenTotal} tokens</span> : null}
+        {step.estimatedCost ? <span>{formatCost(step.estimatedCost)}</span> : null}
+      </div>
+      <div className="agentFlowBadges">
+        {step.handoffCount > 0 ? <em>{step.handoffCount} handoff</em> : null}
+        {step.toolCount > 0 ? <em>{step.toolCount} tool</em> : null}
+        {step.modelFallbackUsed ? <strong>Model fallback</strong> : null}
+        {step.approvalPending ? <strong>Approval needed</strong> : null}
+        {step.errorCount > 0 ? <strong>{step.errorCount} error</strong> : null}
+      </div>
+    </button>
+  );
+}
+
+function agentFlowIcon(role: string) {
+  if (role === "supervisor") return <Network size={15} />;
+  if (role === "validator") return <ShieldCheck size={15} />;
+  if (role === "response") return <MessageSquare size={15} />;
+  return <Bot size={15} />;
 }
 
 function SpanRow({

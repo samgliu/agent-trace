@@ -54,6 +54,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(payload["model_provider"], "static")
         self.assertEqual(payload["results"][0]["trace_id"], "trace_eval_support_triage_duplicate_charge_refund")
         self.assertNotIn("trace", payload["results"][0])
+        self.assertEqual(payload["results"][0]["model_events"], [])
         self.assertTrue(all(check["passed"] for check in payload["results"][0]["checks"]))
 
     def test_eval_cases_include_multi_turn_quality_checks(self) -> None:
@@ -74,6 +75,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["passed"], 11)
         self.assertEqual(report["failed_cases"], [])
+        self.assertEqual(report["improvement_plan"], [])
         self.assertIn("Status: passed", format_eval_report(report))
         self.assertIn("Mode: deterministic (static/deterministic)", format_eval_report(report))
 
@@ -145,6 +147,8 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertTrue(triage.span_data["model_fallback_used"])
         self.assertEqual(triage.span_data["model_attempts"][0]["model"], "gemini-primary")
         self.assertEqual(response.span_data["model"], "gemini-fallback")
+        self.assertEqual(result.results[0].to_dict()["model_events"][0]["model"], "gemini-fallback")
+        self.assertTrue(result.results[0].to_dict()["model_events"][0]["fallback_used"])
 
     def test_eval_report_groups_failed_checks_by_category(self) -> None:
         suite_result = EvalSuiteResult(
@@ -177,8 +181,14 @@ class SupportTriageEvalsTest(unittest.TestCase):
 
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["failed_check_categories"], {"Governance": 1, "Response": 1})
+        self.assertEqual([item["category"] for item in report["improvement_plan"]], ["Governance", "Response"])
+        self.assertEqual(report["improvement_plan"][0]["owner_area"], "approval policy and validator guardrails")
+        self.assertEqual(report["improvement_plan"][0]["cases"][0]["case_id"], "approval-regression")
+        self.assertIn("agent_apps/customer_service/runner.py", report["improvement_plan"][0]["suggested_files"])
         self.assertIn("approval-regression", formatted)
         self.assertIn("Failed check categories:", formatted)
+        self.assertIn("Improvement workflow:", formatted)
+        self.assertIn("owner=approval policy and validator guardrails", formatted)
 
 
 if __name__ == "__main__":

@@ -89,6 +89,7 @@ class EvalCaseResult:
             "passed": self.passed,
             "score": self.score,
             "checks": [check.to_dict() for check in self.checks],
+            "model_events": _model_events(self.trace),
         }
 
 
@@ -166,7 +167,38 @@ def build_eval_report(result: EvalSuiteResult) -> dict[str, Any]:
         "pass_rate": result.pass_rate,
         "failed_cases": failed_cases,
         "failed_check_categories": category_counts,
+        "improvement_plan": build_improvement_plan(failed_cases, category_counts),
     }
+
+
+def build_improvement_plan(failed_cases: list[dict[str, Any]], category_counts: dict[str, int]) -> list[dict[str, Any]]:
+    if not failed_cases:
+        return []
+    cases_by_category: dict[str, list[dict[str, Any]]] = {}
+    for case in failed_cases:
+        for check in case["failed_checks"]:
+            category = eval_check_category(check["name"])
+            cases_by_category.setdefault(category, []).append(
+                {
+                    "case_id": case["case_id"],
+                    "trace_id": case["trace_id"],
+                    "check": check["name"],
+                    "expected": check["expected"],
+                    "actual": check["actual"],
+                }
+            )
+
+    return [
+        {
+            "category": category,
+            "failed_check_count": category_counts[category],
+            "owner_area": _improvement_owner_area(category),
+            "recommended_action": _improvement_recommended_action(category),
+            "suggested_files": _improvement_suggested_files(category),
+            "cases": cases_by_category.get(category, []),
+        }
+        for category in sorted(category_counts, key=lambda item: (-category_counts[item], item))
+    ]
 
 
 def format_eval_report(report: dict[str, Any]) -> str:
@@ -192,6 +224,16 @@ def format_eval_report(report: dict[str, Any]) -> str:
         lines.append("Failed check categories:")
         for category, count in sorted(categories.items()):
             lines.append(f"- {category}: {count}")
+    improvement_plan = report.get("improvement_plan") or []
+    if improvement_plan:
+        lines.append("Improvement workflow:")
+        lines.append("1. Open each listed trace and inspect Agent Flow, failed spans, model output, and evidence.")
+        lines.append("2. Patch the smallest prompt, policy, domain, or guardrail surface that explains the failure.")
+        lines.append("3. Add or update a focused eval/test for the case before rerunning deterministic and LLM evals.")
+        for item in improvement_plan:
+            files = ", ".join(item["suggested_files"])
+            lines.append(f"- {item['category']} ({item['failed_check_count']}): {item['recommended_action']}")
+            lines.append(f"  owner={item['owner_area']} files={files}")
     return "\n".join(lines)
 
 
@@ -209,6 +251,41 @@ def eval_check_category(name: str) -> str:
     if name.startswith("memory_"):
         return "Memory"
     return "Other"
+
+
+def _improvement_owner_area(category: str) -> str:
+    return {
+        "Routing": "multi-agent routing and policy/action planning",
+        "Evidence": "tool usage, memory state, and evidence propagation",
+        "Governance": "approval policy and validator guardrails",
+        "Response": "customer-facing response generation and grounding",
+        "Memory": "short-term continuity and long-term customer memory",
+        "Reliability": "tool failure handling and workflow recovery",
+    }.get(category, "support-triage workflow")
+
+
+def _improvement_recommended_action(category: str) -> str:
+    return {
+        "Routing": "tighten triage, policy retrieval, or action prompts so the selected issue/policy/action matches the request.",
+        "Evidence": "verify required tool calls and carry evidence ids into agent state, validation, and final action output.",
+        "Governance": "align validator approval decisions and approval reasons with policy requirements.",
+        "Response": "adjust response instructions so the answer contains required facts and avoids prohibited claims.",
+        "Memory": "preserve active issue state across turns and avoid topic drift unless the customer clearly switches topic.",
+        "Reliability": "make failure paths explicit and ensure tool errors become recovered or failed traces as expected.",
+    }.get(category, "inspect the failed trace and add the smallest targeted regression check.")
+
+
+def _improvement_suggested_files(category: str) -> list[str]:
+    common = ["agent_apps/customer_service/runner.py", "agenttrace/evals/support_triage.py"]
+    extra = {
+        "Routing": ["agent_apps/customer_service/domain.py"],
+        "Evidence": ["agent_apps/customer_service/domain.py"],
+        "Governance": ["agent_apps/customer_service/domain.py"],
+        "Response": [],
+        "Memory": ["agent_apps/customer_service/domain.py"],
+        "Reliability": ["agent_apps/customer_service/domain.py", "agenttrace/mcp_tools/tools.py"],
+    }.get(category, [])
+    return [*common, *extra]
 
 
 SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
@@ -539,6 +616,25 @@ def _run_eval_case(case: EvalCase, *, runner: SupportTriageRunner, trace_id: str
     if case.expected_approval_reason_contains is not None:
         checks.append(_contains_check("approval_reason", actual["approval_reason"], case.expected_approval_reason_contains))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
+
+
+def _model_events(trace: Trace) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for span in trace.spans:
+        model = span.span_data.get("model")
+        attempts = span.span_data.get("model_attempts")
+        fallback_used = span.span_data.get("model_fallback_used")
+        if not model and not attempts and not fallback_used:
+            continue
+        event: dict[str, Any] = {
+            "span_name": span.name,
+            "model": model if isinstance(model, str) else None,
+            "fallback_used": fallback_used if isinstance(fallback_used, bool) else False,
+        }
+        if isinstance(attempts, list):
+            event["attempts"] = attempts
+        events.append(event)
+    return events
 
 
 def _actual_values(trace: Trace) -> dict[str, Any]:

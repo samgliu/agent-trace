@@ -5,6 +5,19 @@ export type EvalCheck = {
   passed: boolean;
 };
 
+export type EvalModelAttempt = {
+  model?: string | null;
+  status?: string | null;
+  error?: string | null;
+};
+
+export type EvalModelEvent = {
+  span_name: string;
+  model?: string | null;
+  fallback_used: boolean;
+  attempts?: EvalModelAttempt[];
+};
+
 export type EvalCaseResult = {
   case_id: string;
   name: string;
@@ -12,6 +25,7 @@ export type EvalCaseResult = {
   passed: boolean;
   score: number;
   checks: EvalCheck[];
+  model_events?: EvalModelEvent[];
 };
 
 export type EvalSuiteRun = {
@@ -63,7 +77,7 @@ export type EvalComparison = {
   both_failed: EvalComparisonCase[];
 };
 
-export type EvalCheckCategory = "Routing" | "Policy" | "Memory" | "Response" | "Reliability";
+export type EvalCheckCategory = "Routing" | "Evidence" | "Governance" | "Response" | "Memory" | "Reliability" | "Other";
 
 export type EvalCategorySummary = {
   category: EvalCheckCategory;
@@ -81,6 +95,23 @@ export type EvalProgress = {
 export type EvalFailedCheckGroup = {
   category: EvalCheckCategory;
   checks: EvalCheck[];
+};
+
+export type EvalImprovementCase = {
+  case_id: string;
+  trace_id: string;
+  check: string;
+  expected: unknown;
+  actual: unknown;
+};
+
+export type EvalImprovementItem = {
+  category: EvalCheckCategory;
+  failed_check_count: number;
+  owner_area: string;
+  recommended_action: string;
+  suggested_files: string[];
+  cases: EvalImprovementCase[];
 };
 
 export type EvalSuiteTransport = <T>(path: string, body?: unknown) => Promise<T>;
@@ -124,6 +155,35 @@ export function failedEvalCases(run: EvalSuiteRun | null): EvalCaseResult[] {
   return run?.results.filter((result) => !result.passed) ?? [];
 }
 
+export function failedEvalChecks(result: EvalCaseResult): EvalCheck[] {
+  return result.checks.filter((check) => !check.passed);
+}
+
+export function evalModelSummary(result: EvalCaseResult): EvalModelEvent | null {
+  const events = result.model_events ?? [];
+  return events.find((event) => event.fallback_used) ?? events.find((event) => Boolean(event.model)) ?? null;
+}
+
+export function formatEvalValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map(formatEvalValue).join(", ") : "[]";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 export function evalStatusLabel(run: EvalSuiteRun | null): string {
   if (run === null) {
     return "Not run";
@@ -156,15 +216,85 @@ export function evalComparisonStatusLabel(comparison: EvalComparison | null): st
 }
 
 export function evalCheckCategory(checkName: string): EvalCheckCategory {
-  if (checkName === "issue_type" || checkName === "action_type") return "Routing";
-  if (checkName === "policy_id" || checkName === "approval_required" || checkName === "grounding_status") return "Policy";
-  if (checkName === "memory_warning_count") return "Memory";
-  if (checkName.startsWith("response_contains:") || checkName.startsWith("response_excludes:")) return "Response";
-  return "Reliability";
+  if (checkName === "trace_status" || checkName === "error_count") return "Reliability";
+  if (checkName === "issue_type" || checkName === "policy_id" || checkName === "action_type") return "Routing";
+  if (checkName.startsWith("tool_used") || checkName.startsWith("evidence_id") || checkName.startsWith("agent_state")) return "Evidence";
+  if (checkName === "approval_required" || checkName === "approval_reason") return "Governance";
+  if (checkName === "grounding_status" || checkName.startsWith("response_")) return "Response";
+  if (checkName.startsWith("memory_")) return "Memory";
+  return "Other";
+}
+
+export function buildEvalImprovementPlan(run: EvalSuiteRun | null): EvalImprovementItem[] {
+  if (!run) return [];
+  const items = new Map<EvalCheckCategory, EvalImprovementItem>();
+
+  run.results.forEach((result) => {
+    failedEvalChecks(result).forEach((check) => {
+      const category = evalCheckCategory(check.name);
+      const item = items.get(category) ?? {
+        category,
+        failed_check_count: 0,
+        owner_area: evalImprovementOwnerArea(category),
+        recommended_action: evalImprovementRecommendedAction(category),
+        suggested_files: evalImprovementSuggestedFiles(category),
+        cases: [],
+      };
+      item.failed_check_count += 1;
+      item.cases.push({
+        case_id: result.case_id,
+        trace_id: result.trace_id,
+        check: check.name,
+        expected: check.expected,
+        actual: check.actual,
+      });
+      items.set(category, item);
+    });
+  });
+
+  return Array.from(items.values()).sort(
+    (left, right) => right.failed_check_count - left.failed_check_count || left.category.localeCompare(right.category),
+  );
+}
+
+export function evalImprovementOwnerArea(category: EvalCheckCategory): string {
+  return {
+    Routing: "multi-agent routing and policy/action planning",
+    Evidence: "tool usage, memory state, and evidence propagation",
+    Governance: "approval policy and validator guardrails",
+    Response: "customer-facing response generation and grounding",
+    Memory: "short-term continuity and long-term customer memory",
+    Reliability: "tool failure handling and workflow recovery",
+    Other: "support-triage workflow",
+  }[category];
+}
+
+export function evalImprovementRecommendedAction(category: EvalCheckCategory): string {
+  return {
+    Routing: "Tighten triage, policy retrieval, or action prompts so the selected issue, policy, and action match the request.",
+    Evidence: "Verify required tool calls and carry evidence IDs into agent state, validation, and final action output.",
+    Governance: "Align validator approval decisions and approval reasons with policy requirements.",
+    Response: "Adjust response instructions so the answer contains required facts and avoids prohibited claims.",
+    Memory: "Preserve active issue state across turns and avoid topic drift unless the customer clearly switches topic.",
+    Reliability: "Make failure paths explicit and ensure tool errors become recovered or failed traces as expected.",
+    Other: "Inspect the failed trace and add the smallest targeted regression check.",
+  }[category];
+}
+
+export function evalImprovementSuggestedFiles(category: EvalCheckCategory): string[] {
+  const common = ["agent_apps/customer_service/runner.py", "agenttrace/evals/support_triage.py"];
+  const extra: Partial<Record<EvalCheckCategory, string[]>> = {
+    Routing: ["agent_apps/customer_service/domain.py"],
+    Evidence: ["agent_apps/customer_service/domain.py"],
+    Governance: ["agent_apps/customer_service/domain.py"],
+    Memory: ["agent_apps/customer_service/domain.py"],
+    Reliability: ["agent_apps/customer_service/domain.py", "agenttrace/mcp_tools/tools.py"],
+  };
+  return [...common, ...(extra[category] ?? [])];
 }
 
 export function evalCategorySummaries(run: EvalSuiteRun | null): EvalCategorySummary[] {
-  const categories: EvalCheckCategory[] = ["Routing", "Policy", "Memory", "Response", "Reliability"];
+  const categories: EvalCheckCategory[] = ["Routing", "Evidence", "Governance", "Response", "Memory", "Reliability"];
   const initial = Object.fromEntries(
     categories.map((category) => [category, { category, failed: 0, total: 0 }]),
   ) as Record<EvalCheckCategory, EvalCategorySummary>;
@@ -183,7 +313,7 @@ export function evalCategorySummaries(run: EvalSuiteRun | null): EvalCategorySum
 }
 
 export function failedChecksByCategory(result: EvalCaseResult): EvalFailedCheckGroup[] {
-  const categories: EvalCheckCategory[] = ["Routing", "Policy", "Memory", "Response", "Reliability"];
+  const categories: EvalCheckCategory[] = ["Routing", "Evidence", "Governance", "Response", "Memory", "Reliability", "Other"];
   return categories
     .map((category) => ({
       category,
