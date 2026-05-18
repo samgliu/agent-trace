@@ -166,6 +166,7 @@ class SQLiteTraceStore:
                     passed INTEGER NOT NULL,
                     score REAL NOT NULL,
                     checks_json TEXT NOT NULL,
+                    model_events_json TEXT NOT NULL DEFAULT '[]',
                     PRIMARY KEY(run_id, case_id),
                     FOREIGN KEY(run_id) REFERENCES eval_runs(run_id),
                     FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
@@ -199,6 +200,13 @@ class SQLiteTraceStore:
                     "model_provider": "TEXT NOT NULL DEFAULT 'static'",
                     "model_name": "TEXT NOT NULL DEFAULT 'deterministic'",
                     "error": "TEXT",
+                },
+            )
+            _ensure_columns(
+                connection,
+                "eval_case_results",
+                {
+                    "model_events_json": "TEXT NOT NULL DEFAULT '[]'",
                 },
             )
         self._backfill_trace_summaries()
@@ -236,9 +244,9 @@ class SQLiteTraceStore:
             connection.executemany(
                 """
                 INSERT INTO eval_case_results (
-                    run_id, case_id, name, trace_id, passed, score, checks_json
+                    run_id, case_id, name, trace_id, passed, score, checks_json, model_events_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [_eval_case_result_row(saved_run["run_id"], case_result) for case_result in saved_run["results"]],
             )
@@ -263,7 +271,7 @@ class SQLiteTraceStore:
                 return None
             case_rows = connection.execute(
                 """
-                SELECT case_id, name, trace_id, passed, score, checks_json
+                SELECT case_id, name, trace_id, passed, score, checks_json, model_events_json
                 FROM eval_case_results
                 WHERE run_id = ?
                 ORDER BY rowid ASC
@@ -1143,6 +1151,7 @@ def _eval_case_result_row(run_id: str, result: dict[str, Any]) -> tuple[Any, ...
         1 if result["passed"] else 0,
         result["score"],
         _to_json(result["checks"]),
+        _to_json(result.get("model_events", [])),
     )
 
 
@@ -1175,6 +1184,7 @@ def _eval_run_from_row(run_row: sqlite3.Row, case_rows: list[sqlite3.Row]) -> di
                 "passed": bool(row["passed"]),
                 "score": row["score"],
                 "checks": _from_json(row["checks_json"]) or [],
+                "model_events": _from_json(row["model_events_json"]) or [],
             }
             for row in case_rows
         ],

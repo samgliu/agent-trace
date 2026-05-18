@@ -229,6 +229,101 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["fallback_reason"], "refund_review_required_by_policy_path")
         self.assertEqual(state_update.output["agent_state"]["next_required_step"], "human_approval")
 
+    def test_llm_triage_rejects_recent_context_as_issue_type(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"account request needs triage"}',
+                '{"issue_type":"recent_context","urgency":"low","sentiment":"concerned"}',
+                '{"retrieval_query":"recent_context","reason":"Use recent context"}',
+                '{"action_type":"clarification_request","reason":"Need details."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123"]}',
+                "Could you share more detail?",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Can you help with my account?",
+            customer_email="unknown@example.com",
+            trace_id="trace_runner_recent_context_rejected",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        policy = next(span for span in trace.spans if span.name == "Policy Agent")
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(triage.output["issue_type"], "general_support")
+        self.assertEqual(triage.span_data["fallback_reason"], "unsupported_issue_type")
+        self.assertEqual(policy.output["retrieval_query"], "general_support")
+
+    def test_llm_action_enforces_consumed_product_quality_exception(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"product issue needs triage"}',
+                '{"issue_type":"consumed_product_return","urgency":"low","sentiment":"concerned"}',
+                '{"retrieval_query":"consumed_product_return","reason":"consumed product policy applies"}',
+                '{"action_type":"clarification_request","reason":"Ask for more details."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","ord_1234","policy_consumed_product_return"]}',
+                "I submitted this for quality review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Order number #1234. The bananas were moldy and unsafe, so I threw them out.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_quality_exception_action_enforced",
+            conversation_history=[
+                {
+                    "role": "user",
+                    "content": "I'd like to return the banana I bought last week. I ate all of them already.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please share the order number or receipt and what was wrong.",
+                },
+            ],
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        create_action = next(span for span in trace.spans if span.name == "create_quality_exception_review")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertEqual(trace.status, "passed")
+        self.assertTrue(triage.output["quality_exception"])
+        self.assertEqual(action.output["action_type"], "courtesy_credit")
+        self.assertEqual(action.span_data["fallback_reason"], "quality_exception_action_required")
+        self.assertEqual(create_action.span_data["tool_name"], "create_quality_exception_review_tool")
+        self.assertIn("courtesy credit", response.output["response"].lower())
+
+    def test_llm_action_enforces_general_support_clarification(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"account ownership request needs triage"}',
+                '{"issue_type":"general_support","urgency":"medium","sentiment":"concerned","missing_information":"verified account or matching order ownership"}',
+                '{"retrieval_query":"general_support","reason":"ownership must be verified"}',
+                '{"action_type":"escalation","reason":"Escalate ownership mismatch."}',
+                '{"grounding_status":"recovered","approval_required":true,"evidence":["account_access_mismatch"]}',
+                "Please provide the matching account detail.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="The order is under my spouse's different email. Can you refund it from this account?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_general_support_clarification_enforced",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        state_update = next(span for span in trace.spans if span.name == "Update Agent State")
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(action.output["action_type"], "clarification_request")
+        self.assertEqual(action.span_data["fallback_reason"], "clarification_required_by_policy_path")
+        self.assertFalse(validator.output["approval_required"])
+        self.assertEqual(validator.output["grounding_status"], "grounded")
+        self.assertEqual(state_update.output["agent_state"]["next_required_step"], "collect_missing_information")
+
     def test_validator_enforces_policy_required_approval(self) -> None:
         llm = QueueLLMClient(
             [

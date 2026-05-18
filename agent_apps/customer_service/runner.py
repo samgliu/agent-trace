@@ -1412,13 +1412,35 @@ def _triage_safety(
     conversation_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     fallback = _triage(message, conversation_history)
+    known_issue_types = {
+        "account_access",
+        "annual_plan_refund",
+        "billing_duplicate_charge",
+        "consumed_product_return",
+        "general_support",
+        "stale_subscription_refund",
+    }
+    if triage.get("issue_type") not in known_issue_types:
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "unsupported_issue_type",
+            "rejected_issue_type": triage.get("issue_type"),
+        }
     if triage.get("issue_type") == fallback["issue_type"]:
+        if fallback.get("quality_exception") and not triage.get("quality_exception"):
+            return {
+                "decision_source": "fallback",
+                "fallback_reason": "missing_quality_exception_signal",
+                "rejected_issue_type": triage.get("issue_type"),
+            }
         return {}
     if fallback["issue_type"] in {
+        "account_access",
         "stale_subscription_refund",
         "billing_duplicate_charge",
         "annual_plan_refund",
         "consumed_product_return",
+        "general_support",
     }:
         return {
             "decision_source": "fallback",
@@ -1494,6 +1516,28 @@ def _action_safety(action_type: str, policy: dict[str, Any], fallback_action_typ
             "policy_allowed_actions": allowed_actions,
         }
     policy_id = str(policy.get("policy_id") or "")
+    if (
+        fallback_action_type == "clarification_request"
+        and policy_id == "policy_general_support"
+        and normalized_action != "clarification_request"
+    ):
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "clarification_required_by_policy_path",
+            "rejected_action_type": action_type,
+            "policy_id": policy_id,
+        }
+    if (
+        fallback_action_type == "courtesy_credit"
+        and policy_id == "policy_consumed_product_return"
+        and normalized_action != "courtesy_credit"
+    ):
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "quality_exception_action_required",
+            "rejected_action_type": action_type,
+            "policy_id": policy_id,
+        }
     if (
         fallback_action_type == "refund_review"
         and policy_id

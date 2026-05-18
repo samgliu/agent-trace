@@ -263,10 +263,22 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Only LLM-backed eval runs can be resumed.")
         if not _eval_run_is_degraded(run):
             raise HTTPException(status_code=400, detail=f"Eval run is not degraded: {run_id}")
-        completed_case_ids = {result["case_id"] for result in run.get("results", [])}
-        remaining_cases = [case for case in SUPPORT_TRIAGE_EVAL_CASES if case.case_id not in completed_case_ids]
+        retry_case_ids = {
+            result["case_id"]
+            for result in run.get("results", [])
+            if _eval_case_result_has_provider_issue(result)
+        }
+        preserved_results = [
+            result for result in run.get("results", []) if result["case_id"] not in retry_case_ids
+        ]
+        preserved_case_ids = {result["case_id"] for result in preserved_results}
+        remaining_cases = [
+            case
+            for case in SUPPORT_TRIAGE_EVAL_CASES
+            if case.case_id not in preserved_case_ids
+        ]
         if not remaining_cases:
-            raise HTTPException(status_code=400, detail=f"Eval run has no incomplete cases: {run_id}")
+            raise HTTPException(status_code=400, detail=f"Eval run has no incomplete or retryable cases: {run_id}")
         running = _save_eval_progress(
             trace_store,
             run_id=run_id,
@@ -275,7 +287,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             model_provider=run["model_provider"],
             model_name=run["model_name"],
             status="running",
-            results=list(run.get("results", [])),
+            results=preserved_results,
         )
         event_bus.publish("eval_run.updated", resource_type="eval_run", resource_id=run_id, run_id=run_id)
 
@@ -289,7 +301,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
                 model_provider=run["model_provider"],
                 model_name=run["model_name"],
                 openai_api=openai_api,
-                results=list(run.get("results", [])),
+                results=preserved_results,
                 cases=remaining_cases,
             )
 
@@ -841,6 +853,23 @@ def _eval_run_summary(run: dict[str, Any] | None) -> dict[str, Any] | None:
 
 def _eval_run_is_degraded(run: dict[str, Any]) -> bool:
     return run.get("status") == "degraded" or _is_degraded_provider_error(str(run.get("error") or ""))
+
+
+def _eval_case_result_has_provider_issue(result: dict[str, Any]) -> bool:
+    for event in result.get("model_events") or []:
+        if not isinstance(event, dict):
+            continue
+        if _is_degraded_provider_error(str(event.get("error") or "")):
+            return True
+        for attempt in event.get("attempts") or []:
+            if isinstance(attempt, dict) and _is_degraded_provider_error(str(attempt.get("error") or "")):
+                return True
+    return any(
+        _is_degraded_provider_error(str(check.get("actual") or ""))
+        or _is_degraded_provider_error(str(check.get("expected") or ""))
+        for check in result.get("checks") or []
+        if isinstance(check, dict)
+    )
 
 
 def _is_degraded_provider_error(message: str) -> bool:
