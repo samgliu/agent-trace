@@ -46,6 +46,7 @@ import {
   evalModelSummary,
   evalPassRateLabel,
   evalProgress,
+  evalRunHasProviderIssue,
   evalRunIsActive,
   evalStatusLabel,
   failedEvalCases,
@@ -54,6 +55,7 @@ import {
   getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
+  resumeEvalRun,
   runSupportTriageEvalSuite,
   startSupportTriageEvalSuite,
   type EvalComparison,
@@ -613,6 +615,23 @@ function App() {
     }
   }
 
+  async function resumeEvals() {
+    if (!evalRun) {
+      return;
+    }
+    setEvalRunStatus({ status: "running" });
+    try {
+      const result = await resumeEvalRun(apiPostJson, evalRun.run_id);
+      setEvalRun(result);
+      setEvalHistory((history) => [result, ...history.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
+      setEvalComparison(await getSupportTriageEvalComparison(fetchJson));
+      setEvalRunStatus(result.status === "running" ? { status: "running" } : { status: "idle" });
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setEvalRunStatus({ status: "error", message: error instanceof Error ? error.message : "Could not resume evals." });
+    }
+  }
+
   async function submitChatTurn(input: ChatInput) {
     setChatStatus({ status: "submitting" });
     let pendingMessage: ChatMessage | null = null;
@@ -684,6 +703,7 @@ function App() {
               mode={evalMode}
               onModeChange={setEvalMode}
               onRun={runEvals}
+              onResume={resumeEvals}
               onSelectEvalRun={loadEvalRun}
               onSelectTrace={setSelectedTraceId}
             />
@@ -740,6 +760,7 @@ function App() {
             mode={evalMode}
             onModeChange={setEvalMode}
             onRun={runEvals}
+            onResume={resumeEvals}
             onSelectEvalRun={loadEvalRun}
             onSelectTrace={setSelectedTraceId}
           />
@@ -1217,6 +1238,7 @@ function EvalDashboardPanel({
   mode,
   onModeChange,
   onRun,
+  onResume,
   onSelectEvalRun,
   onSelectTrace,
 }: {
@@ -1227,6 +1249,7 @@ function EvalDashboardPanel({
   mode: EvalExecutionMode;
   onModeChange: (mode: EvalExecutionMode) => void;
   onRun: () => Promise<void>;
+  onResume: () => Promise<void>;
   onSelectEvalRun: (runId: string) => Promise<void>;
   onSelectTrace: (traceId: string) => void;
 }) {
@@ -1237,6 +1260,7 @@ function EvalDashboardPanel({
   const progress = evalProgress(run);
   const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
   const improvementPlan = buildEvalImprovementPlan(run);
+  const resumable = Boolean(run && run.execution_mode === "llm" && evalRunHasProviderIssue(run) && run.results.length < run.total);
 
   return (
     <section className="evalDashboard">
@@ -1254,6 +1278,12 @@ function EvalDashboardPanel({
             {running ? <Activity size={15} /> : <FlaskConical size={15} />}
             Run evals
           </button>
+          {resumable ? (
+            <button className="secondary" type="button" onClick={() => void onResume()} disabled={running}>
+              <RotateCcw size={15} />
+              Resume eval
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="evalSummaryGrid">
@@ -1284,17 +1314,24 @@ function EvalDashboardPanel({
           </span>
         ))}
       </div>
-      <div className={comparison?.status === "ready" && comparison.llm_regressions.length > 0 ? "evalComparison drift" : "evalComparison"}>
+      <div
+        className={
+          comparison?.status === "degraded_llm" || evalRunHasProviderIssue(comparison?.llm_run ?? null)
+            ? "evalComparison degraded"
+            : comparison?.status === "ready" && comparison.llm_regressions.length > 0
+              ? "evalComparison drift"
+              : "evalComparison"
+        }
+      >
         <div>
           <small>Deterministic vs LLM</small>
           <strong>{evalComparisonStatusLabel(comparison)}</strong>
         </div>
         <span>
-          Delta{" "}
-          <strong>{comparison?.pass_rate_delta === null || comparison?.pass_rate_delta === undefined ? "-" : `${Math.round(comparison.pass_rate_delta * 100)} pts`}</strong>
+          Delta <strong>{evalRunHasProviderIssue(comparison?.llm_run ?? null) ? "degraded" : comparison?.pass_rate_delta === null || comparison?.pass_rate_delta === undefined ? "-" : `${Math.round(comparison.pass_rate_delta * 100)} pts`}</strong>
         </span>
         <span>
-          Regressions <strong>{comparison?.llm_regressions.length ?? "-"}</strong>
+          Regressions <strong>{evalRunHasProviderIssue(comparison?.llm_run ?? null) ? "not scored" : comparison?.llm_regressions.length ?? "-"}</strong>
         </span>
         <span>
           Model <strong>{comparison?.llm_run ? `${comparison.llm_run.model_provider}/${comparison.llm_run.model_name}` : "-"}</strong>

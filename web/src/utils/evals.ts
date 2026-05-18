@@ -68,7 +68,7 @@ export type EvalComparisonCase = {
 
 export type EvalComparison = {
   suite_id: string;
-  status: "ready" | "missing_runs" | "missing_deterministic" | "missing_llm";
+  status: "ready" | "missing_runs" | "missing_deterministic" | "missing_llm" | "degraded_llm";
   deterministic_run: EvalRunSummary | null;
   llm_run: EvalRunSummary | null;
   pass_rate_delta: number | null;
@@ -131,6 +131,10 @@ export function startSupportTriageEvalSuite(
   return transport(`/evals/support-triage/run/async?mode=${mode}`);
 }
 
+export function resumeEvalRun(transport: EvalSuiteTransport, runId: string): Promise<EvalSuiteRun> {
+  return transport(`/eval-runs/${runId}/resume`);
+}
+
 export function evalModeLabel(mode: EvalExecutionMode): string {
   return mode === "llm" ? "LLM-backed" : "Deterministic";
 }
@@ -191,7 +195,29 @@ export function evalStatusLabel(run: EvalSuiteRun | null): string {
   if (run.status === "running") {
     return "Running";
   }
+  if (run.status === "degraded" || evalRunHasProviderIssue(run)) {
+    return "Provider degraded";
+  }
   return run.failed === 0 ? "Passing" : "Needs review";
+}
+
+export function evalRunHasProviderIssue(run: EvalSuiteRun | EvalRunSummary | null): boolean {
+  if (!run) return false;
+  const error = run.error?.toLowerCase() ?? "";
+  return (
+    run.status === "degraded" ||
+    error.includes("http 429") ||
+    error.includes("http 503") ||
+    error.includes("http 504") ||
+    error.includes("http 529") ||
+    error.includes("resource_exhausted") ||
+    error.includes("unavailable") ||
+    error.includes("quota exceeded") ||
+    error.includes("rate limit") ||
+    error.includes("high demand") ||
+    error.includes("timed out") ||
+    error.includes("timeout")
+  );
 }
 
 export function evalRunIsActive(run: EvalSuiteRun | null): boolean {
@@ -211,6 +237,7 @@ export function evalComparisonStatusLabel(comparison: EvalComparison | null): st
   if (comparison.status === "missing_runs") return "Run both modes";
   if (comparison.status === "missing_deterministic") return "Run deterministic baseline";
   if (comparison.status === "missing_llm") return "Run LLM eval";
+  if (comparison.status === "degraded_llm" || evalRunHasProviderIssue(comparison.llm_run)) return "Provider degraded";
   if ((comparison.llm_regressions?.length ?? 0) > 0) return "LLM drift detected";
   return "Aligned";
 }

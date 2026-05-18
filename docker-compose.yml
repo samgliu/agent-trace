@@ -41,7 +41,7 @@ services:
         required: false
     environment:
       AGENTTRACE_MCP_TOOLS_URL: http://mcp-tools:8010/mcp/
-      AGENTTRACE_LLM_TIMEOUT_SECONDS: 45
+      AGENTTRACE_LLM_TIMEOUT_SECONDS: 180
     ports:
       - "8020:8020"
     working_dir: /app

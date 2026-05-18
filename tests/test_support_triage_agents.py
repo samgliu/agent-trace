@@ -783,7 +783,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIsInstance(runner.llm_client, OpenAIChatCompletionsClient)
         self.assertTrue(runner.use_llm_agents)
         self.assertEqual(runner.llm_client.provider_name, "openai-chat-completions")
-        self.assertEqual(runner.llm_client.timeout_seconds, 45.0)
+        self.assertEqual(runner.llm_client.timeout_seconds, 180.0)
 
     def test_openai_runner_can_configure_llm_timeout(self) -> None:
         with patch.dict("os.environ", {"AGENTTRACE_LLM_TIMEOUT_SECONDS": "90"}):

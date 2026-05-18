@@ -1082,11 +1082,11 @@ def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_co
 
 
 def _llm_timeout_seconds() -> float:
-    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "45")
+    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "180")
     try:
         return max(1.0, float(raw_value))
     except ValueError:
-        return 45.0
+        return 180.0
 
 
 def resolve_model_config(

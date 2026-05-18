@@ -576,6 +576,11 @@ h2 {
   cursor: not-allowed;
 }
 
+.evalDashboardHeader button.secondary {
+  color: #246b5b;
+  background: #ffffff;
+}
+
 .evalRunControls {
   display: inline-flex;
   align-items: center;
@@ -1003,6 +1008,11 @@ h2 {
 .evalComparison.drift {
   background: #fff0ed;
   border-color: #e9a7a0;
+}
+
+.evalComparison.degraded {
+  background: #fff8e8;
+  border-color: #e2b85f;
 }
 
 .evalComparison small,

@@ -239,6 +239,10 @@ LLM mode runs the same cases through the configured provider/model so real agent
 behavior can be evaluated separately from the simulation baseline.
 From the dashboard, LLM evals run asynchronously and update through SSE so a
 slow provider does not block the UI request.
+If an LLM eval stops because the provider is rate-limited, out of quota, or
+temporarily unavailable, the run is marked `degraded` and comparison avoids
+scoring it as normal agent drift. Degraded LLM evals can be resumed from the
+dashboard; completed cases are preserved and only incomplete cases continue.
 The comparison endpoint pairs the latest deterministic and LLM-backed runs and
 highlights LLM regressions, improvements, shared failures, and pass-rate delta.
 
@@ -299,6 +303,7 @@ GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-flash
 GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+AGENTTRACE_LLM_TIMEOUT_SECONDS=180
 ```
 
 OpenAI:
@@ -390,6 +395,7 @@ POST   /workflow-runs/{run_id}/retry
 
 GET    /evals
 POST   /evals/support-triage/run
+POST   /eval-runs/{run_id}/resume
 GET    /eval-runs
 GET    /eval-runs/{run_id}
 

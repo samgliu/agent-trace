@@ -113,8 +113,9 @@ test("recent eval runs can be opened from history", async ({ page }) => {
     execution_mode: "llm",
     model_provider: "gemini",
     model_name: "gemini-primary",
-    status: "failed",
-    total: 2,
+    status: "degraded",
+    error: "LLM provider request failed with HTTP 429: quota exceeded",
+    total: 3,
     passed: 1,
     failed: 1,
     pass_rate: 0.5,
@@ -162,7 +163,7 @@ test("recent eval runs can be opened from history", async ({ page }) => {
       contentType: "application/json",
       body: JSON.stringify({
         suite_id: "support-triage-core",
-        status: "missing_deterministic",
+        status: "degraded_llm",
         deterministic_run: null,
         llm_run: summary,
         pass_rate_delta: null,
@@ -181,6 +182,9 @@ test("recent eval runs can be opened from history", async ({ page }) => {
   const evalPanel = page.locator(".evalDashboard").filter({ hasText: "Support agent quality" }).first();
   await evalPanel.getByRole("button", { name: /LLM-backed/ }).click();
 
+  await expect(evalPanel.getByText("Provider degraded").first()).toBeVisible();
+  await expect(evalPanel.getByText("not scored")).toBeVisible();
+  await expect(evalPanel.getByRole("button", { name: "Resume eval" })).toBeVisible();
   await expect(evalPanel.getByRole("button", { name: /Historical failure case/ })).toBeVisible();
   await expect(evalPanel.getByText("Expected: true")).toBeVisible();
   await expect(evalPanel.getByText("Actual: false")).toBeVisible();

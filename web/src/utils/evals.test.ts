@@ -7,6 +7,7 @@ import {
   evalModeLabel,
   evalPassRateLabel,
   evalProgress,
+  evalRunHasProviderIssue,
   evalModelSummary,
   evalRunIsActive,
   evalStatusLabel,
@@ -17,6 +18,7 @@ import {
   getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
+  resumeEvalRun,
   runSupportTriageEvalSuite,
   startSupportTriageEvalSuite,
   type EvalRunListResponse,
@@ -74,6 +76,17 @@ describe("eval helpers", () => {
 
     expect(result.status).toBe("running");
     expect(calls).toEqual([{ path: "/evals/support-triage/run/async?mode=llm", body: undefined }]);
+  });
+
+  it("resumes an eval run through the API helper", async () => {
+    const calls: unknown[] = [];
+    const result = await resumeEvalRun(async <T>(path: string, body?: unknown): Promise<T> => {
+      calls.push({ path, body });
+      return { ...sampleRun, run_id: "eval_resume", status: "running" } as T;
+    }, "eval_resume");
+
+    expect(result.status).toBe("running");
+    expect(calls).toEqual([{ path: "/eval-runs/eval_resume/resume", body: undefined }]);
   });
 
   it("lists recent eval runs", async () => {
@@ -141,6 +154,15 @@ describe("eval helpers", () => {
     expect(evalComparisonStatusLabel(null)).toBe("Run both modes");
     expect(evalStatusLabel({ ...sampleRun, status: "running", failed: 0 })).toBe("Running");
     expect(
+      evalStatusLabel({
+        ...sampleRun,
+        status: "degraded",
+        error: "LLM provider request failed with HTTP 429: quota exceeded",
+      }),
+    ).toBe("Provider degraded");
+    expect(evalRunHasProviderIssue({ ...sampleRun, error: "LLM provider request failed with HTTP 503: UNAVAILABLE" })).toBe(true);
+    expect(evalRunHasProviderIssue({ ...sampleRun, error: "LLM provider request failed: The read operation timed out" })).toBe(true);
+    expect(
       evalComparisonStatusLabel({
         suite_id: "support-triage-core",
         status: "ready",
@@ -162,6 +184,23 @@ describe("eval helpers", () => {
         both_failed: [],
       }),
     ).toBe("LLM drift detected");
+    expect(
+      evalComparisonStatusLabel({
+        suite_id: "support-triage-core",
+        status: "degraded_llm",
+        deterministic_run: sampleRun,
+        llm_run: {
+          ...sampleRun,
+          execution_mode: "llm",
+          status: "degraded",
+          error: "LLM provider request failed with HTTP 429: quota exceeded",
+        },
+        pass_rate_delta: null,
+        llm_regressions: [],
+        llm_improvements: [],
+        both_failed: [],
+      }),
+    ).toBe("Provider degraded");
     expect(evalStatusLabel(null)).toBe("Not run");
     expect(evalStatusLabel(sampleRun)).toBe("Needs review");
     expect(failedEvalCases(sampleRun).map((result) => result.case_id)).toEqual(["fail"]);
