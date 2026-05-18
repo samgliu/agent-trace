@@ -827,7 +827,7 @@ class SupportTriageRunner:
         )
         action_type = str(action_decision.get("action_type") or fallback_action["action_type"])
         action_reason = str(action_decision.get("reason") or fallback_action["reason"])
-        action_safety = _action_safety(action_type, policy)
+        action_safety = _action_safety(action_type, policy, fallback_action["action_type"])
         if action_safety:
             action_type = fallback_action["action_type"]
             action_reason = fallback_action["reason"]
@@ -988,6 +988,12 @@ class SupportTriageRunner:
             instructions=_customer_response_instructions(),
             input_text=_customer_response_input(message, customer, policy, action, validation, working_memory, customer_memory),
         )
+        response_text = _customer_response_safety(
+            llm_response.output_text,
+            policy=policy,
+            action=action,
+            working_memory=working_memory,
+        )
         emit(
             _span(
                 trace_id=trace_id,
@@ -998,7 +1004,7 @@ class SupportTriageRunner:
                 clock=clock,
                 duration_ms=650,
                 input={"message": message},
-                output={"response": llm_response.output_text},
+                output={"response": response_text},
                 span_data={
                     "model_provider": self.llm_client.provider_name,
                     **_model_call_span_data(llm_response.raw_response),
@@ -1471,7 +1477,7 @@ def _action_reason(
     )
 
 
-def _action_safety(action_type: str, policy: dict[str, Any]) -> dict[str, Any]:
+def _action_safety(action_type: str, policy: dict[str, Any], fallback_action_type: str) -> dict[str, Any]:
     normalized_action = action_type.strip().lower()
     if normalized_action not in VALID_ACTIONS:
         return {
@@ -1480,14 +1486,31 @@ def _action_safety(action_type: str, policy: dict[str, Any]) -> dict[str, Any]:
             "rejected_action_type": action_type,
         }
     allowed_actions = policy.get("allowed_actions")
-    if not isinstance(allowed_actions, list) or normalized_action in allowed_actions:
-        return {}
-    return {
-        "decision_source": "fallback",
-        "fallback_reason": "action_not_allowed_by_policy",
-        "rejected_action_type": action_type,
-        "policy_allowed_actions": allowed_actions,
-    }
+    if isinstance(allowed_actions, list) and normalized_action not in allowed_actions:
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "action_not_allowed_by_policy",
+            "rejected_action_type": action_type,
+            "policy_allowed_actions": allowed_actions,
+        }
+    policy_id = str(policy.get("policy_id") or "")
+    if (
+        fallback_action_type == "refund_review"
+        and policy_id
+        in {
+            "policy_refund_duplicate_charge",
+            "policy_annual_refund",
+            "policy_stale_subscription_refund",
+        }
+        and normalized_action != "refund_review"
+    ):
+        return {
+            "decision_source": "fallback",
+            "fallback_reason": "refund_review_required_by_policy_path",
+            "rejected_action_type": action_type,
+            "policy_id": policy_id,
+        }
+    return {}
 
 
 def _create_domain_action(
@@ -1654,6 +1677,16 @@ def _enforce_validation(
         enforced["grounding_status"] = "recovered"
         corrections.append("abuse_review_enforced")
     enforced["risk_review_required"] = bool(isinstance(abuse_risk, dict) and abuse_risk.get("requires_human_review"))
+
+    if (
+        not policy.get("requires_approval")
+        and not enforced["risk_review_required"]
+        and action.get("action_type") == "clarification_request"
+        and enforced["approval_required"]
+    ):
+        enforced["approval_required"] = False
+        enforced["grounding_status"] = fallback["grounding_status"]
+        corrections.append("unnecessary_approval_removed")
 
     if action.get("status") != "created":
         enforced["grounding_status"] = "failed"
@@ -1861,6 +1894,34 @@ def _customer_response_input(
         f"Support action: {action}\n"
         f"Validation: {validation}"
     )
+
+
+def _customer_response_safety(
+    response_text: str,
+    *,
+    policy: dict[str, Any],
+    action: dict[str, Any],
+    working_memory: dict[str, Any],
+) -> str:
+    if policy.get("policy_id") != "policy_consumed_product_return":
+        return response_text
+
+    normalized = response_text.lower()
+    agent_state = working_memory.get("agent_state") if isinstance(working_memory.get("agent_state"), dict) else {}
+    evidence_ids = agent_state.get("evidence_ids") if isinstance(agent_state, dict) else []
+    has_order_evidence = isinstance(evidence_ids, list) and any(str(item).startswith("ord_") for item in evidence_ids)
+
+    additions: list[str] = []
+    if action.get("action_type") == "courtesy_credit" and "courtesy credit" not in normalized:
+        additions.append("I can review this for a courtesy credit based on the quality issue and order evidence.")
+    elif action.get("action_type") == "clarification_request" and has_order_evidence and "normal return" not in normalized:
+        additions.append(
+            "Because the items were fully consumed, this is not eligible for a normal return, but I can review a quality or safety exception if you share what was wrong."
+        )
+
+    if not additions:
+        return response_text
+    return " ".join([response_text.rstrip(), *additions])
 
 
 def _static_customer_response(input_text: str, default_response: str) -> str:
