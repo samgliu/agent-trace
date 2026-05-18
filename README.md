@@ -17,6 +17,8 @@ metadata, and eval results.
 - Live workflow execution with SSE invalidation, cancellation, retry, and
   trace lifecycle tracking.
 - A live chat monitor where each customer message generates a trace.
+- An Agent Flow view that highlights supervisor, specialist, validator, and
+  response-generator steps in a multi-agent run.
 - Approval gates with approve, reject, and revert actions.
 - Grounding, memory, cost, latency, source, and error summaries.
 - A deterministic eval suite covering routing, policy selection,
@@ -461,3 +463,6 @@ End-to-end integration checks:
 ```bash
 docker compose run --rm --build e2e
 ```
+
+GitHub Actions runs backend tests, deterministic evals, frontend tests/build,
+and Dockerized Playwright e2e after changes are merged into `development`.

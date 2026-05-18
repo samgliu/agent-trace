@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
+import { buildAgentFlow, type AgentFlowStep } from "./utils/agentFlow";
 import {
   createPendingUserMessage,
   createChatSession,
@@ -762,6 +763,11 @@ function App() {
             <TraceHeader trace={state.selectedTrace} executionStatus={executionStatus(state.selectedTrace.status)} />
             <ExecutiveSummaryPanel trace={state.selectedTrace} metrics={state.metrics} grounding={state.grounding} />
             <MetricGrid metrics={state.metrics} grounding={state.grounding} />
+            <AgentFlowPanel
+              spans={state.selectedTrace.spans}
+              selectedSpanId={selectedSpanId}
+              onSelectSpan={setSelectedSpanId}
+            />
             <section className="workspace">
               <TraceTimeline
                 spans={state.selectedTrace.spans}
@@ -1675,6 +1681,92 @@ function TraceTimeline({
       </div>
     </section>
   );
+}
+
+function AgentFlowPanel({
+  spans,
+  selectedSpanId,
+  onSelectSpan,
+}: {
+  spans: Span[];
+  selectedSpanId: string | null;
+  onSelectSpan: (spanId: string) => void;
+}) {
+  const steps = useMemo(() => buildAgentFlow(spans), [spans]);
+  if (steps.length === 0) {
+    return null;
+  }
+  return (
+    <section className="agentFlowPanel" aria-label="Agent flow">
+      <div className="panelHeader">
+        <h3>Agent Flow</h3>
+        <span>{steps.length} agents</span>
+      </div>
+      <div className="agentFlow">
+        {steps.map((step, index) => (
+          <React.Fragment key={step.spanId}>
+            <AgentFlowCard
+              step={step}
+              selected={step.spanId === selectedSpanId}
+              onSelectSpan={onSelectSpan}
+            />
+            {index < steps.length - 1 ? (
+              <span className="agentFlowArrow" aria-hidden="true">
+                <ArrowRight size={16} />
+              </span>
+            ) : null}
+          </React.Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AgentFlowCard({
+  step,
+  selected,
+  onSelectSpan,
+}: {
+  step: AgentFlowStep;
+  selected: boolean;
+  onSelectSpan: (spanId: string) => void;
+}) {
+  const decisionSource = formatDecisionSource(step.decisionSource);
+  return (
+    <button
+      className={["agentFlowCard", selected ? "selected" : "", step.approvalPending ? "approvalPending" : "", step.errorCount > 0 ? "errored" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      type="button"
+      onClick={() => onSelectSpan(step.spanId)}
+    >
+      <div className="agentFlowTitle">
+        <span>{agentFlowIcon(step.role)}</span>
+        <strong>{step.label}</strong>
+      </div>
+      <div className="agentFlowFacts">
+        <span>{formatDuration(step.durationMs)}</span>
+        {step.model ? <span>{step.model}</span> : null}
+        {decisionSource ? <span>{decisionSource.label}</span> : null}
+        {step.tokenTotal > 0 ? <span>{step.tokenTotal} tokens</span> : null}
+        {step.estimatedCost ? <span>{formatCost(step.estimatedCost)}</span> : null}
+      </div>
+      <div className="agentFlowBadges">
+        {step.handoffCount > 0 ? <em>{step.handoffCount} handoff</em> : null}
+        {step.toolCount > 0 ? <em>{step.toolCount} tool</em> : null}
+        {step.modelFallbackUsed ? <strong>Model fallback</strong> : null}
+        {step.approvalPending ? <strong>Approval needed</strong> : null}
+        {step.errorCount > 0 ? <strong>{step.errorCount} error</strong> : null}
+      </div>
+    </button>
+  );
+}
+
+function agentFlowIcon(role: string) {
+  if (role === "supervisor") return <Network size={15} />;
+  if (role === "validator") return <ShieldCheck size={15} />;
+  if (role === "response") return <MessageSquare size={15} />;
+  return <Bot size={15} />;
 }
 
 function SpanRow({
