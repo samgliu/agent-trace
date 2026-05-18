@@ -39,6 +39,11 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
     facts.push({ label: "Fallback", value: formatFallbackReason(fallbackReason) });
   }
 
+  const validationReason = stringValue(span.span_data.validation_reason);
+  if (validationReason) {
+    facts.push({ label: "Validation", value: formatFallbackReason(validationReason) });
+  }
+
   const provider = stringValue(span.span_data.model_provider);
   if (provider) {
     facts.push({ label: "Provider", value: provider });
@@ -94,6 +99,9 @@ function booleanValue(value: unknown): boolean | null {
 function formatDecisionSource(value: string): string {
   if (value === "llm") {
     return "LLM";
+  }
+  if (value === "policy_validation") {
+    return "policy validation";
   }
   return value.replaceAll("_", " ");
 }

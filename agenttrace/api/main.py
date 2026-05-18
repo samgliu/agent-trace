@@ -234,70 +234,80 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         event_bus.publish("eval_run.created", resource_type="eval_run", resource_id=run_id, run_id=run_id)
 
         def execute() -> None:
-            results = []
-            status = "running"
-            for case in SUPPORT_TRIAGE_EVAL_CASES:
-                try:
-                    case_result = run_support_triage_eval_case(
-                        case,
-                        execution_mode=execution_mode,
-                        openai_api=openai_api,
-                    )
-                    trace = _with_eval_metadata(
-                        case_result.trace,
-                        suite_id="support-triage-core",
-                        case_id=case.case_id,
-                        execution_mode=execution_mode,
-                        model_provider=model_provider,
-                        model_name=model_name,
-                    )
-                    trace_store.save_trace(trace)
-                    _publish_trace_events(event_bus, "trace.created", trace.trace_id)
-                    results.append(case_result.to_dict())
-                    _save_eval_progress(
-                        trace_store,
-                        run_id=run_id,
-                        created_at=created_at,
-                        execution_mode=execution_mode,
-                        model_provider=model_provider,
-                        model_name=model_name,
-                        status=status,
-                        results=results,
-                    )
-                    event_bus.publish("eval_run.updated", resource_type="eval_run", resource_id=run_id, run_id=run_id)
-                except RuntimeError as exc:
-                    status = "failed"
-                    _save_eval_progress(
-                        trace_store,
-                        run_id=run_id,
-                        created_at=created_at,
-                        execution_mode=execution_mode,
-                        model_provider=model_provider,
-                        model_name=model_name,
-                        status=status,
-                        results=results,
-                        error=str(exc),
-                    )
-                    event_bus.publish("eval_run.failed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
-                    event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
-                    return
-            status = "passed" if all(result["passed"] for result in results) else "failed"
-            _save_eval_progress(
+            _execute_eval_cases(
                 trace_store,
+                event_bus,
                 run_id=run_id,
                 created_at=created_at,
                 execution_mode=execution_mode,
                 model_provider=model_provider,
                 model_name=model_name,
-                status=status,
-                results=results,
+                openai_api=openai_api,
+                results=[],
+                cases=list(SUPPORT_TRIAGE_EVAL_CASES),
             )
-            event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
-            event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
 
         thread = threading.Thread(target=execute, name=f"agenttrace-eval-{run_id}", daemon=True)
         thread.start()
         return run
+
+    @app.post("/eval-runs/{run_id}/resume")
+    def resume_eval_run(
+        run_id: str,
+        openai_api: str = Query("chat_completions", pattern="^(chat_completions|responses)$"),
+    ) -> dict[str, Any]:
+        run = trace_store.get_eval_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Eval run not found: {run_id}")
+        if run["execution_mode"] != "llm":
+            raise HTTPException(status_code=400, detail="Only LLM-backed eval runs can be resumed.")
+        if not _eval_run_is_degraded(run):
+            raise HTTPException(status_code=400, detail=f"Eval run is not degraded: {run_id}")
+        retry_case_ids = {
+            result["case_id"]
+            for result in run.get("results", [])
+            if _eval_case_result_has_provider_issue(result)
+        }
+        preserved_results = [
+            result for result in run.get("results", []) if result["case_id"] not in retry_case_ids
+        ]
+        preserved_case_ids = {result["case_id"] for result in preserved_results}
+        remaining_cases = [
+            case
+            for case in SUPPORT_TRIAGE_EVAL_CASES
+            if case.case_id not in preserved_case_ids
+        ]
+        if not remaining_cases:
+            raise HTTPException(status_code=400, detail=f"Eval run has no incomplete or retryable cases: {run_id}")
+        running = _save_eval_progress(
+            trace_store,
+            run_id=run_id,
+            created_at=run["created_at"],
+            execution_mode=run["execution_mode"],
+            model_provider=run["model_provider"],
+            model_name=run["model_name"],
+            status="running",
+            results=preserved_results,
+        )
+        event_bus.publish("eval_run.updated", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+
+        def execute() -> None:
+            _execute_eval_cases(
+                trace_store,
+                event_bus,
+                run_id=run_id,
+                created_at=run["created_at"],
+                execution_mode=run["execution_mode"],
+                model_provider=run["model_provider"],
+                model_name=run["model_name"],
+                openai_api=openai_api,
+                results=preserved_results,
+                cases=remaining_cases,
+            )
+
+        thread = threading.Thread(target=execute, name=f"agenttrace-eval-resume-{run_id}", daemon=True)
+        thread.start()
+        return running
 
     @app.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> dict[str, Any]:
@@ -793,6 +803,9 @@ def _build_eval_comparison(
     }
     if deterministic is None or llm is None:
         return comparison
+    if _eval_run_is_degraded(llm):
+        comparison["status"] = "degraded_llm"
+        return comparison
 
     comparison["pass_rate_delta"] = round(llm["pass_rate"] - deterministic["pass_rate"], 4)
     deterministic_cases = {case["case_id"]: case for case in deterministic.get("results", [])}
@@ -838,6 +851,119 @@ def _eval_run_summary(run: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _eval_run_is_degraded(run: dict[str, Any]) -> bool:
+    return run.get("status") == "degraded" or _is_degraded_provider_error(str(run.get("error") or ""))
+
+
+def _eval_case_result_has_provider_issue(result: dict[str, Any]) -> bool:
+    for event in result.get("model_events") or []:
+        if not isinstance(event, dict):
+            continue
+        if _is_degraded_provider_error(str(event.get("error") or "")):
+            return True
+        for attempt in event.get("attempts") or []:
+            if isinstance(attempt, dict) and _is_degraded_provider_error(str(attempt.get("error") or "")):
+                return True
+    return any(
+        _is_degraded_provider_error(str(check.get("actual") or ""))
+        or _is_degraded_provider_error(str(check.get("expected") or ""))
+        for check in result.get("checks") or []
+        if isinstance(check, dict)
+    )
+
+
+def _is_degraded_provider_error(message: str) -> bool:
+    lowered = message.lower()
+    if "http 429" in lowered or "http 503" in lowered or "http 504" in lowered or "http 529" in lowered:
+        return True
+    return any(
+        marker in lowered
+        for marker in (
+            "resource_exhausted",
+            "unavailable",
+            "quota exceeded",
+            "rate limit",
+            "high demand",
+            "timed out",
+            "timeout",
+        )
+    )
+
+
+def _execute_eval_cases(
+    store: SQLiteTraceStore,
+    event_bus: EventBus,
+    *,
+    run_id: str,
+    created_at: str,
+    execution_mode: str,
+    model_provider: str,
+    model_name: str,
+    openai_api: str,
+    results: list[dict[str, Any]],
+    cases: list[Any],
+) -> None:
+    status = "running"
+    for case in cases:
+        try:
+            case_result = run_support_triage_eval_case(
+                case,
+                execution_mode=cast(EvalExecutionMode, execution_mode),
+                openai_api=openai_api,
+            )
+            trace = _with_eval_metadata(
+                case_result.trace,
+                suite_id="support-triage-core",
+                case_id=case.case_id,
+                execution_mode=execution_mode,
+                model_provider=model_provider,
+                model_name=model_name,
+            )
+            store.save_trace(trace)
+            _publish_trace_events(event_bus, "trace.created", trace.trace_id)
+            results.append(case_result.to_dict())
+            _save_eval_progress(
+                store,
+                run_id=run_id,
+                created_at=created_at,
+                execution_mode=execution_mode,
+                model_provider=model_provider,
+                model_name=model_name,
+                status=status,
+                results=results,
+            )
+            event_bus.publish("eval_run.updated", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+        except RuntimeError as exc:
+            status = "degraded" if _is_degraded_provider_error(str(exc)) else "failed"
+            _save_eval_progress(
+                store,
+                run_id=run_id,
+                created_at=created_at,
+                execution_mode=execution_mode,
+                model_provider=model_provider,
+                model_name=model_name,
+                status=status,
+                results=results,
+                error=str(exc),
+            )
+            event_bus.publish("eval_run.failed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+            event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+            return
+    status = "passed" if all(result["passed"] for result in results) else "failed"
+    _save_eval_progress(
+        store,
+        run_id=run_id,
+        created_at=created_at,
+        execution_mode=execution_mode,
+        model_provider=model_provider,
+        model_name=model_name,
+        status=status,
+        results=results,
+    )
+    event_bus.publish("eval_run.completed", resource_type="eval_run", resource_id=run_id, run_id=run_id)
+    event_bus.publish("dashboard.updated", resource_type="dashboard", resource_id="summary")
+
+
 def _save_eval_progress(
     store: SQLiteTraceStore,
     *,
@@ -851,8 +977,10 @@ def _save_eval_progress(
     error: str | None = None,
 ) -> dict[str, Any]:
     passed = sum(1 for result in results if result.get("passed"))
+    completed = len(results)
     total = len(SUPPORT_TRIAGE_EVAL_CASES)
-    failed = 0 if status == "running" else total - passed
+    failed = sum(1 for result in results if not result.get("passed")) if status in {"running", "degraded"} else total - passed
+    pass_rate_denominator = completed if status in {"running", "degraded"} else total
     return store.save_eval_run(
         {
             "suite_id": "support-triage-core",
@@ -865,7 +993,7 @@ def _save_eval_progress(
             "total": total,
             "passed": passed,
             "failed": failed,
-            "pass_rate": round(passed / total, 4) if total else 0.0,
+            "pass_rate": round(passed / pass_rate_denominator, 4) if pass_rate_denominator else 0.0,
             "created_at": created_at,
             "results": [dict(result) for result in results],
         },

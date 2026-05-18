@@ -348,6 +348,13 @@ class SQLiteTraceStoreTest(unittest.TestCase):
                                     "passed": True,
                                 }
                             ],
+                            "model_events": [
+                                {
+                                    "agent": "Action Agent",
+                                    "model": "gemini-test",
+                                    "attempts": [{"model": "gemini-test", "error": "HTTP 429"}],
+                                }
+                            ],
                         }
                     ],
                 },
@@ -369,6 +376,8 @@ class SQLiteTraceStoreTest(unittest.TestCase):
             self.assertEqual(detail["model_name"], "gemini-test")
             self.assertEqual(detail["results"][0]["case_id"], "duplicate-charge-refund")
             self.assertEqual(detail["results"][0]["checks"][0]["name"], "trace_status")
+            self.assertEqual(detail["results"][0]["model_events"][0]["agent"], "Action Agent")
+            self.assertEqual(detail["results"][0]["model_events"][0]["attempts"][0]["error"], "HTTP 429")
 
     def test_get_latest_eval_run_filters_by_suite_and_mode(self) -> None:
         with TemporaryDirectory() as temp_dir:

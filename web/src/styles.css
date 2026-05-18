@@ -410,6 +410,12 @@ h2 {
   border-color: #ebcf91;
 }
 
+.spanMeta .decisionBadge.validation {
+  color: #67410f;
+  background: #fff8e8;
+  border-color: #e6c77f;
+}
+
 .spanMeta .decisionBadge.deterministic {
   color: #315f99;
   background: #e9f1fb;
@@ -574,6 +580,11 @@ h2 {
   background: #f5f7f8;
   border-color: #dce4e8;
   cursor: not-allowed;
+}
+
+.evalDashboardHeader button.secondary {
+  color: #246b5b;
+  background: #ffffff;
 }
 
 .evalRunControls {
@@ -1003,6 +1014,11 @@ h2 {
 .evalComparison.drift {
   background: #fff0ed;
   border-color: #e9a7a0;
+}
+
+.evalComparison.degraded {
+  background: #fff8e8;
+  border-color: #e2b85f;
 }
 
 .evalComparison small,

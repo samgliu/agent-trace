@@ -146,6 +146,64 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["pass_rate_delta"], -1.0)
         self.assertEqual(payload["llm_regressions"][0]["case_id"], "duplicate-charge-refund")
 
+    def test_support_triage_eval_comparison_skips_degraded_llm_run(self) -> None:
+        def eval_payload(
+            *,
+            mode: str,
+            trace_id: str,
+            passed: bool,
+            status: str | None = None,
+            error: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "suite_id": "support-triage-core",
+                "name": "Support triage core",
+                "execution_mode": mode,
+                "model_provider": "static" if mode == "deterministic" else "gemini",
+                "model_name": "deterministic" if mode == "deterministic" else "gemini-test",
+                "status": status,
+                "error": error,
+                "total": 1,
+                "passed": 1 if passed else 0,
+                "failed": 0 if passed else 1,
+                "pass_rate": 1.0 if passed else 0.0,
+                "results": [
+                    {
+                        "case_id": "duplicate-charge-refund",
+                        "name": "Duplicate charge refund",
+                        "trace_id": trace_id,
+                        "passed": passed,
+                        "score": 1.0 if passed else 0.5,
+                        "checks": [
+                            {"name": "action_type", "expected": "refund_review", "actual": "clarification_request", "passed": passed}
+                        ],
+                    }
+                ],
+            }
+
+        self.store.save_eval_run(
+            eval_payload(mode="deterministic", trace_id="trace_eval_det_case", passed=True),
+            run_id="eval_det",
+        )
+        self.store.save_eval_run(
+            eval_payload(
+                mode="llm",
+                trace_id="trace_eval_llm_case",
+                passed=False,
+                status="degraded",
+                error="LLM provider request failed with HTTP 429: quota exceeded",
+            ),
+            run_id="eval_llm",
+        )
+
+        response = self.client.get("/eval-runs/support-triage/comparison")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "degraded_llm")
+        self.assertIsNone(payload["pass_rate_delta"])
+        self.assertEqual(payload["llm_regressions"], [])
+
     def test_llm_eval_provider_failure_returns_clean_error(self) -> None:
         with patch(
             "agenttrace.api.main.run_support_triage_eval_suite",
@@ -200,6 +258,165 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(completed["execution_mode"], "llm")
         self.assertEqual(completed["passed"], 1)
         self.assertEqual(completed["results"][0]["case_id"], SUPPORT_TRIAGE_EVAL_CASES[0].case_id)
+
+    def test_async_llm_eval_run_marks_provider_quota_failure_degraded(self) -> None:
+        from agenttrace.evals.support_triage import SUPPORT_TRIAGE_EVAL_CASES
+
+        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", SUPPORT_TRIAGE_EVAL_CASES[:1]):
+            with patch(
+                "agenttrace.api.main.run_support_triage_eval_case",
+                side_effect=RuntimeError("LLM provider request failed with HTTP 429: quota exceeded"),
+            ):
+                response = self.client.post("/evals/support-triage/run/async?mode=llm")
+                self.assertEqual(response.status_code, 200)
+                run_id = response.json()["run_id"]
+                completed = None
+                for _ in range(20):
+                    detail = self.client.get(f"/eval-runs/{run_id}").json()
+                    if detail["status"] != "running":
+                        completed = detail
+                        break
+                    time.sleep(0.01)
+
+        assert completed is not None
+        self.assertEqual(completed["status"], "degraded")
+        self.assertIn("HTTP 429", completed["error"])
+        self.assertEqual(completed["failed"], 0)
+
+    def test_resume_degraded_llm_eval_run_skips_completed_cases(self) -> None:
+        from agenttrace.evals.support_triage import EvalCaseResult, EvalCheck, SUPPORT_TRIAGE_EVAL_CASES
+
+        calls: list[str] = []
+        cases = SUPPORT_TRIAGE_EVAL_CASES[:2]
+
+        def fake_run_case(case, **_kwargs):
+            calls.append(case.case_id)
+            if case.case_id == cases[1].case_id and calls.count(case.case_id) == 1:
+                raise RuntimeError("LLM provider request failed with HTTP 429: quota exceeded")
+            return EvalCaseResult(
+                case=case,
+                trace=Trace(
+                    trace_id=f"trace_eval_support_triage_llm_{case.case_id.replace('-', '_')}",
+                    workflow_name="support-triage",
+                    status="passed",
+                ),
+                checks=[EvalCheck("trace_status", "passed", "passed", True)],
+            )
+
+        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", cases):
+            with patch("agenttrace.api.main.run_support_triage_eval_case", side_effect=fake_run_case):
+                response = self.client.post("/evals/support-triage/run/async?mode=llm")
+                self.assertEqual(response.status_code, 200)
+                run_id = response.json()["run_id"]
+                degraded = None
+                for _ in range(20):
+                    detail = self.client.get(f"/eval-runs/{run_id}").json()
+                    if detail["status"] == "degraded":
+                        degraded = detail
+                        break
+                    time.sleep(0.01)
+                assert degraded is not None
+                self.assertEqual([result["case_id"] for result in degraded["results"]], [cases[0].case_id])
+
+                resume_response = self.client.post(f"/eval-runs/{run_id}/resume")
+                self.assertEqual(resume_response.status_code, 200)
+                completed = None
+                for _ in range(20):
+                    detail = self.client.get(f"/eval-runs/{run_id}").json()
+                    if detail["status"] != "running":
+                        completed = detail
+                        break
+                    time.sleep(0.01)
+
+        assert completed is not None
+        self.assertEqual(completed["status"], "passed")
+        self.assertEqual([result["case_id"] for result in completed["results"]], [cases[0].case_id, cases[1].case_id])
+        self.assertEqual(calls, [cases[0].case_id, cases[1].case_id, cases[1].case_id])
+
+    def test_resume_degraded_llm_eval_run_retries_saved_provider_error_cases(self) -> None:
+        from agenttrace.evals.support_triage import EvalCaseResult, EvalCheck, SUPPORT_TRIAGE_EVAL_CASES
+
+        cases = SUPPORT_TRIAGE_EVAL_CASES[:2]
+        self.store.save_trace(Trace(trace_id="trace_retry_ok", workflow_name="support-triage", status="passed"))
+        self.store.save_trace(Trace(trace_id="trace_retry_rate_limited", workflow_name="support-triage", status="failed"))
+        self.store.save_eval_run(
+            {
+                "suite_id": "support-triage-core",
+                "name": "Support triage core",
+                "execution_mode": "llm",
+                "model_provider": "gemini",
+                "model_name": "gemini-test",
+                "status": "degraded",
+                "error": "LLM provider request failed with HTTP 429: quota exceeded",
+                "total": 2,
+                "passed": 1,
+                "failed": 1,
+                "pass_rate": 0.5,
+                "results": [
+                    {
+                        "case_id": cases[0].case_id,
+                        "name": cases[0].name,
+                        "trace_id": "trace_retry_ok",
+                        "passed": True,
+                        "score": 1.0,
+                        "checks": [{"name": "trace_status", "expected": "passed", "actual": "passed", "passed": True}],
+                    },
+                    {
+                        "case_id": cases[1].case_id,
+                        "name": cases[1].name,
+                        "trace_id": "trace_retry_rate_limited",
+                        "passed": False,
+                        "score": 0.0,
+                        "checks": [{"name": "trace_status", "expected": "passed", "actual": "failed", "passed": False}],
+                        "model_events": [
+                            {
+                                "agent": "Action Agent",
+                                "attempts": [
+                                    {
+                                        "model": "gemini-test",
+                                        "error": "LLM provider request failed with HTTP 429: quota exceeded",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            },
+            run_id="eval_retry_provider_error",
+        )
+        calls: list[str] = []
+
+        def fake_run_case(case, **_kwargs):
+            calls.append(case.case_id)
+            return EvalCaseResult(
+                case=case,
+                trace=Trace(
+                    trace_id=f"trace_eval_support_triage_llm_{case.case_id.replace('-', '_')}",
+                    workflow_name="support-triage",
+                    status="passed",
+                ),
+                checks=[EvalCheck("trace_status", "passed", "passed", True)],
+            )
+
+        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", cases):
+            with patch("agenttrace.api.main.run_support_triage_eval_case", side_effect=fake_run_case):
+                response = self.client.post("/eval-runs/eval_retry_provider_error/resume")
+                self.assertEqual(response.status_code, 200)
+                running = response.json()
+                self.assertEqual([result["case_id"] for result in running["results"]], [cases[0].case_id])
+
+                completed = None
+                for _ in range(20):
+                    detail = self.client.get("/eval-runs/eval_retry_provider_error").json()
+                    if detail["status"] != "running":
+                        completed = detail
+                        break
+                    time.sleep(0.01)
+
+        assert completed is not None
+        self.assertEqual(completed["status"], "passed")
+        self.assertEqual([result["case_id"] for result in completed["results"]], [cases[0].case_id, cases[1].case_id])
+        self.assertEqual(calls, [cases[1].case_id])
 
     def test_get_missing_eval_run_returns_404(self) -> None:
         response = self.client.get("/eval-runs/missing")

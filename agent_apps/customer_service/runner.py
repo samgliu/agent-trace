@@ -533,8 +533,8 @@ class SupportTriageRunner:
             fallback=_triage(message, conversation_history),
             allowed_keys={"issue_type", "urgency", "sentiment", "missing_information"},
         )
-        triage_safety = _triage_safety(message, triage, conversation_history)
-        if triage_safety:
+        triage_validation = _validate_triage_decision(message, triage, conversation_history)
+        if triage_validation:
             triage = {**triage, **_triage(message, conversation_history)}
         emit(
             _span(
@@ -551,7 +551,7 @@ class SupportTriageRunner:
                     "agent_role": "triage",
                     "model_provider": self.llm_client.provider_name,
                     **_agent_decision_span_data(triage_llm),
-                    **triage_safety,
+                    **triage_validation,
                 },
                 input_tokens=triage_llm.input_tokens,
                 output_tokens=triage_llm.output_tokens,
@@ -736,14 +736,14 @@ class SupportTriageRunner:
             },
             allowed_keys={"retrieval_query", "reason"},
         )
-        fallback_policy_topic = _policy_topic(triage, customer)
-        policy_topic = str(policy_plan.get("retrieval_query") or fallback_policy_topic)
-        policy_safety = _policy_safety(policy_topic, fallback_policy_topic)
-        if policy_safety:
-            policy_topic = fallback_policy_topic
+        expected_policy_topic = _policy_topic(triage, customer)
+        policy_topic = str(policy_plan.get("retrieval_query") or expected_policy_topic)
+        policy_validation = _validate_policy_decision(policy_topic, expected_policy_topic)
+        if policy_validation:
+            policy_topic = expected_policy_topic
             policy_plan = {
                 **policy_plan,
-                "retrieval_query": fallback_policy_topic,
+                "retrieval_query": expected_policy_topic,
                 "reason": "Corrected to the policy topic implied by the customer message and triage result.",
             }
         emit(
@@ -761,7 +761,7 @@ class SupportTriageRunner:
                     "agent_role": "policy",
                     "model_provider": self.llm_client.provider_name,
                     **_agent_decision_span_data(policy_llm),
-                    **policy_safety,
+                    **policy_validation,
                 },
                 input_tokens=policy_llm.input_tokens,
                 output_tokens=policy_llm.output_tokens,
@@ -808,7 +808,7 @@ class SupportTriageRunner:
             )
         )
 
-        fallback_action = {
+        expected_action = {
             "action_type": _action_type(triage, customer),
             "reason": _action_reason(triage, customer, policy, customer_memory),
         }
@@ -822,15 +822,15 @@ class SupportTriageRunner:
                 "memory": customer_memory,
                 "agent_state": agent_state.to_dict(),
             },
-            fallback=fallback_action,
+            fallback=expected_action,
             allowed_keys={"action_type", "reason"},
         )
-        action_type = str(action_decision.get("action_type") or fallback_action["action_type"])
-        action_reason = str(action_decision.get("reason") or fallback_action["reason"])
-        action_safety = _action_safety(action_type, policy)
-        if action_safety:
-            action_type = fallback_action["action_type"]
-            action_reason = fallback_action["reason"]
+        action_type = str(action_decision.get("action_type") or expected_action["action_type"])
+        action_reason = str(action_decision.get("reason") or expected_action["reason"])
+        action_validation = _validate_action_decision(action_type, policy, expected_action["action_type"])
+        if action_validation:
+            action_type = expected_action["action_type"]
+            action_reason = expected_action["reason"]
         emit(
             _span(
                 trace_id=trace_id,
@@ -851,7 +851,7 @@ class SupportTriageRunner:
                     "agent_role": "action",
                     "model_provider": self.llm_client.provider_name,
                     **_agent_decision_span_data(action_llm),
-                    **action_safety,
+                    **action_validation,
                 },
                 input_tokens=action_llm.input_tokens,
                 output_tokens=action_llm.output_tokens,
@@ -988,6 +988,12 @@ class SupportTriageRunner:
             instructions=_customer_response_instructions(),
             input_text=_customer_response_input(message, customer, policy, action, validation, working_memory, customer_memory),
         )
+        response_text = _customer_response_safety(
+            llm_response.output_text,
+            policy=policy,
+            action=action,
+            working_memory=working_memory,
+        )
         emit(
             _span(
                 trace_id=trace_id,
@@ -998,7 +1004,7 @@ class SupportTriageRunner:
                 clock=clock,
                 duration_ms=650,
                 input={"message": message},
-                output={"response": llm_response.output_text},
+                output={"response": response_text},
                 span_data={
                     "model_provider": self.llm_client.provider_name,
                     **_model_call_span_data(llm_response.raw_response),
@@ -1082,11 +1088,11 @@ def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_co
 
 
 def _llm_timeout_seconds() -> float:
-    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "45")
+    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "180")
     try:
         return max(1.0, float(raw_value))
     except ValueError:
-        return 45.0
+        return 180.0
 
 
 def resolve_model_config(
@@ -1400,25 +1406,49 @@ def _has_account_mismatch(text: str) -> bool:
     return any(signal in text for signal in ("different email", "another email", "spouse", "not my account", "wrong account"))
 
 
-def _triage_safety(
+def _validation_correction(reason: str, **metadata: Any) -> dict[str, Any]:
+    return {
+        "decision_source": "policy_validation",
+        "validation_reason": reason,
+        **metadata,
+    }
+
+
+def _validate_triage_decision(
     message: str,
     triage: dict[str, Any],
     conversation_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    fallback = _triage(message, conversation_history)
-    if triage.get("issue_type") == fallback["issue_type"]:
+    expected = _triage(message, conversation_history)
+    known_issue_types = {
+        "account_access",
+        "annual_plan_refund",
+        "billing_duplicate_charge",
+        "consumed_product_return",
+        "general_support",
+        "stale_subscription_refund",
+    }
+    if triage.get("issue_type") not in known_issue_types:
+        return _validation_correction("unsupported_issue_type", rejected_issue_type=triage.get("issue_type"))
+    if triage.get("issue_type") == expected["issue_type"]:
+        if expected.get("quality_exception") and not triage.get("quality_exception"):
+            return _validation_correction(
+                "missing_quality_exception_signal",
+                rejected_issue_type=triage.get("issue_type"),
+            )
         return {}
-    if fallback["issue_type"] in {
+    if expected["issue_type"] in {
+        "account_access",
         "stale_subscription_refund",
         "billing_duplicate_charge",
         "annual_plan_refund",
         "consumed_product_return",
+        "general_support",
     }:
-        return {
-            "decision_source": "fallback",
-            "fallback_reason": "message_policy_signal_mismatch",
-            "rejected_issue_type": triage.get("issue_type"),
-        }
+        return _validation_correction(
+            "message_policy_signal_mismatch",
+            rejected_issue_type=triage.get("issue_type"),
+        )
     return {}
 
 
@@ -1434,14 +1464,10 @@ def _policy_topic(triage: dict[str, Any], customer: dict[str, Any]) -> str:
     return "general_support"
 
 
-def _policy_safety(policy_topic: str, fallback_policy_topic: str) -> dict[str, Any]:
-    if policy_topic == fallback_policy_topic:
+def _validate_policy_decision(policy_topic: str, expected_policy_topic: str) -> dict[str, Any]:
+    if policy_topic == expected_policy_topic:
         return {}
-    return {
-        "decision_source": "fallback",
-        "fallback_reason": "policy_topic_mismatch",
-        "rejected_policy_topic": policy_topic,
-    }
+    return _validation_correction("policy_topic_mismatch", rejected_policy_topic=policy_topic)
 
 
 def _action_type(triage: dict[str, Any], customer: dict[str, Any]) -> str:
@@ -1471,23 +1497,54 @@ def _action_reason(
     )
 
 
-def _action_safety(action_type: str, policy: dict[str, Any]) -> dict[str, Any]:
+def _validate_action_decision(action_type: str, policy: dict[str, Any], expected_action_type: str) -> dict[str, Any]:
     normalized_action = action_type.strip().lower()
     if normalized_action not in VALID_ACTIONS:
-        return {
-            "decision_source": "fallback",
-            "fallback_reason": "unsupported_action_type",
-            "rejected_action_type": action_type,
-        }
+        return _validation_correction("unsupported_action_type", rejected_action_type=action_type)
     allowed_actions = policy.get("allowed_actions")
-    if not isinstance(allowed_actions, list) or normalized_action in allowed_actions:
-        return {}
-    return {
-        "decision_source": "fallback",
-        "fallback_reason": "action_not_allowed_by_policy",
-        "rejected_action_type": action_type,
-        "policy_allowed_actions": allowed_actions,
-    }
+    if isinstance(allowed_actions, list) and normalized_action not in allowed_actions:
+        return _validation_correction(
+            "action_not_allowed_by_policy",
+            rejected_action_type=action_type,
+            policy_allowed_actions=allowed_actions,
+        )
+    policy_id = str(policy.get("policy_id") or "")
+    if (
+        expected_action_type == "clarification_request"
+        and policy_id == "policy_general_support"
+        and normalized_action != "clarification_request"
+    ):
+        return _validation_correction(
+            "clarification_required_by_policy_path",
+            rejected_action_type=action_type,
+            policy_id=policy_id,
+        )
+    if (
+        expected_action_type == "courtesy_credit"
+        and policy_id == "policy_consumed_product_return"
+        and normalized_action != "courtesy_credit"
+    ):
+        return _validation_correction(
+            "quality_exception_action_required",
+            rejected_action_type=action_type,
+            policy_id=policy_id,
+        )
+    if (
+        expected_action_type == "refund_review"
+        and policy_id
+        in {
+            "policy_refund_duplicate_charge",
+            "policy_annual_refund",
+            "policy_stale_subscription_refund",
+        }
+        and normalized_action != "refund_review"
+    ):
+        return _validation_correction(
+            "refund_review_required_by_policy_path",
+            rejected_action_type=action_type,
+            policy_id=policy_id,
+        )
+    return {}
 
 
 def _create_domain_action(
@@ -1655,6 +1712,16 @@ def _enforce_validation(
         corrections.append("abuse_review_enforced")
     enforced["risk_review_required"] = bool(isinstance(abuse_risk, dict) and abuse_risk.get("requires_human_review"))
 
+    if (
+        not policy.get("requires_approval")
+        and not enforced["risk_review_required"]
+        and action.get("action_type") == "clarification_request"
+        and enforced["approval_required"]
+    ):
+        enforced["approval_required"] = False
+        enforced["grounding_status"] = fallback["grounding_status"]
+        corrections.append("unnecessary_approval_removed")
+
     if action.get("status") != "created":
         enforced["grounding_status"] = "failed"
         corrections.append("action_not_created")
@@ -1795,6 +1862,9 @@ def _agent_decision_span_data(response: LLMResponse) -> dict[str, Any]:
     fallback_reason = raw_response.get("fallback_reason")
     if fallback_reason:
         span_data["fallback_reason"] = fallback_reason
+    validation_reason = raw_response.get("validation_reason")
+    if validation_reason:
+        span_data["validation_reason"] = validation_reason
     model_output_text = raw_response.get("model_output_text")
     if isinstance(model_output_text, str):
         span_data["model_output_text"] = model_output_text
@@ -1861,6 +1931,34 @@ def _customer_response_input(
         f"Support action: {action}\n"
         f"Validation: {validation}"
     )
+
+
+def _customer_response_safety(
+    response_text: str,
+    *,
+    policy: dict[str, Any],
+    action: dict[str, Any],
+    working_memory: dict[str, Any],
+) -> str:
+    if policy.get("policy_id") != "policy_consumed_product_return":
+        return response_text
+
+    normalized = response_text.lower()
+    agent_state = working_memory.get("agent_state") if isinstance(working_memory.get("agent_state"), dict) else {}
+    evidence_ids = agent_state.get("evidence_ids") if isinstance(agent_state, dict) else []
+    has_order_evidence = isinstance(evidence_ids, list) and any(str(item).startswith("ord_") for item in evidence_ids)
+
+    additions: list[str] = []
+    if action.get("action_type") == "courtesy_credit" and "courtesy credit" not in normalized:
+        additions.append("I can review this for a courtesy credit based on the quality issue and order evidence.")
+    elif action.get("action_type") == "clarification_request" and has_order_evidence and "normal return" not in normalized:
+        additions.append(
+            "Because the items were fully consumed, this is not eligible for a normal return, but I can review a quality or safety exception if you share what was wrong."
+        )
+
+    if not additions:
+        return response_text
+    return " ".join([response_text.rstrip(), *additions])
 
 
 def _static_customer_response(input_text: str, default_response: str) -> str:

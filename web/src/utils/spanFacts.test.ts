@@ -84,4 +84,23 @@ describe("buildSpanFacts", () => {
       { label: "Provider", value: "openai-compatible-chat-completions" },
     ]);
   });
+
+  it("summarizes policy validation corrections", () => {
+    expect(
+      buildSpanFacts({
+        duration_ms: 250,
+        input_tokens: null,
+        output_tokens: null,
+        estimated_cost: null,
+        span_data: {
+          decision_source: "policy_validation",
+          validation_reason: "refund_review_required_by_policy_path",
+        },
+      }),
+    ).toEqual([
+      { label: "Duration", value: "250ms" },
+      { label: "Decision", value: "policy validation" },
+      { label: "Validation", value: "refund review required by policy path" },
+    ]);
+  });
 });
