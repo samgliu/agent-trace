@@ -195,6 +195,11 @@ POST   /traces/{trace_id}/approvals/{span_id}/revert
 
 ## Development
 
+The API entry point is `agenttrace/api/main.py`. Domain routes live under
+`agenttrace/api/routes/`, while agent delegation, eval helpers, chat helpers,
+approval mutations, and SSE publishing live in focused `agenttrace/api/*.py`
+modules.
+
 Python:
 
 ```bash

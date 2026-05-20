@@ -206,7 +206,7 @@ class ApiEndpointsTest(unittest.TestCase):
 
     def test_llm_eval_provider_failure_returns_clean_error(self) -> None:
         with patch(
-            "agenttrace.api.main.run_support_triage_eval_suite",
+            "agenttrace.api.routes.evals.run_support_triage_eval_suite",
             side_effect=RuntimeError("LLM provider request failed with HTTP 500: upstream internal error"),
         ):
             response = self.client.post("/evals/support-triage/run?mode=llm")
@@ -216,7 +216,7 @@ class ApiEndpointsTest(unittest.TestCase):
 
     def test_llm_eval_missing_key_returns_configuration_error(self) -> None:
         with patch(
-            "agenttrace.api.main.run_support_triage_eval_suite",
+            "agenttrace.api.routes.evals.run_support_triage_eval_suite",
             side_effect=RuntimeError("LLM provider 'gemini' is not configured: missing API key."),
         ):
             response = self.client.post("/evals/support-triage/run?mode=llm")
@@ -238,8 +238,8 @@ class ApiEndpointsTest(unittest.TestCase):
                 checks=[EvalCheck("trace_status", "passed", "passed", True)],
             )
 
-        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", SUPPORT_TRIAGE_EVAL_CASES[:1]):
-            with patch("agenttrace.api.main.run_support_triage_eval_case", side_effect=fake_run_case):
+        with patch("agenttrace.api.routes.evals.SUPPORT_TRIAGE_EVAL_CASES", SUPPORT_TRIAGE_EVAL_CASES[:1]):
+            with patch("agenttrace.api.eval_runs.run_support_triage_eval_case", side_effect=fake_run_case):
                 response = self.client.post("/evals/support-triage/run/async?mode=llm")
                 self.assertEqual(response.status_code, 200)
                 run = response.json()
@@ -262,9 +262,9 @@ class ApiEndpointsTest(unittest.TestCase):
     def test_async_llm_eval_run_marks_provider_quota_failure_degraded(self) -> None:
         from agenttrace.evals.support_triage import SUPPORT_TRIAGE_EVAL_CASES
 
-        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", SUPPORT_TRIAGE_EVAL_CASES[:1]):
+        with patch("agenttrace.api.routes.evals.SUPPORT_TRIAGE_EVAL_CASES", SUPPORT_TRIAGE_EVAL_CASES[:1]):
             with patch(
-                "agenttrace.api.main.run_support_triage_eval_case",
+                "agenttrace.api.eval_runs.run_support_triage_eval_case",
                 side_effect=RuntimeError("LLM provider request failed with HTTP 429: quota exceeded"),
             ):
                 response = self.client.post("/evals/support-triage/run/async?mode=llm")
@@ -303,8 +303,8 @@ class ApiEndpointsTest(unittest.TestCase):
                 checks=[EvalCheck("trace_status", "passed", "passed", True)],
             )
 
-        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", cases):
-            with patch("agenttrace.api.main.run_support_triage_eval_case", side_effect=fake_run_case):
+        with patch("agenttrace.api.routes.evals.SUPPORT_TRIAGE_EVAL_CASES", cases):
+            with patch("agenttrace.api.eval_runs.run_support_triage_eval_case", side_effect=fake_run_case):
                 response = self.client.post("/evals/support-triage/run/async?mode=llm")
                 self.assertEqual(response.status_code, 200)
                 run_id = response.json()["run_id"]
@@ -398,8 +398,8 @@ class ApiEndpointsTest(unittest.TestCase):
                 checks=[EvalCheck("trace_status", "passed", "passed", True)],
             )
 
-        with patch("agenttrace.api.main.SUPPORT_TRIAGE_EVAL_CASES", cases):
-            with patch("agenttrace.api.main.run_support_triage_eval_case", side_effect=fake_run_case):
+        with patch("agenttrace.api.routes.evals.SUPPORT_TRIAGE_EVAL_CASES", cases):
+            with patch("agenttrace.api.eval_runs.run_support_triage_eval_case", side_effect=fake_run_case):
                 response = self.client.post("/eval-runs/eval_retry_provider_error/resume")
                 self.assertEqual(response.status_code, 200)
                 running = response.json()
@@ -569,7 +569,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["status_counts"]["passed"], 3)
 
     def test_event_bus_streams_published_sse_events(self) -> None:
-        from agenttrace.api.main import EventBus
+        from agenttrace.api.event_bus import EventBus
 
         bus = EventBus()
         stream = bus.stream()
@@ -669,7 +669,7 @@ class ApiEndpointsTest(unittest.TestCase):
             }
 
         with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
-            with patch("agenttrace.api.main._post_agent_service_json", side_effect=post_agent_service_json):
+            with patch("agenttrace.api.agent_service._post_agent_service_json", side_effect=post_agent_service_json):
                 response = self.client.post(
                     "/workflows/support-triage/runs",
                     json={
@@ -700,7 +700,7 @@ class ApiEndpointsTest(unittest.TestCase):
 
     def test_run_support_triage_workflow_returns_clean_agent_service_timeout(self) -> None:
         with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
-            with patch("agenttrace.api.main.urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+            with patch("agenttrace.api.agent_service.urllib.request.urlopen", side_effect=TimeoutError("timed out")):
                 response = self.client.post(
                     "/workflows/support-triage/runs",
                     json={
@@ -714,7 +714,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Agent service timed out while running the workflow.")
 
     def test_agent_service_timeout_defaults_to_real_llm_budget(self) -> None:
-        from agenttrace.api.main import _agent_service_timeout_seconds
+        from agenttrace.api.agent_service import _agent_service_timeout_seconds
 
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(_agent_service_timeout_seconds(), 300.0)
@@ -959,7 +959,7 @@ class ApiEndpointsTest(unittest.TestCase):
         )
         session = session_response.json()
 
-        with patch("agenttrace.api.main.build_default_runner", return_value=FailingRunner()):
+        with patch("agenttrace.api.agent_service.build_default_runner", return_value=FailingRunner()):
             response = self.client.post(
                 f"/chat/sessions/{session['session_id']}/messages",
                 json={"content": "Use configured LLM", "use_openai": True},
@@ -989,7 +989,7 @@ class ApiEndpointsTest(unittest.TestCase):
         )
         session = session_response.json()
 
-        with patch("agenttrace.api.main.build_default_runner", return_value=CapturingRunner()):
+        with patch("agenttrace.api.agent_service.build_default_runner", return_value=CapturingRunner()):
             self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "First message"})
             self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "Follow-up message"})
 
@@ -1019,7 +1019,7 @@ class ApiEndpointsTest(unittest.TestCase):
         session = session_response.json()
 
         with patch.dict("os.environ", {"AGENTTRACE_AGENT_SERVICE_URL": "http://agent-service.test"}):
-            with patch("agenttrace.api.main._post_agent_service_json", side_effect=post_agent_service_json):
+            with patch("agenttrace.api.agent_service._post_agent_service_json", side_effect=post_agent_service_json):
                 self.client.post(f"/chat/sessions/{session['session_id']}/messages", json={"content": "First"})
                 response = self.client.post(
                     f"/chat/sessions/{session['session_id']}/messages",
@@ -1039,7 +1039,7 @@ class ApiEndpointsTest(unittest.TestCase):
         )
         session = session_response.json()
 
-        with patch("agenttrace.api.main._start_async_chat_turn") as start_async_chat_turn:
+        with patch("agenttrace.api.main.start_async_chat_turn") as start_async_chat_turn:
             response = self.client.post(
                 f"/chat/sessions/{session['session_id']}/messages/async",
                 json={"content": "I was charged twice."},
@@ -1058,7 +1058,8 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertTrue(messages[1]["metadata"]["pending"])
 
     def test_complete_async_chat_turn_updates_assistant_message_and_trace(self) -> None:
-        from agenttrace.api.main import EventBus, _complete_async_chat_turn
+        from agenttrace.api.chat_sessions import _complete_async_chat_turn
+        from agenttrace.api.event_bus import EventBus
         from agenttrace.api.schemas import ChatMessageCreateRequest
 
         class PassingRunner:
@@ -1087,7 +1088,7 @@ class ApiEndpointsTest(unittest.TestCase):
             events.append(event)
             return event
 
-        with patch("agenttrace.api.main.build_default_runner", return_value=PassingRunner()):
+        with patch("agenttrace.api.agent_service.build_default_runner", return_value=PassingRunner()):
             with patch.object(event_bus, "publish", side_effect=capture_event):
                 _complete_async_chat_turn(
                     trace_store=self.store,
@@ -1110,7 +1111,8 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertNotIn("chat.message.updated", event_types)
 
     def test_complete_async_chat_turn_marks_provider_error_failed(self) -> None:
-        from agenttrace.api.main import EventBus, _complete_async_chat_turn
+        from agenttrace.api.chat_sessions import _complete_async_chat_turn
+        from agenttrace.api.event_bus import EventBus
         from agenttrace.api.schemas import ChatMessageCreateRequest
 
         class FailingRunner:
@@ -1126,7 +1128,7 @@ class ApiEndpointsTest(unittest.TestCase):
             metadata={"status": "pending", "pending": True},
         )
 
-        with patch("agenttrace.api.main.build_default_runner", return_value=FailingRunner()):
+        with patch("agenttrace.api.agent_service.build_default_runner", return_value=FailingRunner()):
             _complete_async_chat_turn(
                 trace_store=self.store,
                 event_bus=EventBus(),
