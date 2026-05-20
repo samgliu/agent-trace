@@ -85,6 +85,21 @@ export type EvalCategorySummary = {
   total: number;
 };
 
+export type EvalTrendPoint = {
+  runId: string;
+  label: string;
+  mode: EvalExecutionMode;
+  status: EvalRunSummary["status"];
+  passRate: number;
+  passed: number;
+  failed: number;
+  total: number;
+  model: string;
+  createdAt: string;
+};
+
+export type EvalTrendSeries = Record<EvalExecutionMode, EvalTrendPoint[]>;
+
 export type EvalProgress = {
   completed: number;
   total: number;
@@ -140,7 +155,7 @@ export function evalModeLabel(mode: EvalExecutionMode): string {
 }
 
 export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunListResponse> {
-  return transport("/eval-runs?limit=5");
+  return transport("/eval-runs?limit=12");
 }
 
 export function getSupportTriageEvalComparison(transport: EvalSuiteGetTransport): Promise<EvalComparison> {
@@ -153,6 +168,29 @@ export function getEvalRun(transport: EvalSuiteGetTransport, runId: string): Pro
 
 export function evalPassRateLabel(passRate: number): string {
   return `${Math.round(passRate * 100)}%`;
+}
+
+export function buildEvalTrendPoints(history: EvalRunSummary[]): EvalTrendPoint[] {
+  return [...history].reverse().map((run, index) => ({
+    runId: run.run_id,
+    label: `Run ${index + 1}`,
+    mode: run.execution_mode,
+    status: run.status,
+    passRate: Math.round(run.pass_rate * 100),
+    passed: run.passed,
+    failed: run.failed,
+    total: run.total,
+    model: `${run.model_provider}/${run.model_name}`,
+    createdAt: run.created_at,
+  }));
+}
+
+export function buildEvalTrendSeries(history: EvalRunSummary[]): EvalTrendSeries {
+  const points = buildEvalTrendPoints(history);
+  return {
+    deterministic: points.filter((point) => point.mode === "deterministic"),
+    llm: points.filter((point) => point.mode === "llm"),
+  };
 }
 
 export function failedEvalCases(run: EvalSuiteRun | null): EvalCaseResult[] {
