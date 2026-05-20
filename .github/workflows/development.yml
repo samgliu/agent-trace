@@ -38,6 +38,9 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: corepack pnpm install --frozen-lockfile
+      - name: Lint frontend
+        working-directory: web
+        run: corepack pnpm lint
       - name: Run frontend tests
         working-directory: web
         run: corepack pnpm test

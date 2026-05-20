@@ -195,6 +195,16 @@ POST   /traces/{trace_id}/approvals/{span_id}/revert
 
 ## Development
 
+The API entry point is `agenttrace/api/main.py`. Domain routes live under
+`agenttrace/api/routes/`, while agent delegation, eval helpers, chat helpers,
+approval mutations, and SSE publishing live in focused `agenttrace/api/*.py`
+modules.
+
+The customer-service agent entry point remains
+`agent_apps/customer_service/runner.py`. Model gateway, MCP/local tools,
+policy logic, prompt metadata, response generation, and trace/span construction
+are split into focused modules in the same package.
+
 Python:
 
 ```bash
@@ -210,6 +220,7 @@ Frontend:
 ```bash
 cd web
 corepack pnpm install
+corepack pnpm lint
 corepack pnpm test
 corepack pnpm build
 corepack pnpm dev
