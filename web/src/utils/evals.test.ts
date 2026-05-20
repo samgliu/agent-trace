@@ -115,7 +115,7 @@ describe("eval helpers", () => {
     };
 
     const result = await listEvalRuns(async <T>(path: string): Promise<T> => {
-      expect(path).toBe("/eval-runs?limit=5");
+      expect(path).toBe("/eval-runs?limit=12");
       return response as T;
     });
 

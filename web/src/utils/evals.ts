@@ -155,7 +155,7 @@ export function evalModeLabel(mode: EvalExecutionMode): string {
 }
 
 export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunListResponse> {
-  return transport("/eval-runs?limit=5");
+  return transport("/eval-runs?limit=12");
 }
 
 export function getSupportTriageEvalComparison(transport: EvalSuiteGetTransport): Promise<EvalComparison> {
