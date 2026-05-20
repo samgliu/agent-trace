@@ -150,3 +150,16 @@ export type LoadState =
     };
 
 export type EvalRunStatus = { status: "idle" } | { status: "running" } | { status: "error"; message: string };
+
+export type ChatStatus = { status: "idle" } | { status: "submitting" } | { status: "error"; message: string };
+
+export type ChatInput = {
+  customerEmail: string;
+  message: string;
+  llmProvider: LLMProvider;
+};
+
+export type LiveWorkflowInput = ChatInput;
+
+export type ApprovalAction = "approve" | "reject" | "revert";
+import type { LLMProvider } from "./utils/chat";
