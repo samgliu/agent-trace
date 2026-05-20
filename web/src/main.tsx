@@ -19,6 +19,16 @@ import {
   UserCheck,
   Wrench
 } from "lucide-react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  type MouseHandlerDataParam,
+} from "recharts";
 import "./styles.css";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { buildAgentFlow, type AgentFlowStep } from "./utils/agentFlow";
@@ -39,6 +49,7 @@ import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrac
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
   buildEvalImprovementPlan,
+  buildEvalTrendSeries,
   evalCategorySummaries,
   evalCheckCategory,
   evalComparisonStatusLabel,
@@ -62,6 +73,7 @@ import {
   type EvalExecutionMode,
   type EvalRunSummary,
   type EvalSuiteRun,
+  type EvalTrendPoint,
 } from "./utils/evals";
 import { formatCost, formatDuration, formatTokens } from "./utils/format";
 import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
@@ -1314,6 +1326,7 @@ function EvalDashboardPanel({
           </span>
         ))}
       </div>
+      <EvalTrendChart history={history} selectedRunId={run?.run_id ?? null} onSelectEvalRun={onSelectEvalRun} />
       <div
         className={
           comparison?.status === "degraded_llm" || evalRunHasProviderIssue(comparison?.llm_run ?? null)
@@ -1421,6 +1434,135 @@ function EvalDashboardPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function EvalTrendChart({
+  history,
+  selectedRunId,
+  onSelectEvalRun,
+}: {
+  history: EvalRunSummary[];
+  selectedRunId: string | null;
+  onSelectEvalRun: (runId: string) => Promise<void>;
+}) {
+  const series = buildEvalTrendSeries(history);
+  const totalRuns = series.deterministic.length + series.llm.length;
+  if (totalRuns === 0) {
+    return null;
+  }
+
+  return (
+    <div className="evalTrendPanel">
+      <div className="evalTrendHeader">
+        <div>
+          <small>Eval trend</small>
+          <strong>Recent pass rate by mode</strong>
+        </div>
+        <span>{totalRuns} runs</span>
+      </div>
+      <div className="evalTrendSeriesGrid">
+        <EvalTrendSeriesChart
+          mode="deterministic"
+          points={series.deterministic}
+          selectedRunId={selectedRunId}
+          onSelectEvalRun={onSelectEvalRun}
+        />
+        <EvalTrendSeriesChart mode="llm" points={series.llm} selectedRunId={selectedRunId} onSelectEvalRun={onSelectEvalRun} />
+      </div>
+      <div className="evalTrendMeta">
+        {[...series.deterministic, ...series.llm]
+          .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+          .slice(-4)
+          .map((point) => (
+            <button
+              aria-current={selectedRunId === point.runId ? "true" : undefined}
+              key={point.runId}
+              onClick={() => void onSelectEvalRun(point.runId)}
+              type="button"
+            >
+              <span>{formatShortTimestamp(point.createdAt)}</span>
+              <strong>{point.passRate}%</strong>
+              <em>{evalModeLabel(point.mode)}</em>
+            </button>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function EvalTrendSeriesChart({
+  mode,
+  points,
+  selectedRunId,
+  onSelectEvalRun,
+}: {
+  mode: EvalExecutionMode;
+  points: EvalTrendPoint[];
+  selectedRunId: string | null;
+  onSelectEvalRun: (runId: string) => Promise<void>;
+}) {
+  function handleChartClick(event: MouseHandlerDataParam) {
+    const point = points.find((item) => item.label === event.activeLabel);
+    if (point) {
+      void onSelectEvalRun(point.runId);
+    }
+  }
+
+  const latest = points.at(-1);
+  return (
+    <div className={mode === "llm" ? "evalTrendSeries llm" : "evalTrendSeries"}>
+      <div className="evalTrendSeriesHeader">
+        <strong>{evalModeLabel(mode)}</strong>
+        <span>{latest ? `${latest.passRate}% latest` : "No runs"}</span>
+      </div>
+      {points.length > 0 ? (
+        <div className="evalTrendChart" role="img" aria-label={`${evalModeLabel(mode)} eval pass-rate trend`}>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={points} margin={{ top: 12, right: 10, bottom: 0, left: -20 }} onClick={handleChartClick}>
+              <CartesianGrid stroke="#edf1f3" vertical={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: "#637179", fontSize: 11 }} />
+              <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tick={{ fill: "#637179", fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
+              <Tooltip content={<EvalTrendTooltip />} cursor={{ stroke: "#9bb7af", strokeWidth: 1 }} />
+              <Line
+                type="monotone"
+                dataKey="passRate"
+                stroke={mode === "llm" ? "#6f4ab8" : "#246b5b"}
+                strokeWidth={2}
+                dot={{ r: 4, strokeWidth: 2, fill: "#ffffff" }}
+                activeDot={{
+                  r: 6,
+                  strokeWidth: 2,
+                  fill: selectedRunId === latest?.runId ? "#172026" : mode === "llm" ? "#6f4ab8" : "#246b5b",
+                  cursor: "pointer",
+                }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="evalTrendEmpty">Run {evalModeLabel(mode).toLowerCase()} evals to start this trend.</p>
+      )}
+    </div>
+  );
+}
+
+function EvalTrendTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: EvalTrendPoint }> }) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) {
+    return null;
+  }
+  return (
+    <div className="evalTrendTooltip">
+      <small>{formatShortTimestamp(point.createdAt)}</small>
+      <strong>{point.passRate}% pass rate</strong>
+      <span>
+        {point.passed}/{point.total} passed, {point.failed} failed
+      </span>
+      <em>
+        {evalModeLabel(point.mode)} · {point.model}
+      </em>
+    </div>
   );
 }
 

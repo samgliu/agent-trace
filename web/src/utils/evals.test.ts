@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildEvalTrendPoints,
+  buildEvalTrendSeries,
   evalCategorySummaries,
   evalCheckCategory,
   buildEvalImprovementPlan,
@@ -107,17 +109,89 @@ describe("eval helpers", () => {
           created_at: sampleRun.created_at,
         },
       ],
-      limit: 5,
+      limit: 12,
       offset: 0,
       total: 1,
     };
 
     const result = await listEvalRuns(async <T>(path: string): Promise<T> => {
-      expect(path).toBe("/eval-runs?limit=5");
+      expect(path).toBe("/eval-runs?limit=12");
       return response as T;
     });
 
     expect(result.items[0].run_id).toBe("eval_1");
+  });
+
+  it("builds chronological eval trend points from recent history", () => {
+    const points = buildEvalTrendPoints([
+      {
+        ...sampleRun,
+        run_id: "newest",
+        execution_mode: "llm",
+        model_provider: "gemini",
+        model_name: "gemini-test",
+        pass_rate: 0.94,
+        passed: 12,
+        failed: 1,
+        total: 13,
+        created_at: "2026-05-10T00:00:00Z",
+      },
+      {
+        ...sampleRun,
+        run_id: "oldest",
+        pass_rate: 0.75,
+        passed: 9,
+        failed: 3,
+        total: 12,
+        created_at: "2026-05-09T00:00:00Z",
+      },
+    ]);
+
+    expect(points).toEqual([
+      {
+        runId: "oldest",
+        label: "Run 1",
+        mode: "deterministic",
+        status: "failed",
+        passRate: 75,
+        passed: 9,
+        failed: 3,
+        total: 12,
+        model: "static/deterministic",
+        createdAt: "2026-05-09T00:00:00Z",
+      },
+      {
+        runId: "newest",
+        label: "Run 2",
+        mode: "llm",
+        status: "failed",
+        passRate: 94,
+        passed: 12,
+        failed: 1,
+        total: 13,
+        model: "gemini/gemini-test",
+        createdAt: "2026-05-10T00:00:00Z",
+      },
+    ]);
+  });
+
+  it("separates deterministic and LLM-backed eval trend series", () => {
+    const series = buildEvalTrendSeries([
+      {
+        ...sampleRun,
+        run_id: "llm_run",
+        execution_mode: "llm",
+        model_provider: "gemini",
+        model_name: "gemini-test",
+      },
+      {
+        ...sampleRun,
+        run_id: "deterministic_run",
+      },
+    ]);
+
+    expect(series.deterministic.map((point) => point.runId)).toEqual(["deterministic_run"]);
+    expect(series.llm.map((point) => point.runId)).toEqual(["llm_run"]);
   });
 
   it("gets support triage eval comparison", async () => {
