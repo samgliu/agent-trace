@@ -210,6 +210,7 @@ Frontend:
 ```bash
 cd web
 corepack pnpm install
+corepack pnpm lint
 corepack pnpm test
 corepack pnpm build
 corepack pnpm dev

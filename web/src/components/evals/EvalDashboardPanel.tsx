@@ -221,6 +221,7 @@ export function EvalDashboardPanel({
           <small>Recent eval runs</small>
           {history.map((item) => (
             <button
+              aria-label={`Open recent eval run ${formatShortTimestamp(item.created_at)} ${evalPassRateLabel(item.pass_rate)} ${evalModeLabel(item.execution_mode)}`}
               aria-current={run?.run_id === item.run_id ? "true" : undefined}
               className={item.failed === 0 ? "passed" : "failed"}
               key={item.run_id}
@@ -277,6 +278,7 @@ function EvalTrendChart({
           .slice(-4)
           .map((point) => (
             <button
+              aria-label={`Open eval trend run ${formatShortTimestamp(point.createdAt)} ${point.passRate}%`}
               aria-current={selectedRunId === point.runId ? "true" : undefined}
               key={point.runId}
               onClick={() => void onSelectEvalRun(point.runId)}

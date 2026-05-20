@@ -9,7 +9,6 @@ import { AnalysisPanel } from "./components/trace/TraceAnalysisPanel";
 import { ExecutiveSummaryPanel, MetricGrid, TraceHeader } from "./components/trace/TraceSummaryPanels";
 import { AgentFlowPanel, TraceTimeline } from "./components/trace/TraceTimelinePanel";
 import type { ApprovalAction } from "./types";
-import { getApprovalStatus } from "./utils/approval";
 import { postJson } from "./utils/apiClient";
 import type { ServerEvent } from "./utils/appState";
 import { useChatMonitor } from "./hooks/useChatMonitor";
