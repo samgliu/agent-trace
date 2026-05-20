@@ -59,7 +59,7 @@ test("eval dashboard shows running progress, fallback model, and failed check de
     ],
   };
 
-  await page.route("**/eval-runs?limit=5", async (route) => {
+  await page.route("**/eval-runs?limit=12", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -150,7 +150,7 @@ test("recent eval runs can be opened from history", async ({ page }) => {
     ],
   };
 
-  await page.route("**/eval-runs?limit=5", async (route) => {
+  await page.route("**/eval-runs?limit=12", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -180,7 +180,8 @@ test("recent eval runs can be opened from history", async ({ page }) => {
   await page.goto("/");
 
   const evalPanel = page.locator(".evalDashboard").filter({ hasText: "Support agent quality" }).first();
-  await evalPanel.getByRole("button", { name: /LLM-backed/ }).click();
+  const historyRun = evalPanel.locator(".evalHistory").getByRole("button", { name: /Open recent eval run/ }).first();
+  await historyRun.click();
 
   await expect(evalPanel.getByText("Provider degraded").first()).toBeVisible();
   await expect(evalPanel.getByText("not scored")).toBeVisible();
@@ -189,5 +190,5 @@ test("recent eval runs can be opened from history", async ({ page }) => {
   await expect(evalPanel.getByText("Expected: true")).toBeVisible();
   await expect(evalPanel.getByText("Actual: false")).toBeVisible();
   await expect(evalPanel.getByText("approval policy and validator guardrails")).toBeVisible();
-  await expect(evalPanel.getByRole("button", { name: /LLM-backed/ })).toHaveAttribute("aria-current", "true");
+  await expect(historyRun).toHaveAttribute("aria-current", "true");
 });
