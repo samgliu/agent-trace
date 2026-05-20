@@ -18,3 +18,18 @@ export function formatCost(value: number | null | undefined): string {
 export function formatTokens(input: number, output: number): string {
   return `${input}/${output}`;
 }
+
+export function formatRelevance(value: number | null): string {
+  return value === null ? "-" : value.toFixed(2);
+}
+
+export function formatShortTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

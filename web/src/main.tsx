@@ -6,10 +6,8 @@ import {
   ArrowRight,
   Bot,
   Braces,
-  CheckCircle2,
   CircleDollarSign,
   Clock3,
-  FlaskConical,
   GitBranch,
   MessageSquare,
   Network,
@@ -19,17 +17,24 @@ import {
   UserCheck,
   Wrench
 } from "lucide-react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  type MouseHandlerDataParam,
-} from "recharts";
 import "./styles.css";
+import { DashboardSummaryPanel } from "./components/dashboard/DashboardSummaryPanel";
+import { EvalDashboardPanel } from "./components/evals/EvalDashboardPanel";
+import { SummaryFact } from "./components/common/SummaryFact";
+import { EmptyRunsState, RunsSidebar } from "./components/runs/RunsSidebar";
+import type {
+  DashboardSummary,
+  EvalRunStatus,
+  GroundingClaim,
+  GroundingSummary,
+  LoadState,
+  Metrics,
+  Span,
+  TraceDetail,
+  TraceFilters,
+  TraceListResponse,
+  TraceSummary,
+} from "./types";
 import { getApprovalStatus, type ApprovalStatus } from "./utils/approval";
 import { buildAgentFlow, type AgentFlowStep } from "./utils/agentFlow";
 import {
@@ -45,24 +50,9 @@ import {
   type LLMProvider,
 } from "./utils/chat";
 import { buildChatMessageChips } from "./utils/chatMessageChips";
-import { chatTurnBadges, isChatTrace, isLatestChatTrace } from "./utils/chatTrace";
 import { extractUnsupportedClaims } from "./utils/claims";
 import {
-  buildEvalImprovementPlan,
-  buildEvalTrendSeries,
-  evalCategorySummaries,
-  evalCheckCategory,
-  evalComparisonStatusLabel,
   evalModeLabel,
-  evalModelSummary,
-  evalPassRateLabel,
-  evalProgress,
-  evalRunHasProviderIssue,
-  evalRunIsActive,
-  evalStatusLabel,
-  failedEvalCases,
-  failedEvalChecks,
-  formatEvalValue,
   getEvalRun,
   getSupportTriageEvalComparison,
   listEvalRuns,
@@ -73,14 +63,15 @@ import {
   type EvalExecutionMode,
   type EvalRunSummary,
   type EvalSuiteRun,
-  type EvalTrendPoint,
 } from "./utils/evals";
-import { formatCost, formatDuration, formatTokens } from "./utils/format";
+import { formatCost, formatDuration, formatShortTimestamp, formatTokens } from "./utils/format";
 import { buildMemorySummary, type MemorySummary } from "./utils/memoryAnalysis";
-import { clampedOffset, hasNextPage, nextOffset, pageRange, previousOffset, TRACE_PAGE_SIZE } from "./utils/pagination";
+import { clampedOffset, TRACE_PAGE_SIZE } from "./utils/pagination";
 import { buildSpanFacts } from "./utils/spanFacts";
 import { sourceKindLabel, sourceLabel, stringMetadata } from "./utils/source";
+import { executionStatus } from "./utils/status";
 import { buildExecutiveSummary, countApprovals } from "./utils/summary";
+import { emptyFilters, filterQuery } from "./utils/traceFilters";
 import {
   cancelWorkflowRun,
   getWorkflowRun,
@@ -91,159 +82,6 @@ import {
 } from "./utils/workflowRuns";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
-
-type TraceSummary = {
-  trace_id: string;
-  workflow_name: string;
-  group_id: string | null;
-  status: string;
-  source_format: string;
-  source_kind: string;
-  ingested_at: string | null;
-  started_at: string | null;
-  ended_at: string | null;
-  duration_ms: number | null;
-  span_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  estimated_cost: number;
-  error_count: number;
-  approval_total_count: number;
-  approval_pending_count: number;
-  approval_approved_count: number;
-  approval_rejected_count: number;
-  grounding_status: string;
-  unsupported_claim_count: number;
-  metadata?: Record<string, unknown>;
-};
-
-type TraceListResponse = {
-  items: TraceSummary[];
-  limit: number;
-  offset: number;
-  total: number;
-};
-
-type Span = {
-  span_id: string;
-  parent_id: string | null;
-  name: string;
-  span_type: string;
-  duration_ms: number | null;
-  input: unknown;
-  output: unknown;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  estimated_cost: number | null;
-  span_data: Record<string, unknown>;
-  error: unknown;
-};
-
-type TraceDetail = TraceSummary & {
-  metadata: Record<string, unknown>;
-  spans: Span[];
-};
-
-type Metrics = {
-  span_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  estimated_cost: number;
-  error_count: number;
-  errored_span_count: number;
-  spans_with_errors: SpanSummary[];
-  spans_by_type: Record<string, number>;
-  slowest_span: SpanSummary | null;
-  most_expensive_span: SpanSummary | null;
-};
-
-type GroundingSummary = {
-  status: string;
-  final_grounded: boolean | null;
-  recovered: boolean;
-  unsupported_claim_count: number;
-  supported_claim_count: number;
-  validation_span_count: number;
-  unsupported_claims: GroundingClaim[];
-  supported_claims: GroundingClaim[];
-};
-
-type GroundingClaim = {
-  claim: string;
-  reason?: string;
-  evidence?: string;
-  span_id: string;
-  span_name: string;
-};
-
-type SpanSummary = {
-  name: string;
-  span_type: string;
-  duration_ms: number | null;
-  estimated_cost: number | null;
-};
-
-type DashboardSummary = {
-  total_runs: number;
-  status_counts: Record<string, number>;
-  workflow_counts: Record<string, number>;
-  grounding_counts: Record<string, number>;
-  source_format_counts: Record<string, number>;
-  source_kind_counts: Record<string, number>;
-  approval_pending_count: number;
-  approval_rejected_count: number;
-  unsupported_claim_count: number;
-  error_count: number;
-  average_duration_ms: number | null;
-  p95_duration_ms: number | null;
-  estimated_cost: number;
-  input_tokens: number;
-  output_tokens: number;
-  memory_read_count: number;
-  memory_write_count: number;
-  memory_retrieved_count: number;
-  memory_ignored_count: number;
-  memory_stale_count: number;
-  memory_warning_count: number;
-  memory_average_relevance: number | null;
-};
-
-type TraceFilters = {
-  status: string;
-  workflowName: string;
-  sourceFormat: string;
-  sourceKind: string;
-  errorStatus: string;
-  approvalStatus: string;
-  groundingStatus: string;
-  timeRange: string;
-  currentChatOnly: boolean;
-  offset: number;
-};
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | {
-      status: "empty";
-      traces: TraceSummary[];
-      traceTotal: number;
-      dashboard: DashboardSummary;
-      workflows: string[];
-    }
-  | {
-      status: "ready";
-      traces: TraceSummary[];
-      traceTotal: number;
-      dashboard: DashboardSummary;
-      workflows: string[];
-      selectedTrace: TraceDetail;
-      rawTrace: unknown;
-      metrics: Metrics;
-      grounding: GroundingSummary;
-    };
-
-type EvalRunStatus = { status: "idle" } | { status: "running" } | { status: "error"; message: string };
 
 function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -827,76 +665,6 @@ function App() {
   );
 }
 
-function RunsSidebar({
-  traces,
-  traceTotal,
-  selectedTraceId,
-  filters,
-  workflows,
-  activeChatSessionId,
-  latestChatTraceId,
-  onFiltersChange,
-  onSelectTrace,
-  onClearSelection,
-  onPageChange,
-}: {
-  traces: TraceSummary[];
-  traceTotal: number;
-  selectedTraceId: string | null;
-  filters: TraceFilters;
-  workflows: string[];
-  activeChatSessionId: string | null;
-  latestChatTraceId: string | null;
-  onFiltersChange: (filters: TraceFilters) => void;
-  onSelectTrace: (traceId: string) => void;
-  onClearSelection: () => void;
-  onPageChange: (offset: number) => void;
-}) {
-  const hasPrevious = filters.offset > 0;
-  const nextPageOffset = nextOffset(filters.offset, TRACE_PAGE_SIZE);
-  const hasNext = hasNextPage(filters.offset, traceTotal, TRACE_PAGE_SIZE);
-
-  return (
-    <aside className="sidebar" aria-label="Runs inbox">
-      <div className="sidebarHeader">Runs Inbox</div>
-      <TraceFiltersPanel
-        filters={filters}
-        workflows={workflows}
-        activeChatSessionId={activeChatSessionId}
-        onChange={onFiltersChange}
-      />
-      <div className="runsCount">{traceTotal} matching runs</div>
-      <div className="traceList">
-        {traces.map((trace) => (
-          <button
-            className={trace.trace_id === selectedTraceId ? "traceButton active" : "traceButton"}
-            key={trace.trace_id}
-            onClick={() => onSelectTrace(trace.trace_id)}
-            onDoubleClick={onClearSelection}
-          >
-            <span>{trace.workflow_name}</span>
-            <small>{trace.trace_id}</small>
-            <TraceBadges
-              trace={trace}
-              isChatTurn={isChatTrace(trace, activeChatSessionId)}
-              isLatestChatTrace={isLatestChatTrace(trace.trace_id, latestChatTraceId)}
-            />
-          </button>
-        ))}
-      </div>
-      <div className="paginationControls">
-        <button disabled={!hasPrevious} onClick={() => onPageChange(previousOffset(filters.offset, TRACE_PAGE_SIZE))}>
-          Previous
-        </button>
-        <span>{pageRange(filters.offset, traces.length, traceTotal)}</span>
-        <button disabled={!hasNext} onClick={() => onPageChange(nextPageOffset)}>
-          Next
-        </button>
-      </div>
-    </aside>
-  );
-}
-
 function Shell({ children, status, error }: { children?: React.ReactNode; status: string; error?: string }) {
   return (
     <div className="app">
@@ -1189,604 +957,6 @@ function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; execution
   );
 }
 
-function EmptyRunsState({ onClearFilters }: { onClearFilters: () => void }) {
-  return (
-    <section className="emptyState">
-      <AlertCircle size={22} />
-      <div>
-        <h2>No matching runs</h2>
-        <p>Adjust the filters or clear them to return to the full runs inbox.</p>
-      </div>
-      <button type="button" onClick={onClearFilters}>
-        Clear filters
-      </button>
-    </section>
-  );
-}
-
-function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }) {
-  return (
-    <section className="dashboardSummary">
-      <div className="dashboardSummaryHeader">
-        <div>
-          <small>Operations dashboard</small>
-          <h2>Fleet health</h2>
-        </div>
-        <span>{summary.total_runs} total runs</span>
-      </div>
-      <div className="fleetSummary">
-        <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
-        <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
-        <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
-        <SummaryFact icon={<AlertCircle size={16} />} label="Errors" value={String(summary.error_count)} />
-        <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />
-        <SummaryFact icon={<Clock3 size={16} />} label="P95 duration" value={formatDuration(summary.p95_duration_ms)} />
-        <SummaryFact icon={<CircleDollarSign size={16} />} label="Total cost" value={formatCost(summary.estimated_cost)} />
-      </div>
-      <div className="memoryFleetSummary">
-        <SummaryFact
-          icon={<Braces size={16} />}
-          label="Memory events"
-          value={`${summary.memory_read_count} reads · ${summary.memory_write_count} writes`}
-        />
-        <SummaryFact icon={<AlertCircle size={16} />} label="Memory warnings" value={String(summary.memory_warning_count)} />
-        <SummaryFact icon={<Braces size={16} />} label="Ignored memory" value={String(summary.memory_ignored_count)} />
-        <SummaryFact icon={<Clock3 size={16} />} label="Stale memory" value={String(summary.memory_stale_count)} />
-        <SummaryFact icon={<ShieldCheck size={16} />} label="Avg relevance" value={formatRelevance(summary.memory_average_relevance)} />
-      </div>
-      <div className="sourceSummary">
-        <SourceBreakdown title="Source mix" counts={summary.source_format_counts} labelForValue={sourceLabel} />
-        <SourceBreakdown title="Ingest format" counts={summary.source_kind_counts} labelForValue={sourceKindLabel} />
-      </div>
-    </section>
-  );
-}
-
-function EvalDashboardPanel({
-  run,
-  history,
-  comparison,
-  status,
-  mode,
-  onModeChange,
-  onRun,
-  onResume,
-  onSelectEvalRun,
-  onSelectTrace,
-}: {
-  run: EvalSuiteRun | null;
-  history: EvalRunSummary[];
-  comparison: EvalComparison | null;
-  status: EvalRunStatus;
-  mode: EvalExecutionMode;
-  onModeChange: (mode: EvalExecutionMode) => void;
-  onRun: () => Promise<void>;
-  onResume: () => Promise<void>;
-  onSelectEvalRun: (runId: string) => Promise<void>;
-  onSelectTrace: (traceId: string) => void;
-}) {
-  const failures = failedEvalCases(run);
-  const categorySummaries = evalCategorySummaries(run);
-  const activeRun = evalRunIsActive(run);
-  const running = status.status === "running" || activeRun;
-  const progress = evalProgress(run);
-  const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
-  const improvementPlan = buildEvalImprovementPlan(run);
-  const resumable = Boolean(run && run.execution_mode === "llm" && evalRunHasProviderIssue(run) && run.results.length < run.total);
-
-  return (
-    <section className="evalDashboard">
-      <div className="evalDashboardHeader">
-        <div>
-          <small>Evaluation dashboard</small>
-          <h2>Support agent quality</h2>
-        </div>
-        <div className="evalRunControls">
-          <select value={mode} onChange={(event) => onModeChange(event.target.value as EvalExecutionMode)} disabled={running}>
-            <option value="deterministic">Deterministic baseline</option>
-            <option value="llm">Configured LLM</option>
-          </select>
-          <button type="button" onClick={() => void onRun()} disabled={running}>
-            {running ? <Activity size={15} /> : <FlaskConical size={15} />}
-            Run evals
-          </button>
-          {resumable ? (
-            <button className="secondary" type="button" onClick={() => void onResume()} disabled={running}>
-              <RotateCcw size={15} />
-              Resume eval
-            </button>
-          ) : null}
-        </div>
-      </div>
-      <div className="evalSummaryGrid">
-        <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
-        <SummaryFact icon={<Bot size={16} />} label="Mode" value={run ? evalModeLabel(run.execution_mode) : evalModeLabel(mode)} />
-        <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
-        <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? (activeRun ? `${progress.completed}/${progress.total}` : `${run.passed}/${run.total}`) : "-"} />
-        <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
-      </div>
-      {activeRun ? (
-        <div className="evalProgressPanel" role="status" aria-live="polite">
-          <div className="evalProgressHeader">
-            <div>
-              <strong>LLM eval is running</strong>
-              <span>Completed cases appear below as they finish.</span>
-            </div>
-            <em>{progress.label}</em>
-          </div>
-          <div className="evalProgressTrack" aria-label={progress.label}>
-            <span className="evalProgressBar" style={{ width: `${progress.percent}%` }} />
-          </div>
-        </div>
-      ) : null}
-      <div className="evalCategoryStrip">
-        {categorySummaries.map((summary) => (
-          <span className={summary.failed > 0 ? "failed" : "passed"} key={summary.category}>
-            {summary.category} <strong>{summary.failed}</strong>
-          </span>
-        ))}
-      </div>
-      <EvalTrendChart history={history} selectedRunId={run?.run_id ?? null} onSelectEvalRun={onSelectEvalRun} />
-      <div
-        className={
-          comparison?.status === "degraded_llm" || evalRunHasProviderIssue(comparison?.llm_run ?? null)
-            ? "evalComparison degraded"
-            : comparison?.status === "ready" && comparison.llm_regressions.length > 0
-              ? "evalComparison drift"
-              : "evalComparison"
-        }
-      >
-        <div>
-          <small>Deterministic vs LLM</small>
-          <strong>{evalComparisonStatusLabel(comparison)}</strong>
-        </div>
-        <span>
-          Delta <strong>{evalRunHasProviderIssue(comparison?.llm_run ?? null) ? "degraded" : comparison?.pass_rate_delta === null || comparison?.pass_rate_delta === undefined ? "-" : `${Math.round(comparison.pass_rate_delta * 100)} pts`}</strong>
-        </span>
-        <span>
-          Regressions <strong>{evalRunHasProviderIssue(comparison?.llm_run ?? null) ? "not scored" : comparison?.llm_regressions.length ?? "-"}</strong>
-        </span>
-        <span>
-          Model <strong>{comparison?.llm_run ? `${comparison.llm_run.model_provider}/${comparison.llm_run.model_name}` : "-"}</strong>
-        </span>
-      </div>
-      {status.status === "error" ? <p className="evalError">{status.message}</p> : null}
-      {run && visibleResults.length > 0 ? (
-        <div className="evalCases">
-          {visibleResults.map((result) => (
-            <div className={result.passed ? "evalCaseCard passed" : "evalCaseCard failed"} key={result.case_id}>
-              <button type="button" onClick={() => onSelectTrace(result.trace_id)}>
-                <span>{result.name}</span>
-                <strong>{Math.round(result.score * 100)}%</strong>
-              </button>
-              {evalModelSummary(result) ? <EvalModelBadge result={result} /> : null}
-              {!result.passed ? (
-                <div className="evalCheckDetails">
-                  {failedEvalChecks(result).slice(0, 3).map((check) => (
-                    <div key={check.name}>
-                      <small>{evalCheckCategory(check.name)}</small>
-                      <strong>{check.name}</strong>
-                      <span>Expected: {formatEvalValue(check.expected)}</span>
-                      <span>Actual: {formatEvalValue(check.actual)}</span>
-                    </div>
-                  ))}
-                  {failedEvalChecks(result).length > 3 ? <em>{failedEvalChecks(result).length - 3} more failed checks</em> : null}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : activeRun ? (
-        <p className="evalEmpty">Waiting for the first case result...</p>
-      ) : (
-        <p className="evalEmpty">Run the deterministic suite to check routing, approvals, memory, and tool failures.</p>
-      )}
-      {improvementPlan.length > 0 ? (
-        <div className="evalImprovementPlan">
-          <div className="evalImprovementHeader">
-            <small>Improvement plan</small>
-            <strong>Use failures to patch the agent</strong>
-          </div>
-          {improvementPlan.slice(0, 4).map((item) => (
-            <article className="evalImprovementItem" key={item.category}>
-              <div>
-                <span>{item.category}</span>
-                <strong>{item.owner_area}</strong>
-                <p>{item.recommended_action}</p>
-              </div>
-              <div className="evalImprovementFiles">
-                {item.suggested_files.map((file) => (
-                  <code key={file}>{file}</code>
-                ))}
-              </div>
-              <div className="evalImprovementCases">
-                {item.cases.slice(0, 3).map((failure) => (
-                  <button key={`${failure.case_id}-${failure.check}`} type="button" onClick={() => onSelectTrace(failure.trace_id)}>
-                    <span>{failure.case_id}</span>
-                    <strong>{failure.check}</strong>
-                    <em>
-                      {formatEvalValue(failure.expected)} {"->"} {formatEvalValue(failure.actual)}
-                    </em>
-                  </button>
-                ))}
-                {item.cases.length > 3 ? <em>{item.cases.length - 3} more failed checks</em> : null}
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : null}
-      {history.length > 0 ? (
-        <div className="evalHistory">
-          <small>Recent eval runs</small>
-          {history.map((item) => (
-            <button
-              aria-current={run?.run_id === item.run_id ? "true" : undefined}
-              className={item.failed === 0 ? "passed" : "failed"}
-              key={item.run_id}
-              onClick={() => void onSelectEvalRun(item.run_id)}
-              type="button"
-            >
-              <span>{formatShortTimestamp(item.created_at)}</span>
-              <strong>{evalPassRateLabel(item.pass_rate)}</strong>
-              <em>{evalModeLabel(item.execution_mode)}</em>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function EvalTrendChart({
-  history,
-  selectedRunId,
-  onSelectEvalRun,
-}: {
-  history: EvalRunSummary[];
-  selectedRunId: string | null;
-  onSelectEvalRun: (runId: string) => Promise<void>;
-}) {
-  const series = buildEvalTrendSeries(history);
-  const totalRuns = series.deterministic.length + series.llm.length;
-  if (totalRuns === 0) {
-    return null;
-  }
-
-  return (
-    <div className="evalTrendPanel">
-      <div className="evalTrendHeader">
-        <div>
-          <small>Eval trend</small>
-          <strong>Recent pass rate by mode</strong>
-        </div>
-        <span>{totalRuns} runs</span>
-      </div>
-      <div className="evalTrendSeriesGrid">
-        <EvalTrendSeriesChart
-          mode="deterministic"
-          points={series.deterministic}
-          selectedRunId={selectedRunId}
-          onSelectEvalRun={onSelectEvalRun}
-        />
-        <EvalTrendSeriesChart mode="llm" points={series.llm} selectedRunId={selectedRunId} onSelectEvalRun={onSelectEvalRun} />
-      </div>
-      <div className="evalTrendMeta">
-        {[...series.deterministic, ...series.llm]
-          .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
-          .slice(-4)
-          .map((point) => (
-            <button
-              aria-current={selectedRunId === point.runId ? "true" : undefined}
-              key={point.runId}
-              onClick={() => void onSelectEvalRun(point.runId)}
-              type="button"
-            >
-              <span>{formatShortTimestamp(point.createdAt)}</span>
-              <strong>{point.passRate}%</strong>
-              <em>{evalModeLabel(point.mode)}</em>
-            </button>
-          ))}
-      </div>
-    </div>
-  );
-}
-
-function EvalTrendSeriesChart({
-  mode,
-  points,
-  selectedRunId,
-  onSelectEvalRun,
-}: {
-  mode: EvalExecutionMode;
-  points: EvalTrendPoint[];
-  selectedRunId: string | null;
-  onSelectEvalRun: (runId: string) => Promise<void>;
-}) {
-  function handleChartClick(event: MouseHandlerDataParam) {
-    const point = points.find((item) => item.label === event.activeLabel);
-    if (point) {
-      void onSelectEvalRun(point.runId);
-    }
-  }
-
-  const latest = points.at(-1);
-  return (
-    <div className={mode === "llm" ? "evalTrendSeries llm" : "evalTrendSeries"}>
-      <div className="evalTrendSeriesHeader">
-        <strong>{evalModeLabel(mode)}</strong>
-        <span>{latest ? `${latest.passRate}% latest` : "No runs"}</span>
-      </div>
-      {points.length > 0 ? (
-        <div className="evalTrendChart" role="img" aria-label={`${evalModeLabel(mode)} eval pass-rate trend`}>
-          <ResponsiveContainer width="100%" height={150}>
-            <LineChart data={points} margin={{ top: 12, right: 10, bottom: 0, left: -20 }} onClick={handleChartClick}>
-              <CartesianGrid stroke="#edf1f3" vertical={false} />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: "#637179", fontSize: 11 }} />
-              <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tick={{ fill: "#637179", fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
-              <Tooltip content={<EvalTrendTooltip />} cursor={{ stroke: "#9bb7af", strokeWidth: 1 }} />
-              <Line
-                type="monotone"
-                dataKey="passRate"
-                stroke={mode === "llm" ? "#6f4ab8" : "#246b5b"}
-                strokeWidth={2}
-                dot={{ r: 4, strokeWidth: 2, fill: "#ffffff" }}
-                activeDot={{
-                  r: 6,
-                  strokeWidth: 2,
-                  fill: selectedRunId === latest?.runId ? "#172026" : mode === "llm" ? "#6f4ab8" : "#246b5b",
-                  cursor: "pointer",
-                }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <p className="evalTrendEmpty">Run {evalModeLabel(mode).toLowerCase()} evals to start this trend.</p>
-      )}
-    </div>
-  );
-}
-
-function EvalTrendTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: EvalTrendPoint }> }) {
-  const point = payload?.[0]?.payload;
-  if (!active || !point) {
-    return null;
-  }
-  return (
-    <div className="evalTrendTooltip">
-      <small>{formatShortTimestamp(point.createdAt)}</small>
-      <strong>{point.passRate}% pass rate</strong>
-      <span>
-        {point.passed}/{point.total} passed, {point.failed} failed
-      </span>
-      <em>
-        {evalModeLabel(point.mode)} · {point.model}
-      </em>
-    </div>
-  );
-}
-
-function EvalModelBadge({ result }: { result: EvalSuiteRun["results"][number] }) {
-  const event = evalModelSummary(result);
-  if (!event) {
-    return null;
-  }
-  const failedAttempt = event.attempts?.find((attempt) => attempt.status === "failed");
-  return (
-    <div className={event.fallback_used ? "evalModelBadge fallback" : "evalModelBadge"}>
-      <span>{event.span_name}</span>
-      <strong>{event.model ?? "model unknown"}</strong>
-      {event.fallback_used ? <em>Fallback used{failedAttempt?.model ? ` after ${failedAttempt.model}` : ""}</em> : null}
-    </div>
-  );
-}
-
-function SourceBreakdown({
-  title,
-  counts,
-  labelForValue,
-}: {
-  title: string;
-  counts: Record<string, number>;
-  labelForValue: (value: string) => string;
-}) {
-  const entries = Object.entries(counts).sort((left, right) => right[1] - left[1]);
-  return (
-    <div className="sourceBreakdown">
-      <small>{title}</small>
-      <div>
-        {entries.length > 0 ? (
-          entries.map(([value, count]) => (
-            <span key={value}>
-              {labelForValue(value)} <strong>{count}</strong>
-            </span>
-          ))
-        ) : (
-          <span>None <strong>0</strong></span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TraceFiltersPanel({
-  filters,
-  workflows,
-  activeChatSessionId,
-  onChange,
-}: {
-  filters: TraceFilters;
-  workflows: string[];
-  activeChatSessionId: string | null;
-  onChange: (filters: TraceFilters) => void;
-}) {
-  function update(next: Partial<TraceFilters>) {
-    onChange({ ...filters, ...next, offset: 0 });
-  }
-
-  const activeCount = activeFilterCount(filters);
-
-  return (
-    <div className="traceFilters">
-      <div className="filterHeader">
-        <span>Filters</span>
-        {activeCount > 0 ? <strong>{activeCount}</strong> : null}
-        <button type="button" onClick={() => onChange(emptyFilters())} disabled={activeCount === 0}>
-          Clear
-        </button>
-      </div>
-      <details className="filterGroup" open>
-        <summary>Run</summary>
-        <div className="filterFields">
-          <label>
-            <span>Workflow</span>
-            <select value={filters.workflowName} onChange={(event) => update({ workflowName: event.target.value })}>
-              <option value="">Any</option>
-              {workflows.map((workflow) => (
-                <option value={workflow} key={workflow}>
-                  {workflow}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Status</span>
-            <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
-              <option value="">Any</option>
-              <option value="passed">Passed</option>
-              <option value="failed">Failed</option>
-              <option value="running">Running</option>
-            </select>
-          </label>
-          <label className="inlineFilter">
-            <input
-              type="checkbox"
-              checked={filters.currentChatOnly}
-              disabled={!activeChatSessionId}
-              onChange={(event) => update({ currentChatOnly: event.target.checked })}
-            />
-            <span>Current chat only</span>
-          </label>
-        </div>
-      </details>
-      <details className="filterGroup">
-        <summary>Signals</summary>
-        <div className="filterFields">
-          <label>
-            <span>Errors</span>
-            <select value={filters.errorStatus} onChange={(event) => update({ errorStatus: event.target.value })}>
-              <option value="">Any</option>
-              <option value="true">Has errors</option>
-              <option value="false">No errors</option>
-            </select>
-          </label>
-          <label>
-            <span>Approval</span>
-            <select
-              value={filters.approvalStatus}
-              onChange={(event) => update({ approvalStatus: event.target.value })}
-            >
-              <option value="">Any</option>
-              <option value="pending">Needs approval</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="none">No approval</option>
-            </select>
-          </label>
-          <label>
-            <span>Grounding</span>
-            <select
-              value={filters.groundingStatus}
-              onChange={(event) => update({ groundingStatus: event.target.value })}
-            >
-              <option value="">Any</option>
-              <option value="grounded">Grounded</option>
-              <option value="recovered">Recovered</option>
-              <option value="failed">Failed</option>
-            </select>
-          </label>
-        </div>
-      </details>
-      <details className="filterGroup">
-        <summary>Source</summary>
-        <div className="filterFields">
-          <label>
-            <span>Source</span>
-            <select value={filters.sourceFormat} onChange={(event) => update({ sourceFormat: event.target.value })}>
-              <option value="">Any</option>
-              <option value="agenttrace">AgentTrace</option>
-              <option value="openai-agents">OpenAI Agents</option>
-            </select>
-          </label>
-          <label>
-            <span>Format</span>
-            <select value={filters.sourceKind} onChange={(event) => update({ sourceKind: event.target.value })}>
-              <option value="">Any</option>
-              <option value="trace_export">Trace export</option>
-              <option value="event_stream">Event stream</option>
-              <option value="live_api">Live API</option>
-            </select>
-          </label>
-          <label>
-            <span>Time range</span>
-            <select value={filters.timeRange} onChange={(event) => update({ timeRange: event.target.value })}>
-              <option value="">Any time</option>
-              <option value="15m">Last 15 minutes</option>
-              <option value="1h">Last hour</option>
-              <option value="24h">Last 24 hours</option>
-            </select>
-          </label>
-        </div>
-      </details>
-    </div>
-  );
-}
-
-function TraceBadges({
-  trace,
-  isChatTurn,
-  isLatestChatTrace,
-}: {
-  trace: TraceSummary;
-  isChatTurn: boolean;
-  isLatestChatTrace: boolean;
-}) {
-  const chatBadges = chatTurnBadges(trace, { isChatTurn, isLatest: isLatestChatTrace });
-  return (
-    <div className="traceBadges">
-      {chatBadges.map((badge) => (
-        <strong className={badge === "Latest" ? "chip success" : "chip neutral"} key={badge}>
-          {badge}
-        </strong>
-      ))}
-      <span className={`chip status ${statusTone(trace.status)}`}>Status: {executionStatus(trace.status)}</span>
-      <span className="chip neutral">{sourceLabel(trace.source_format)}</span>
-      <span className="chip neutral">{sourceKindLabel(trace.source_kind)}</span>
-      {trace.grounding_status !== trace.status ? (
-        <span className={`chip grounding ${groundingTone(trace.grounding_status)}`}>Grounding: {trace.grounding_status}</span>
-      ) : null}
-      {trace.approval_pending_count > 0 ? <strong className="chip warning">Needs approval</strong> : null}
-      {trace.approval_rejected_count > 0 ? <strong className="chip danger">Rejected</strong> : null}
-      {trace.error_count > 0 ? <strong className="chip danger">Errors: {trace.error_count}</strong> : null}
-      {trace.estimated_cost > 0.01 ? <strong className="chip warning">High cost</strong> : null}
-      {trace.duration_ms !== null && trace.duration_ms > 5000 ? <strong className="chip warning">Slow</strong> : null}
-    </div>
-  );
-}
-
-function statusTone(status: string): string {
-  if (status === "failed" || status === "rejected") return "danger";
-  if (status === "running") return "warning";
-  return "neutral";
-}
-
-function groundingTone(status: string): string {
-  if (status === "failed") return "danger";
-  if (status === "recovered") return "warning";
-  if (status === "grounded") return "success";
-  return "neutral";
-}
-
 function MetricGrid({ metrics, grounding }: { metrics: Metrics; grounding: GroundingSummary }) {
   return (
     <section className="metricGrid">
@@ -1839,18 +1009,6 @@ function ExecutiveSummaryPanel({
         <SummaryFact icon={<CircleDollarSign size={16} />} label="Cost" value={formatCost(metrics.estimated_cost)} />
       </div>
     </section>
-  );
-}
-
-function SummaryFact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="summaryFact">
-      {icon}
-      <div>
-        <small>{label}</small>
-        <strong>{value}</strong>
-      </div>
-    </div>
   );
 }
 
@@ -2500,57 +1658,10 @@ async function fetchJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function filterQuery(filters: TraceFilters, activeChatSessionId: string | null): string {
-  const params = new URLSearchParams();
-  params.set("limit", String(TRACE_PAGE_SIZE));
-  params.set("offset", String(filters.offset));
-  if (filters.workflowName) params.set("workflow_name", filters.workflowName);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.sourceFormat) params.set("source_format", filters.sourceFormat);
-  if (filters.sourceKind) params.set("source_kind", filters.sourceKind);
-  if (filters.errorStatus) params.set("has_errors", filters.errorStatus);
-  if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
-  if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
-  if (filters.currentChatOnly && activeChatSessionId) params.set("chat_session_id", activeChatSessionId);
-  const startedAfter = startedAfterForRange(filters.timeRange);
-  if (startedAfter) params.set("started_after", startedAfter);
-  const query = params.toString();
-  return query ? `?${query}` : "";
-}
-
 function traceSummaryQuery(traceIds: string[]): string {
   const params = new URLSearchParams();
   params.set("trace_ids", traceIds.join(","));
   return `?${params.toString()}`;
-}
-
-function emptyFilters(): TraceFilters {
-  return {
-    status: "",
-    workflowName: "",
-    sourceFormat: "",
-    sourceKind: "",
-    errorStatus: "",
-    approvalStatus: "",
-    groundingStatus: "",
-    timeRange: "",
-    currentChatOnly: false,
-    offset: 0,
-  };
-}
-
-function activeFilterCount(filters: TraceFilters): number {
-  return [
-    filters.workflowName,
-    filters.status,
-    filters.sourceFormat,
-    filters.sourceKind,
-    filters.errorStatus,
-    filters.approvalStatus,
-    filters.groundingStatus,
-    filters.timeRange,
-    filters.currentChatOnly ? "current-chat" : "",
-  ].filter(Boolean).length;
 }
 
 function latestTraceFromMessages(messages: ChatMessage[]): string | null {
@@ -2590,37 +1701,6 @@ function parseServerEvent(event: Event): ServerEvent | null {
 function upsertChatSession(sessions: ChatSession[], session: ChatSession): ChatSession[] {
   const next = sessions.filter((item) => item.session_id !== session.session_id);
   return [session, ...next];
-}
-
-function executionStatus(status: string): string {
-  if (status === "grounded" || status === "recovered") return "passed";
-  return status;
-}
-
-function startedAfterForRange(value: string): string | null {
-  const minutesByRange: Record<string, number> = {
-    "15m": 15,
-    "1h": 60,
-    "24h": 1440,
-  };
-  const minutes = minutesByRange[value];
-  if (!minutes) return null;
-  return new Date(Date.now() - minutes * 60 * 1000).toISOString();
-}
-
-function formatRelevance(value: number | null): string {
-  return value === null ? "-" : value.toFixed(2);
-}
-
-function formatShortTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 async function postJson<T>(path: string): Promise<T> {
