@@ -7,10 +7,11 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml* ./
 RUN corepack pnpm install --frozen-lockfile
 
-COPY index.html tsconfig.json vite.config.ts ./
+COPY eslint.config.js index.html tsconfig.json vite.config.ts ./
 COPY public ./public
 COPY src ./src
 
+RUN corepack pnpm lint
 RUN corepack pnpm test
 RUN corepack pnpm build
 
