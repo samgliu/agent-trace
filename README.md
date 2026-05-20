@@ -200,6 +200,11 @@ The API entry point is `agenttrace/api/main.py`. Domain routes live under
 approval mutations, and SSE publishing live in focused `agenttrace/api/*.py`
 modules.
 
+The customer-service agent entry point remains
+`agent_apps/customer_service/runner.py`. Model gateway, MCP/local tools,
+policy logic, prompt metadata, response generation, and trace/span construction
+are split into focused modules in the same package.
+
 Python:
 
 ```bash
