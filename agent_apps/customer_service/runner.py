@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -55,36 +54,13 @@ from agent_apps.customer_service.response_generation import (
     customer_response_input as _customer_response_input,
     customer_response_instructions as _customer_response_instructions,
     customer_response_safety as _customer_response_safety,
-    rough_token_count as _rough_token_count,
-    static_customer_response as _static_customer_response,
 )
+from agent_apps.customer_service.static_llm import StaticLLMClient
 from agent_apps.customer_service.support_tools import LocalSupportToolsClient, McpSupportToolsClient, SupportToolsClient
 from agent_apps.customer_service.trace_builder import SpanClock as _SpanClock
 from agent_apps.customer_service.trace_builder import span as _span
 from agent_apps.customer_service.trace_builder import span_id as _span_id
 from agent_apps.customer_service.trace_builder import trace as _trace
-
-
-class StaticLLMClient(LLMClient):
-    provider_name = "static"
-
-    def __init__(self, output_text: str | None = None) -> None:
-        self.output_text = output_text or (
-            "Thanks for the details. I reviewed the account and policy context, "
-            "and created the next support action for review."
-        )
-
-    def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
-        output_text = self.output_text
-        if "Customer message:" in input_text:
-            output_text = _static_customer_response(input_text, self.output_text)
-        return LLMResponse(
-            output_text=output_text,
-            input_tokens=_rough_token_count(instructions + "\n" + input_text),
-            output_tokens=_rough_token_count(output_text),
-            estimated_cost=0.0,
-            raw_response={"provider": self.provider_name},
-        )
 
 
 @dataclass(frozen=True)
@@ -739,24 +715,12 @@ class SupportTriageRunner:
 
 
 def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_completions") -> SupportTriageRunner:
-    if not use_openai:
-        llm_client: LLMClient = StaticLLMClient()
-    elif openai_api == "responses":
-        llm_client = OpenAIResponsesClient(timeout_seconds=_llm_timeout_seconds())
-    else:
-        llm_client = OpenAIChatCompletionsClient(timeout_seconds=_llm_timeout_seconds())
-    tools_client: SupportToolsClient
-    if os.environ.get("AGENTTRACE_MCP_TOOLS_URL"):
-        tools_client = McpSupportToolsClient()
-    else:
-        tools_client = LocalSupportToolsClient()
-    return SupportTriageRunner(llm_client=llm_client, tools_client=tools_client, use_llm_agents=use_openai)
+    from agent_apps.customer_service.default_runner import build_default_runner as _build_default_runner
+
+    return _build_default_runner(use_openai=use_openai, openai_api=openai_api)
 
 
 def _llm_timeout_seconds() -> float:
-    raw_value = os.environ.get("AGENTTRACE_LLM_TIMEOUT_SECONDS", "180")
-    try:
-        return max(1.0, float(raw_value))
-    except ValueError:
-        return 180.0
+    from agent_apps.customer_service.default_runner import llm_timeout_seconds
 
+    return llm_timeout_seconds()

@@ -201,11 +201,16 @@ approval mutations, and SSE publishing live in focused `agenttrace/api/*.py`
 modules. SQLite persistence keeps schema DDL, row mapping helpers, and store
 behavior split across `agenttrace/storage/sqlite_schema.py`,
 `agenttrace/storage/sqlite_helpers.py`, and `agenttrace/storage/sqlite.py`.
+Eval orchestration remains import-compatible through
+`agenttrace/evals/support_triage.py`, with case definitions, result models,
+reporting, and trace assertion helpers split into focused `agenttrace/evals/*`
+modules.
 
 The customer-service agent entry point remains
 `agent_apps/customer_service/runner.py`. Model gateway, MCP/local tools,
-policy logic, prompt metadata, response generation, and trace/span construction
-are split into focused modules in the same package.
+policy logic, prompt metadata, static/default runner construction, response
+generation, and trace/span construction are split into focused modules in the
+same package.
 
 Python:
 
