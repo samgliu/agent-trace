@@ -208,9 +208,9 @@ modules.
 
 The customer-service agent entry point remains
 `agent_apps/customer_service/runner.py`. Model gateway, MCP/local tools,
-policy logic, prompt metadata, static/default runner construction, response
-generation, and trace/span construction are split into focused modules in the
-same package.
+policy logic, validation, prompt metadata, static/default runner construction,
+workflow context, response generation, and trace/span construction are split
+into focused modules in the same package.
 
 Python:
 
@@ -232,6 +232,9 @@ corepack pnpm test
 corepack pnpm build
 corepack pnpm dev
 ```
+
+Global styles are composed from `web/src/styles.css`, which imports focused
+section styles from `web/src/styles/`.
 
 E2E:
 

@@ -1,0 +1,53 @@
+@media (max-width: 980px) {
+  .layout,
+  .workspace,
+  .chatBody,
+  .metricGrid,
+  .fleetSummary,
+  .sourceSummary,
+  .executiveSummary,
+  .liveWorkflowForm,
+  .evalSummaryGrid,
+  .evalCases,
+  .summaryFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #dce4e8;
+  }
+
+  .traceHeader {
+    flex-direction: column;
+  }
+
+  .chatHeader,
+  .liveWorkflowHeader,
+  .evalDashboardHeader,
+  .chatSessionControls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chatSessionControls {
+    min-width: 0;
+  }
+
+  .spanMeta {
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+
+  .evalHistory button {
+    grid-template-columns: 1fr;
+  }
+
+  .evalTrendMeta {
+    grid-template-columns: 1fr;
+  }
+
+  .evalTrendSeriesGrid {
+    grid-template-columns: 1fr;
+  }
+}
