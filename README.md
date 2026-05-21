@@ -6,6 +6,10 @@ multi-agent app as the reference workload, so the dashboard can observe real
 chat turns, tool calls, handoffs, approvals, grounding, latency, token/cost
 metadata, and eval results.
 
+<p align="center">
+  <img src="demo/screencapture.png" alt="AgentTrace dashboard screenshot" width="680" />
+</p>
+
 ## What Is Included
 
 - FastAPI AgentTrace API with SQLite storage.
