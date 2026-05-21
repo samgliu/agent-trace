@@ -198,7 +198,9 @@ POST   /traces/{trace_id}/approvals/{span_id}/revert
 The API entry point is `agenttrace/api/main.py`. Domain routes live under
 `agenttrace/api/routes/`, while agent delegation, eval helpers, chat helpers,
 approval mutations, and SSE publishing live in focused `agenttrace/api/*.py`
-modules.
+modules. SQLite persistence keeps schema DDL, row mapping helpers, and store
+behavior split across `agenttrace/storage/sqlite_schema.py`,
+`agenttrace/storage/sqlite_helpers.py`, and `agenttrace/storage/sqlite.py`.
 
 The customer-service agent entry point remains
 `agent_apps/customer_service/runner.py`. Model gateway, MCP/local tools,
