@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from agenttrace.core.models import Span, Trace
@@ -57,10 +55,8 @@ from agent_apps.customer_service.response_generation import (
 )
 from agent_apps.customer_service.static_llm import StaticLLMClient
 from agent_apps.customer_service.support_tools import LocalSupportToolsClient, McpSupportToolsClient, SupportToolsClient
-from agent_apps.customer_service.trace_builder import SpanClock as _SpanClock
 from agent_apps.customer_service.trace_builder import span as _span
-from agent_apps.customer_service.trace_builder import span_id as _span_id
-from agent_apps.customer_service.trace_builder import trace as _trace
+from agent_apps.customer_service.workflow_context import WorkflowRunContext
 
 
 @dataclass(frozen=True)
@@ -93,40 +89,16 @@ class SupportTriageRunner:
         conversation_history: list[dict[str, Any]] | None = None,
         on_span: Callable[[Span], None] | None = None,
     ) -> Trace:
-        trace_id = trace_id or f"trace_support_triage_{uuid.uuid4().hex[:12]}"
         conversation_history = conversation_history or []
-        clock = _SpanClock(datetime.now(timezone.utc))
-        spans: list[Span] = []
-        emitted_span_ids: set[str] = set()
-
-        def emit(span: Span) -> Span:
-            spans.append(span)
-            if on_span is not None and span.span_id not in emitted_span_ids:
-                emitted_span_ids.add(span.span_id)
-                on_span(span)
-            return span
-
-        span_ids = {
-            "supervisor": _span_id(trace_id, "supervisor"),
-            "handoff_triage": _span_id(trace_id, "handoff_triage"),
-            "triage": _span_id(trace_id, "triage"),
-            "working_memory_write": _span_id(trace_id, "working_memory_write"),
-            "lookup_customer": _span_id(trace_id, "lookup_customer"),
-            "lookup_order": _span_id(trace_id, "lookup_order"),
-            "verify_order_owner": _span_id(trace_id, "verify_order_owner"),
-            "verify_account_access": _span_id(trace_id, "verify_account_access"),
-            "lookup_subscription": _span_id(trace_id, "lookup_subscription"),
-            "handoff_policy": _span_id(trace_id, "handoff_policy"),
-            "policy_agent": _span_id(trace_id, "policy_agent"),
-            "retrieve_policy": _span_id(trace_id, "retrieve_policy"),
-            "customer_memory_read": _span_id(trace_id, "customer_memory_read"),
-            "action_agent": _span_id(trace_id, "action_agent"),
-            "agent_state_update": _span_id(trace_id, "agent_state_update"),
-            "create_action": _span_id(trace_id, "create_action"),
-            "validator": _span_id(trace_id, "validator"),
-            "approval_required": _span_id(trace_id, "approval_required"),
-            "customer_response": _span_id(trace_id, "customer_response"),
-        }
+        context = WorkflowRunContext.create(
+            trace_id=trace_id,
+            conversation_history_count=len(conversation_history),
+            on_span=on_span,
+        )
+        trace_id = context.trace_id
+        clock = context.clock
+        span_ids = context.span_ids
+        emit = context.emit
 
         supervisor_decision, supervisor_llm = self._agent_decision(
             agent_name="Supervisor Agent",
@@ -240,15 +212,10 @@ class SupportTriageRunner:
                     span_data=_mcp_span_data("lookup_customer_tool"),
                 )
             )
-            return _trace(
-                trace_id=trace_id,
+            return context.finish(
                 status="failed",
-                started_at=spans[0].started_at,
-                ended_at=spans[-1].ended_at,
-                spans=spans,
                 llm_provider=self.llm_client.provider_name,
                 agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
-                conversation_history_count=len(conversation_history),
             )
 
         emit(
@@ -658,15 +625,10 @@ class SupportTriageRunner:
             )
         )
 
-        return _trace(
-            trace_id=trace_id,
+        return context.finish(
             status="recovered" if validation["approval_required"] else "passed",
-            started_at=spans[0].started_at,
-            ended_at=spans[-1].ended_at,
-            spans=spans,
             llm_provider=self.llm_client.provider_name,
             agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
-            conversation_history_count=len(conversation_history),
         )
 
     def _agent_decision(

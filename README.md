@@ -233,6 +233,9 @@ corepack pnpm build
 corepack pnpm dev
 ```
 
+Global styles are composed from `web/src/styles.css`, which imports focused
+section styles from `web/src/styles/`.
+
 E2E:
 
 ```bash
