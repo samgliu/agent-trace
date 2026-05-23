@@ -42,6 +42,31 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_auth_status_is_public_and_disabled_by_default(self) -> None:
+        response = self.client.get("/auth/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"enabled": False, "authenticated": True})
+
+    def test_auth_enabled_requires_login_for_protected_routes(self) -> None:
+        from agenttrace.api.main import create_app
+
+        with patch.dict("os.environ", {"AGENTTRACE_AUTH_ENABLED": "true", "AGENTTRACE_ADMIN_TOKEN": "secret"}, clear=False):
+            client = TestClient(create_app(self.store))
+
+        health_response = client.get("/health")
+        protected_response = client.get("/dashboard/summary")
+        failed_login_response = client.post("/auth/login", json={"token": "wrong"})
+        login_response = client.post("/auth/login", json={"token": "secret"})
+        authenticated_response = client.get("/dashboard/summary")
+
+        self.assertEqual(health_response.status_code, 200)
+        self.assertEqual(protected_response.status_code, 401)
+        self.assertEqual(failed_login_response.status_code, 401)
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn("agenttrace_session", login_response.cookies)
+        self.assertEqual(authenticated_response.status_code, 200)
+
     def test_list_evals(self) -> None:
         response = self.client.get("/evals")
 
