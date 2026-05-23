@@ -155,10 +155,10 @@ docker compose up -d --force-recreate api web
 ```
 
 When enabled, the dashboard shows a token login screen. The backend validates
-the token once and sets an httpOnly cookie; the frontend does not store the
-secret. `/health`, `/auth/status`, `/auth/login`, and `/auth/logout` stay
-public. Dashboard, trace, chat, eval, workflow, approval, and SSE routes require
-auth.
+the token once and sets an httpOnly, signed, expiring session cookie; the
+frontend does not store the secret and the cookie value is not the admin token.
+`/health`, `/auth/status`, `/auth/login`, and `/auth/logout` stay public.
+Dashboard, trace, chat, eval, workflow, approval, and SSE routes require auth.
 
 ## Evals
 

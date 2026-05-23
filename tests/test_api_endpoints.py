@@ -65,6 +65,8 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(failed_login_response.status_code, 401)
         self.assertEqual(login_response.status_code, 200)
         self.assertIn("agenttrace_session", login_response.cookies)
+        self.assertNotEqual(login_response.cookies["agenttrace_session"], "secret")
+        self.assertIn(".", login_response.cookies["agenttrace_session"])
         self.assertEqual(authenticated_response.status_code, 200)
 
     def test_list_evals(self) -> None:

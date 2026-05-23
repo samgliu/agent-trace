@@ -129,13 +129,6 @@ export async function prepareApp(page: Page, options: PrepareAppOptions = {}): P
     }
   }
 
-  if (auth === "auto" && hasAuthToken()) {
-    await page.context().addCookies([
-      authCookie(browserApiBaseURL),
-      authCookie(dockerApiBaseURL),
-    ]);
-  }
-
   await page.route(`${browserApiBaseURL}/**`, async (route) => {
     const request = route.request();
     if (events === "stub" && request.url() === `${browserApiBaseURL}/events`) {
@@ -293,14 +286,4 @@ function authenticatedHeaders(headers: Record<string, string>): Record<string, s
     return headers;
   }
   return { ...headers, authorization: `Bearer ${authToken}` };
-}
-
-function authCookie(url: string) {
-  return {
-    name: "agenttrace_session",
-    value: authToken,
-    url,
-    httpOnly: true,
-    sameSite: "Lax" as const,
-  };
 }
