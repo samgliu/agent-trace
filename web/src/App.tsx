@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LogOut } from "lucide-react";
+import { LoginPanel } from "./components/auth/LoginPanel";
 import { Shell } from "./components/layout/Shell";
 import { DashboardPage } from "./pages/DashboardPage";
 import type { ApprovalAction } from "./types";
 import { postJson } from "./utils/apiClient";
 import type { ServerEvent } from "./utils/appState";
 import { useChatMonitor } from "./hooks/useChatMonitor";
+import { useAuth } from "./hooks/useAuth";
 import { useEvalRuns } from "./hooks/useEvalRuns";
 import { useLiveWorkflowRun } from "./hooks/useLiveWorkflowRun";
 import { useServerEvents } from "./hooks/useServerEvents";
@@ -12,6 +15,28 @@ import { useTraceData } from "./hooks/useTraceData";
 import { stringMetadata } from "./utils/source";
 
 export function App() {
+  const auth = useAuth();
+
+  if (auth.state.status === "checking") {
+    return <Shell status="Checking access" />;
+  }
+
+  if (auth.state.status === "error") {
+    return <Shell status="Auth unavailable" error={auth.state.message} />;
+  }
+
+  if (auth.state.enabled && !auth.state.authenticated) {
+    return (
+      <Shell status="Locked">
+        <LoginPanel onLogin={auth.login} />
+      </Shell>
+    );
+  }
+
+  return <AuthenticatedApp authEnabled={auth.state.enabled} onLogout={auth.logout} />;
+}
+
+function AuthenticatedApp({ authEnabled, onLogout }: { authEnabled: boolean; onLogout: () => Promise<void> }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshData = useCallback(() => setRefreshKey((value) => value + 1), []);
   const trace = useTraceData({ refreshKey });
@@ -100,16 +125,16 @@ export function App() {
   }
 
   if (state.status === "loading") {
-    return <Shell status="Loading traces" />;
+    return <Shell status="Loading traces" actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />} />;
   }
 
   if (state.status === "error") {
-    return <Shell status="API unavailable" error={state.message} />;
+    return <Shell status="API unavailable" error={state.message} actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />} />;
   }
 
   if (state.status === "empty") {
     return (
-      <Shell status="Connected">
+      <Shell status="Connected" actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}>
         <DashboardPage
           state={state}
           filters={filters}
@@ -128,7 +153,7 @@ export function App() {
   }
 
   return (
-    <Shell status="Connected">
+    <Shell status="Connected" actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}>
       <DashboardPage
         state={state}
         filters={filters}
@@ -143,5 +168,17 @@ export function App() {
         onSelectTrace={selectTrace}
       />
     </Shell>
+  );
+}
+
+function LogoutButton({ enabled, onLogout }: { enabled: boolean; onLogout: () => Promise<void> }) {
+  if (!enabled) {
+    return null;
+  }
+  return (
+    <button className="logoutButton" onClick={() => void onLogout()} type="button">
+      <LogOut size={15} />
+      Sign out
+    </button>
   );
 }

@@ -28,7 +28,7 @@ export function useServerEvents(onEvent: (event: ServerEvent | null) => void) {
   onEventRef.current = onEvent;
 
   useEffect(() => {
-    const events = new EventSource(`${API_BASE_URL}/events`);
+    const events = new EventSource(`${API_BASE_URL}/events`, { withCredentials: true });
     const handleEvent = (rawEvent: Event) => {
       onEventRef.current(parseServerEvent(rawEvent));
     };
