@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from agenttrace.api.event_bus import EventBus
 from agenttrace.api.agent_service import run_support_triage_agent
 from agenttrace.api.approvals import update_approval_span
+from agenttrace.api.auth import auth_config_from_env, register_auth
 from agenttrace.api.chat_sessions import (
     assistant_response_from_trace,
     conversation_history,
@@ -56,10 +57,11 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
             "http://127.0.0.1:5173",
             "http://web:5173",
         ],
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["*"],
     )
+    register_auth(app, auth_config_from_env())
     trace_store = store or SQLiteTraceStore(_database_path())
     trace_store.initialize()
     event_bus = EventBus()
