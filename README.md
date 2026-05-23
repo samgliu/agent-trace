@@ -126,6 +126,21 @@ After changing `.env`:
 docker compose up -d --force-recreate agent-service api
 ```
 
+## Optional Auth
+
+Auth is disabled by default for local demos. To protect the dashboard/API, set:
+
+```env
+AGENTTRACE_AUTH_ENABLED=true
+AGENTTRACE_ADMIN_TOKEN=long-random-secret
+```
+
+When enabled, the dashboard shows a token login screen. The backend validates
+the token once and sets an httpOnly cookie; the frontend does not store the
+secret. `/health`, `/auth/status`, `/auth/login`, and `/auth/logout` stay
+public. Dashboard, trace, chat, eval, workflow, approval, and SSE routes require
+auth.
+
 ## Evals
 
 Run from the dashboard or API:
