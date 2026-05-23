@@ -76,6 +76,9 @@ services:
     build:
       context: ./e2e
     image: agenttrace-e2e:local
+    env_file:
+      - path: ./agenttrace/api/.env
+        required: false
     environment:
       PLAYWRIGHT_BASE_URL: http://web:5173
       PLAYWRIGHT_BROWSER_API_BASE_URL: http://localhost:8000

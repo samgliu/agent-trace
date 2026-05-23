@@ -1,12 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 
-const browserApiBaseURL = process.env.PLAYWRIGHT_BROWSER_API_BASE_URL ?? "http://localhost:8000";
+export const browserApiBaseURL = process.env.PLAYWRIGHT_BROWSER_API_BASE_URL ?? "http://localhost:8000";
 export const dockerApiBaseURL = process.env.PLAYWRIGHT_DOCKER_API_BASE_URL ?? "http://api:8000";
 const appBaseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
-const authToken = process.env.PLAYWRIGHT_AUTH_TOKEN ?? "";
+const authToken = process.env.PLAYWRIGHT_AUTH_TOKEN || process.env.AGENTTRACE_ADMIN_TOKEN || "";
 
 type PrepareAppOptions = {
-  auth?: "auto" | "manual";
+  auth?: "auto" | "manual" | "session";
   events?: "stub" | "real";
 };
 
@@ -129,6 +129,7 @@ export async function prepareApp(page: Page, options: PrepareAppOptions = {}): P
     }
   }
 
+  let sessionCookie: string | null = null;
   await page.route(`${browserApiBaseURL}/**`, async (route) => {
     const request = route.request();
     if (events === "stub" && request.url() === `${browserApiBaseURL}/events`) {
@@ -140,11 +141,28 @@ export async function prepareApp(page: Page, options: PrepareAppOptions = {}): P
       return;
     }
     const url = request.url().replace(browserApiBaseURL, dockerApiBaseURL);
+    const headers = { ...request.headers() };
+    if (auth === "auto") {
+      Object.assign(headers, authenticatedHeaders(headers));
+    }
+    if (auth === "session" && sessionCookie) {
+      headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${sessionCookie}`;
+    }
     try {
       const response = await route.fetch({
         url,
-        headers: auth === "auto" ? authenticatedHeaders(request.headers()) : request.headers(),
+        headers,
       });
+      if (auth === "session") {
+        const setCookie = response.headers()["set-cookie"];
+        if (request.url().endsWith("/auth/login") && setCookie) {
+          const match = setCookie.match(/agenttrace_session=[^;]+/);
+          sessionCookie = match?.[0] ?? sessionCookie;
+        }
+        if (request.url().endsWith("/auth/logout")) {
+          sessionCookie = null;
+        }
+      }
       await route.fulfill({ response });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
