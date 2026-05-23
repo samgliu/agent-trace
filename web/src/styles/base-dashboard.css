@@ -94,6 +94,117 @@ small {
   border-color: #f0c4ba;
 }
 
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logoutButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  color: #3e4a50;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.logoutButton:hover,
+.logoutButton:focus-visible {
+  border-color: #9bb7af;
+  box-shadow: 0 0 0 2px rgba(36, 107, 91, 0.12);
+}
+
+.authPage {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - 72px);
+  padding: 32px;
+}
+
+.authPanel {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 380px);
+  padding: 22px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(23, 32, 38, 0.08);
+}
+
+.authIcon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: #246b5b;
+  background: #e8f4f0;
+  border: 1px solid #c7e1d8;
+  border-radius: 6px;
+}
+
+.authPanel small {
+  color: #637179;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.authPanel h2 {
+  margin: 2px 0 0;
+  color: #172026;
+  font-size: 22px;
+}
+
+.authPanel label {
+  display: grid;
+  gap: 6px;
+  color: #3e4a50;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.authPanel input {
+  min-width: 0;
+  padding: 10px 11px;
+  color: #172026;
+  background: #ffffff;
+  border: 1px solid #c9d4d9;
+  border-radius: 5px;
+  font: inherit;
+}
+
+.authPanel button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  color: #ffffff;
+  background: #246b5b;
+  border: 1px solid #246b5b;
+  border-radius: 5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.authPanel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.authPanel p {
+  margin: 0;
+  color: #9b2c2c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
