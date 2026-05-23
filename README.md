@@ -126,6 +126,19 @@ After changing `.env`:
 docker compose up -d --force-recreate agent-service api
 ```
 
+## Service Configuration
+
+Each deployable service owns its own environment file:
+
+```text
+agenttrace/api/.env              # API auth, storage, agent-service URL
+agent_apps/customer_service/.env # LLM provider/model/API keys and agent runtime
+web/.env                         # browser-visible Vite config only
+```
+
+Use the matching `.env.example` file in each service directory as the template.
+Do not put LLM keys or admin tokens in `web/.env`.
+
 ## Optional Auth
 
 Auth is disabled by default for local demos. To protect the dashboard/API, set:
@@ -133,6 +146,12 @@ Auth is disabled by default for local demos. To protect the dashboard/API, set:
 ```env
 AGENTTRACE_AUTH_ENABLED=true
 AGENTTRACE_ADMIN_TOKEN=long-random-secret
+```
+
+Put those values in `agenttrace/api/.env`, then recreate the API container:
+
+```bash
+docker compose up -d --force-recreate api web
 ```
 
 When enabled, the dashboard shows a token login screen. The backend validates
@@ -262,6 +281,8 @@ docker compose run --rm --build e2e
 ```
 
 The Playwright report is written to `e2e/playwright-report/index.html`.
+Auth-enabled e2e coverage is included and runs when the API has auth enabled and
+`PLAYWRIGHT_AUTH_TOKEN` is set for the `e2e` service.
 
 CI runs backend tests, deterministic evals, frontend tests/build, and Dockerized
 Playwright e2e on pushes to `development`.
