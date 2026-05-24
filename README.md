@@ -291,5 +291,3 @@ Auth-enabled e2e coverage is included and runs when the API has auth enabled and
 
 CI runs backend tests, deterministic evals, frontend tests/build, and Dockerized
 Playwright e2e on pushes to `development`.
-
-See `PLAN.md` for project state, roadmap, and interview/demo positioning.
