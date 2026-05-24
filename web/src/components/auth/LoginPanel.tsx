@@ -35,7 +35,7 @@ export function LoginPanel({ error, onLogin }: { error?: string; onLogin: (token
             autoComplete="current-password"
             autoFocus
             onChange={(event) => setToken(event.target.value)}
-            placeholder="Enter admin token"
+            placeholder="Enter access token"
             type="password"
             value={token}
           />

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
+from agenttrace.api.auth import require_roles
 from agenttrace.api.event_bus import EventBus
 from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
 from agenttrace.core.grounding import build_grounding_summary
@@ -132,14 +133,23 @@ def register_trace_routes(
         trace = require_trace(trace_store, trace_id)
         return build_grounding_summary(trace)
 
-    @app.post("/traces/{trace_id}/approvals/{span_id}/approve")
+    @app.post(
+        "/traces/{trace_id}/approvals/{span_id}/approve",
+        dependencies=[Depends(require_roles("admin", "operator"))],
+    )
     def approve_span(trace_id: str, span_id: str) -> dict[str, Any]:
         return update_approval_span(trace_store, trace_id, span_id, "approved", event_bus=event_bus).to_dict()
 
-    @app.post("/traces/{trace_id}/approvals/{span_id}/reject")
+    @app.post(
+        "/traces/{trace_id}/approvals/{span_id}/reject",
+        dependencies=[Depends(require_roles("admin", "operator"))],
+    )
     def reject_span(trace_id: str, span_id: str) -> dict[str, Any]:
         return update_approval_span(trace_store, trace_id, span_id, "rejected", event_bus=event_bus).to_dict()
 
-    @app.post("/traces/{trace_id}/approvals/{span_id}/revert")
+    @app.post(
+        "/traces/{trace_id}/approvals/{span_id}/revert",
+        dependencies=[Depends(require_roles("admin", "operator"))],
+    )
     def revert_span(trace_id: str, span_id: str) -> dict[str, Any]:
         return update_approval_span(trace_store, trace_id, span_id, "blocked", event_bus=event_bus).to_dict()

@@ -35,6 +35,7 @@ export async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
 export type AuthStatus = {
   enabled: boolean;
   authenticated: boolean;
+  role?: "admin" | "operator" | "viewer" | null;
 };
 
 export function getAuthStatus(): Promise<AuthStatus> {

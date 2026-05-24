@@ -19,7 +19,22 @@ from agenttrace.storage.sqlite import SQLiteTraceStore
 class ApiEndpointsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.previous_live_span_delay = os.environ.get("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS")
+        self.previous_auth_env = {
+            name: os.environ.get(name)
+            for name in [
+                "AGENTTRACE_AUTH_ENABLED",
+                "AGENTTRACE_ADMIN_TOKEN",
+                "AGENTTRACE_API_TOKEN",
+                "AGENTTRACE_OPERATOR_TOKEN",
+                "AGENTTRACE_VIEWER_TOKEN",
+            ]
+        }
         os.environ["AGENTTRACE_LIVE_SPAN_DELAY_SECONDS"] = "0.01"
+        os.environ["AGENTTRACE_AUTH_ENABLED"] = "false"
+        os.environ.pop("AGENTTRACE_ADMIN_TOKEN", None)
+        os.environ.pop("AGENTTRACE_API_TOKEN", None)
+        os.environ.pop("AGENTTRACE_OPERATOR_TOKEN", None)
+        os.environ.pop("AGENTTRACE_VIEWER_TOKEN", None)
         self.temp_dir = TemporaryDirectory()
         self.store = SQLiteTraceStore(Path(self.temp_dir.name) / "agenttrace.db")
         self.store.initialize()
@@ -34,6 +49,11 @@ class ApiEndpointsTest(unittest.TestCase):
             os.environ.pop("AGENTTRACE_LIVE_SPAN_DELAY_SECONDS", None)
         else:
             os.environ["AGENTTRACE_LIVE_SPAN_DELAY_SECONDS"] = self.previous_live_span_delay
+        for name, value in self.previous_auth_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         self.temp_dir.cleanup()
 
     def test_health(self) -> None:
@@ -46,7 +66,7 @@ class ApiEndpointsTest(unittest.TestCase):
         response = self.client.get("/auth/status")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"enabled": False, "authenticated": True})
+        self.assertEqual(response.json(), {"enabled": False, "authenticated": True, "role": "admin"})
 
     def test_auth_enabled_requires_login_for_protected_routes(self) -> None:
         from agenttrace.api.main import create_app
@@ -58,7 +78,7 @@ class ApiEndpointsTest(unittest.TestCase):
         protected_response = client.get("/dashboard/summary")
         failed_login_response = client.post("/auth/login", json={"token": "wrong"})
         login_response = client.post("/auth/login", json={"token": "secret"})
-        authenticated_response = client.get("/dashboard/summary")
+        authenticated_response = client.get("/dashboard/summary", headers={"authorization": "Bearer secret"})
 
         self.assertEqual(health_response.status_code, 200)
         self.assertEqual(protected_response.status_code, 401)
@@ -68,6 +88,46 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertNotEqual(login_response.cookies["agenttrace_session"], "secret")
         self.assertIn(".", login_response.cookies["agenttrace_session"])
         self.assertEqual(authenticated_response.status_code, 200)
+
+    def test_auth_roles_limit_approval_mutations(self) -> None:
+        from agenttrace.api.main import create_app
+
+        trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
+        self.store.save_trace(trace)
+        env = {
+            "AGENTTRACE_AUTH_ENABLED": "true",
+            "AGENTTRACE_ADMIN_TOKEN": "admin-secret",
+            "AGENTTRACE_OPERATOR_TOKEN": "operator-secret",
+            "AGENTTRACE_VIEWER_TOKEN": "viewer-secret",
+        }
+
+        with patch.dict("os.environ", env, clear=False):
+            viewer_client = TestClient(create_app(self.store))
+            operator_client = TestClient(create_app(self.store))
+            admin_client = TestClient(create_app(self.store))
+
+        viewer_read = viewer_client.get(
+            f"/traces/{trace.trace_id}",
+            headers={"authorization": "Bearer viewer-secret"},
+        )
+        viewer_approval = viewer_client.post(
+            f"/traces/{trace.trace_id}/approvals/span_approval_failure/approve",
+            headers={"authorization": "Bearer viewer-secret"},
+        )
+        operator_approval = operator_client.post(
+            f"/traces/{trace.trace_id}/approvals/span_approval_failure/approve",
+            headers={"authorization": "Bearer operator-secret"},
+        )
+        admin_approval = admin_client.post(
+            f"/traces/{trace.trace_id}/approvals/span_approval_failure/revert",
+            headers={"authorization": "Bearer admin-secret"},
+        )
+
+        self.assertEqual(viewer_read.status_code, 200)
+        self.assertEqual(viewer_approval.status_code, 403)
+        self.assertEqual(viewer_approval.json()["detail"], "Insufficient role for this action.")
+        self.assertEqual(operator_approval.status_code, 200)
+        self.assertEqual(admin_approval.status_code, 200)
 
     def test_list_evals(self) -> None:
         response = self.client.get("/evals")
