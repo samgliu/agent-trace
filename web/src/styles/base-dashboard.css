@@ -100,6 +100,17 @@ small {
   gap: 10px;
 }
 
+.roleBadge {
+  padding: 7px 9px;
+  color: #314148;
+  background: #eef4f2;
+  border: 1px solid #cfded9;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .logoutButton {
   display: inline-flex;
   align-items: center;

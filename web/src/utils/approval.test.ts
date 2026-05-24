@@ -9,6 +9,15 @@ describe("getApprovalStatus", () => {
         approval_status: "blocked",
         risk_level: "high",
         permission_scope: "billing.refund.multi_month",
+        decision_actor: {
+          type: "token_role",
+          id: "operator",
+          display_name: "Operator",
+          role: "operator",
+        },
+        decision_action: "approved",
+        decision_at: "2026-05-24T01:02:03Z",
+        decision_source: "dashboard",
       }),
     ).toEqual({
       approvalStatus: "blocked",
@@ -16,6 +25,15 @@ describe("getApprovalStatus", () => {
       isResolved: false,
       riskLevel: "high",
       permissionScope: "billing.refund.multi_month",
+      decisionActor: {
+        type: "token_role",
+        id: "operator",
+        displayName: "Operator",
+        role: "operator",
+      },
+      decisionAction: "approved",
+      decisionAt: "2026-05-24T01:02:03Z",
+      decisionSource: "dashboard",
     });
   });
 

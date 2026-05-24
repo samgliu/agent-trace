@@ -12,6 +12,7 @@ import { useEvalRuns } from "./hooks/useEvalRuns";
 import { useLiveWorkflowRun } from "./hooks/useLiveWorkflowRun";
 import { useServerEvents } from "./hooks/useServerEvents";
 import { useTraceData } from "./hooks/useTraceData";
+import { canManageApprovals, type AuthRole } from "./utils/authz";
 import { stringMetadata } from "./utils/source";
 
 export function App() {
@@ -33,10 +34,18 @@ export function App() {
     );
   }
 
-  return <AuthenticatedApp authEnabled={auth.state.enabled} onLogout={auth.logout} />;
+  return <AuthenticatedApp authEnabled={auth.state.enabled} authRole={auth.state.role} onLogout={auth.logout} />;
 }
 
-function AuthenticatedApp({ authEnabled, onLogout }: { authEnabled: boolean; onLogout: () => Promise<void> }) {
+function AuthenticatedApp({
+  authEnabled,
+  authRole,
+  onLogout,
+}: {
+  authEnabled: boolean;
+  authRole: AuthRole | null;
+  onLogout: () => Promise<void>;
+}) {
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshData = useCallback(() => setRefreshKey((value) => value + 1), []);
   const trace = useTraceData({ refreshKey });
@@ -113,7 +122,7 @@ function AuthenticatedApp({ authEnabled, onLogout }: { authEnabled: boolean; onL
   useServerEvents(handleServerEvent);
 
   async function updateApproval(spanId: string, action: ApprovalAction) {
-    if (state.status !== "ready") {
+    if (state.status !== "ready" || !canManageApprovals(authRole)) {
       return;
     }
     await postJson(`/traces/${state.selectedTrace.trace_id}/approvals/${spanId}/${action}`);
@@ -125,18 +134,26 @@ function AuthenticatedApp({ authEnabled, onLogout }: { authEnabled: boolean; onL
   }
 
   if (state.status === "loading") {
-    return <Shell status="Loading traces" actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />} />;
+    return <Shell status="Loading traces" role={authEnabled ? authRole : null} actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />} />;
   }
 
   if (state.status === "error") {
-    return <Shell status="API unavailable" error={state.message} actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />} />;
+    return (
+      <Shell
+        status="API unavailable"
+        role={authEnabled ? authRole : null}
+        error={state.message}
+        actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}
+      />
+    );
   }
 
   if (state.status === "empty") {
     return (
-      <Shell status="Connected" actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}>
+      <Shell status="Connected" role={authEnabled ? authRole : null} actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}>
         <DashboardPage
           state={state}
+          authRole={authRole}
           filters={filters}
           selectedSpanId={selectedSpanId}
           chat={chat}
@@ -153,9 +170,10 @@ function AuthenticatedApp({ authEnabled, onLogout }: { authEnabled: boolean; onL
   }
 
   return (
-    <Shell status="Connected" actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}>
+    <Shell status="Connected" role={authEnabled ? authRole : null} actions={<LogoutButton enabled={authEnabled} onLogout={onLogout} />}>
       <DashboardPage
         state={state}
+        authRole={authRole}
         filters={filters}
         selectedSpanId={selectedSpanId}
         chat={chat}

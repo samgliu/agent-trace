@@ -146,6 +146,9 @@ Auth is disabled by default for local demos. To protect the dashboard/API, set:
 ```env
 AGENTTRACE_AUTH_ENABLED=true
 AGENTTRACE_ADMIN_TOKEN=long-random-secret
+# Optional narrower tokens:
+AGENTTRACE_OPERATOR_TOKEN=long-random-secret
+AGENTTRACE_VIEWER_TOKEN=long-random-secret
 ```
 
 Put those values in `agenttrace/api/.env`, then recreate the API container:
@@ -157,6 +160,8 @@ docker compose up -d --force-recreate api web
 When enabled, the dashboard shows a token login screen. The backend validates
 the token once and sets an httpOnly, signed, expiring session cookie; the
 frontend does not store the secret and the cookie value is not the admin token.
+Admin and operator sessions can approve, reject, and revert approval gates.
+Viewer sessions can read dashboards and traces but cannot mutate approvals.
 `/health`, `/auth/status`, `/auth/login`, and `/auth/logout` stay public.
 Dashboard, trace, chat, eval, workflow, approval, and SSE routes require auth.
 

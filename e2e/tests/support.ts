@@ -4,6 +4,7 @@ export const browserApiBaseURL = process.env.PLAYWRIGHT_BROWSER_API_BASE_URL ?? 
 export const dockerApiBaseURL = process.env.PLAYWRIGHT_DOCKER_API_BASE_URL ?? "http://api:8000";
 const appBaseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
 const authToken = process.env.PLAYWRIGHT_AUTH_TOKEN || process.env.AGENTTRACE_ADMIN_TOKEN || "";
+const viewerToken = process.env.AGENTTRACE_VIEWER_TOKEN || "";
 
 type PrepareAppOptions = {
   auth?: "auto" | "manual" | "session";
@@ -297,6 +298,14 @@ export function hasAuthToken(): boolean {
 
 export function playwrightAuthToken(): string {
   return authToken;
+}
+
+export function hasViewerAuthToken(): boolean {
+  return viewerToken.trim().length > 0;
+}
+
+export function playwrightViewerToken(): string {
+  return viewerToken;
 }
 
 function authenticatedHeaders(headers: Record<string, string>): Record<string, string> {
