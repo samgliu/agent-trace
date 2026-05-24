@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { AlertCircle, ArrowRight, Braces, CircleDollarSign, RotateCcw, ShieldCheck, UserCheck, Wrench } from "lucide-react";
 import type { ApprovalAction, GroundingSummary, Metrics, Span } from "../../types";
 import { getApprovalStatus, type ApprovalStatus } from "../../utils/approval";
+import { canManageApprovals, type AuthRole } from "../../utils/authz";
 import { extractUnsupportedClaims } from "../../utils/claims";
 import { buildMemorySummary, type MemorySummary } from "../../utils/memoryAnalysis";
 import { buildSpanFacts } from "../../utils/spanFacts";
@@ -11,6 +12,7 @@ export function AnalysisPanel({
   grounding,
   spans,
   rawTrace,
+  authRole,
   selectedSpanId,
   onSelectSpan,
   onApprovalAction,
@@ -19,6 +21,7 @@ export function AnalysisPanel({
   grounding: GroundingSummary;
   spans: Span[];
   rawTrace: unknown;
+  authRole: AuthRole | null;
   selectedSpanId: string | null;
   onSelectSpan: (spanId: string) => void;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
@@ -34,6 +37,7 @@ export function AnalysisPanel({
   const memorySummary = buildMemorySummary(spans);
   const erroredSpans = spans.filter((span) => span.error);
   const selectedSpan = spans.find((span) => span.span_id === selectedSpanId) ?? spans[0];
+  const approvalActionsEnabled = canManageApprovals(authRole);
 
   return (
     <section className="panel analysisPanel">
@@ -55,7 +59,12 @@ export function AnalysisPanel({
         <Insight icon={<AlertCircle size={16} />} label="Errors" value={`${erroredSpans.length} errored span`} />
         <Insight icon={<CircleDollarSign size={16} />} label="Most expensive" value={metrics.most_expensive_span?.name ?? "-"} />
       </div>
-      <ApprovalQueue approvals={approvals} onSelectSpan={onSelectSpan} onApprovalAction={onApprovalAction} />
+      <ApprovalQueue
+        approvals={approvals}
+        canManageApprovals={approvalActionsEnabled}
+        onSelectSpan={onSelectSpan}
+        onApprovalAction={onApprovalAction}
+      />
       <GroundingPanel grounding={grounding} onSelectSpan={onSelectSpan} />
       <MemoryPanel summary={memorySummary} onSelectSpan={onSelectSpan} />
       <div className="typeBreakdown">
@@ -109,17 +118,26 @@ export function AnalysisPanel({
           ))}
         </div>
       ) : null}
-      {selectedSpan ? <SpanDetail span={selectedSpan} rawTrace={rawTrace} onApprovalAction={onApprovalAction} /> : null}
+      {selectedSpan ? (
+        <SpanDetail
+          span={selectedSpan}
+          rawTrace={rawTrace}
+          canManageApprovals={approvalActionsEnabled}
+          onApprovalAction={onApprovalAction}
+        />
+      ) : null}
     </section>
   );
 }
 
 function ApprovalQueue({
   approvals,
+  canManageApprovals,
   onSelectSpan,
   onApprovalAction,
 }: {
   approvals: Span[];
+  canManageApprovals: boolean;
   onSelectSpan: (spanId: string) => void;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
@@ -149,7 +167,12 @@ function ApprovalQueue({
               <span>{status.riskLevel ?? "risk unknown"}</span>
               <span>{status.permissionScope ?? "scope unknown"}</span>
             </div>
-            <ApprovalActions spanId={span.span_id} status={status} onApprovalAction={onApprovalAction} />
+            <ApprovalActions
+              spanId={span.span_id}
+              status={status}
+              canManageApprovals={canManageApprovals}
+              onApprovalAction={onApprovalAction}
+            />
           </div>
         );
       })}
@@ -234,10 +257,12 @@ function MemoryPanel({ summary, onSelectSpan }: { summary: MemorySummary; onSele
 function SpanDetail({
   span,
   rawTrace,
+  canManageApprovals,
   onApprovalAction,
 }: {
   span: Span;
   rawTrace: unknown;
+  canManageApprovals: boolean;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "span" | "trace">("overview");
@@ -291,7 +316,14 @@ function SpanDetail({
             </div>
           ) : null}
 
-          {approvalStatus ? <ApprovalNotice spanId={span.span_id} status={approvalStatus} onApprovalAction={onApprovalAction} /> : null}
+          {approvalStatus ? (
+            <ApprovalNotice
+              spanId={span.span_id}
+              status={approvalStatus}
+              canManageApprovals={canManageApprovals}
+              onApprovalAction={onApprovalAction}
+            />
+          ) : null}
 
           {modelOutputText ? <JsonBlock label="Model output" value={modelOutputText} /> : null}
           <JsonBlock label="Input" value={span.input} />
@@ -310,10 +342,12 @@ function SpanDetail({
 function ApprovalNotice({
   spanId,
   status,
+  canManageApprovals,
   onApprovalAction,
 }: {
   spanId: string;
   status: ApprovalStatus;
+  canManageApprovals: boolean;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
   return (
@@ -333,8 +367,13 @@ function ApprovalNotice({
           <dd>{status.permissionScope ?? "-"}</dd>
         </div>
       </dl>
-      <ApprovalActions spanId={spanId} status={status} onApprovalAction={onApprovalAction} />
-      <small>Approval state is stored on the approval span.</small>
+      <ApprovalActions
+        spanId={spanId}
+        status={status}
+        canManageApprovals={canManageApprovals}
+        onApprovalAction={onApprovalAction}
+      />
+      <small>{canManageApprovals ? "Approval state is stored on the approval span." : "Operator role required to change approvals."}</small>
     </div>
   );
 }
@@ -342,26 +381,44 @@ function ApprovalNotice({
 function ApprovalActions({
   spanId,
   status,
+  canManageApprovals,
   onApprovalAction,
 }: {
   spanId: string;
   status: ApprovalStatus;
+  canManageApprovals: boolean;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
 }) {
   const isApproved = status.approvalStatus === "approved";
   const isRejected = status.approvalStatus === "rejected";
+  const disabledTitle = canManageApprovals ? undefined : "Operator role required";
 
   return (
     <div className="approvalActions">
-      <button className="approveButton" disabled={isApproved} onClick={() => void onApprovalAction(spanId, "approve")}>
+      <button
+        className="approveButton"
+        disabled={!canManageApprovals || isApproved}
+        title={disabledTitle}
+        onClick={() => void onApprovalAction(spanId, "approve")}
+      >
         <UserCheck size={15} />
         Approve
       </button>
-      <button className="rejectButton" disabled={isRejected} onClick={() => void onApprovalAction(spanId, "reject")}>
+      <button
+        className="rejectButton"
+        disabled={!canManageApprovals || isRejected}
+        title={disabledTitle}
+        onClick={() => void onApprovalAction(spanId, "reject")}
+      >
         <AlertCircle size={15} />
         Reject
       </button>
-      <button className="revertButton" disabled={!status.isResolved} onClick={() => void onApprovalAction(spanId, "revert")}>
+      <button
+        className="revertButton"
+        disabled={!canManageApprovals || !status.isResolved}
+        title={disabledTitle}
+        onClick={() => void onApprovalAction(spanId, "revert")}
+      >
         <RotateCcw size={15} />
         Revert
       </button>

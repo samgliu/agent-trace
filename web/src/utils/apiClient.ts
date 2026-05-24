@@ -1,3 +1,5 @@
+import type { AuthRole } from "./authz";
+
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export async function fetchJson<T>(path: string): Promise<T> {
@@ -35,7 +37,7 @@ export async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
 export type AuthStatus = {
   enabled: boolean;
   authenticated: boolean;
-  role?: "admin" | "operator" | "viewer" | null;
+  role?: AuthRole | null;
 };
 
 export function getAuthStatus(): Promise<AuthStatus> {

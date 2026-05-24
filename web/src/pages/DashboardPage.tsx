@@ -9,6 +9,7 @@ import { AgentFlowPanel, TraceTimeline } from "../components/trace/TraceTimeline
 import type { ApprovalAction, LoadState, TraceFilters } from "../types";
 import { executionStatus } from "../utils/status";
 import { emptyFilters } from "../utils/traceFilters";
+import type { AuthRole } from "../utils/authz";
 import type { useChatMonitor } from "../hooks/useChatMonitor";
 import type { useEvalRuns } from "../hooks/useEvalRuns";
 import type { useLiveWorkflowRun } from "../hooks/useLiveWorkflowRun";
@@ -17,6 +18,7 @@ type DashboardState = Extract<LoadState, { status: "empty" | "ready" }>;
 
 type DashboardPageProps = {
   state: DashboardState;
+  authRole: AuthRole | null;
   filters: TraceFilters;
   selectedSpanId: string | null;
   chat: ReturnType<typeof useChatMonitor>;
@@ -31,6 +33,7 @@ type DashboardPageProps = {
 
 export function DashboardPage({
   state,
+  authRole,
   filters,
   selectedSpanId,
   chat,
@@ -96,6 +99,7 @@ export function DashboardPage({
         {ready ? (
           <TraceRecord
             state={state}
+            authRole={authRole}
             selectedSpanId={selectedSpanId}
             onApprovalAction={onApprovalAction}
             onSelectSpan={onSelectSpan}
@@ -110,11 +114,13 @@ export function DashboardPage({
 
 function TraceRecord({
   state,
+  authRole,
   selectedSpanId,
   onApprovalAction,
   onSelectSpan,
 }: {
   state: Extract<LoadState, { status: "ready" }>;
+  authRole: AuthRole | null;
   selectedSpanId: string | null;
   onApprovalAction: (spanId: string, action: ApprovalAction) => Promise<void>;
   onSelectSpan: (spanId: string) => void;
@@ -132,6 +138,7 @@ function TraceRecord({
           grounding={state.grounding}
           spans={state.selectedTrace.spans}
           rawTrace={state.rawTrace}
+          authRole={authRole}
           selectedSpanId={selectedSpanId}
           onSelectSpan={onSelectSpan}
           onApprovalAction={onApprovalAction}
