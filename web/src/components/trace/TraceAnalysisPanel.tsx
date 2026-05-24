@@ -4,6 +4,7 @@ import type { ApprovalAction, GroundingSummary, Metrics, Span } from "../../type
 import { getApprovalStatus, type ApprovalStatus } from "../../utils/approval";
 import { canManageApprovals, type AuthRole } from "../../utils/authz";
 import { extractUnsupportedClaims } from "../../utils/claims";
+import { formatShortTimestamp } from "../../utils/format";
 import { buildMemorySummary, type MemorySummary } from "../../utils/memoryAnalysis";
 import { buildSpanFacts } from "../../utils/spanFacts";
 
@@ -366,6 +367,18 @@ function ApprovalNotice({
           <dt>Scope</dt>
           <dd>{status.permissionScope ?? "-"}</dd>
         </div>
+        <div>
+          <dt>Decision</dt>
+          <dd>{status.decisionAction ?? "-"}</dd>
+        </div>
+        <div>
+          <dt>Actor</dt>
+          <dd>{formatDecisionActor(status)}</dd>
+        </div>
+        <div>
+          <dt>Decided</dt>
+          <dd>{status.decisionAt ? formatShortTimestamp(status.decisionAt) : "-"}</dd>
+        </div>
       </dl>
       <ApprovalActions
         spanId={spanId}
@@ -376,6 +389,13 @@ function ApprovalNotice({
       <small>{canManageApprovals ? "Approval state is stored on the approval span." : "Operator role required to change approvals."}</small>
     </div>
   );
+}
+
+function formatDecisionActor(status: ApprovalStatus): string {
+  if (!status.decisionActor) {
+    return "-";
+  }
+  return `${status.decisionActor.displayName} (${status.decisionActor.role})`;
 }
 
 function ApprovalActions({

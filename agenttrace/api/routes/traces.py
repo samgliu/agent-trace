@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from agenttrace.adapters.openai_agents import normalize_openai_agents_trace
-from agenttrace.api.auth import require_roles
+from agenttrace.api.auth import request_actor, require_roles
 from agenttrace.api.event_bus import EventBus
 from agenttrace.api.schemas import SpanIngestRequest, TraceIngestRequest, TraceLifecycleUpdateRequest
 from agenttrace.core.grounding import build_grounding_summary
@@ -137,19 +137,40 @@ def register_trace_routes(
         "/traces/{trace_id}/approvals/{span_id}/approve",
         dependencies=[Depends(require_roles("admin", "operator"))],
     )
-    def approve_span(trace_id: str, span_id: str) -> dict[str, Any]:
-        return update_approval_span(trace_store, trace_id, span_id, "approved", event_bus=event_bus).to_dict()
+    def approve_span(trace_id: str, span_id: str, request: Request) -> dict[str, Any]:
+        return update_approval_span(
+            trace_store,
+            trace_id,
+            span_id,
+            "approved",
+            actor=request_actor(request),
+            event_bus=event_bus,
+        ).to_dict()
 
     @app.post(
         "/traces/{trace_id}/approvals/{span_id}/reject",
         dependencies=[Depends(require_roles("admin", "operator"))],
     )
-    def reject_span(trace_id: str, span_id: str) -> dict[str, Any]:
-        return update_approval_span(trace_store, trace_id, span_id, "rejected", event_bus=event_bus).to_dict()
+    def reject_span(trace_id: str, span_id: str, request: Request) -> dict[str, Any]:
+        return update_approval_span(
+            trace_store,
+            trace_id,
+            span_id,
+            "rejected",
+            actor=request_actor(request),
+            event_bus=event_bus,
+        ).to_dict()
 
     @app.post(
         "/traces/{trace_id}/approvals/{span_id}/revert",
         dependencies=[Depends(require_roles("admin", "operator"))],
     )
-    def revert_span(trace_id: str, span_id: str) -> dict[str, Any]:
-        return update_approval_span(trace_store, trace_id, span_id, "blocked", event_bus=event_bus).to_dict()
+    def revert_span(trace_id: str, span_id: str, request: Request) -> dict[str, Any]:
+        return update_approval_span(
+            trace_store,
+            trace_id,
+            span_id,
+            "blocked",
+            actor=request_actor(request),
+            event_bus=event_bus,
+        ).to_dict()

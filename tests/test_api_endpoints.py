@@ -127,6 +127,15 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(viewer_approval.status_code, 403)
         self.assertEqual(viewer_approval.json()["detail"], "Insufficient role for this action.")
         self.assertEqual(operator_approval.status_code, 200)
+        operator_payload = operator_approval.json()
+        self.assertEqual(operator_payload["span_data"]["decision_actor"]["type"], "token_role")
+        self.assertEqual(operator_payload["span_data"]["decision_actor"]["id"], "operator")
+        self.assertEqual(operator_payload["span_data"]["decision_actor"]["display_name"], "Operator")
+        self.assertEqual(operator_payload["span_data"]["decision_actor"]["role"], "operator")
+        self.assertEqual(operator_payload["span_data"]["decision_source"], "dashboard")
+        self.assertEqual(operator_payload["span_data"]["decision_action"], "approved")
+        self.assertEqual(operator_payload["span_data"]["approved_by"], "Operator")
+        self.assertIsNotNone(operator_payload["span_data"]["decision_at"])
         self.assertEqual(admin_approval.status_code, 200)
 
     def test_list_evals(self) -> None:
@@ -1302,8 +1311,14 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["span_data"]["approval_status"], "approved")
         self.assertEqual(payload["output"]["approval_status"], "approved")
-        self.assertEqual(payload["span_data"]["approved_by"], "demo_user")
+        self.assertEqual(payload["span_data"]["approved_by"], "Admin")
         self.assertIsNotNone(payload["span_data"]["approved_at"])
+        self.assertEqual(payload["span_data"]["decision_actor"]["type"], "token_role")
+        self.assertEqual(payload["span_data"]["decision_actor"]["id"], "admin")
+        self.assertEqual(payload["span_data"]["decision_actor"]["display_name"], "Admin")
+        self.assertEqual(payload["span_data"]["decision_source"], "dashboard")
+        self.assertEqual(payload["span_data"]["decision_action"], "approved")
+        self.assertIsNotNone(payload["span_data"]["decision_at"])
 
     def test_reject_approval_span(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
@@ -1315,6 +1330,7 @@ class ApiEndpointsTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["span_data"]["approval_status"], "rejected")
         self.assertEqual(payload["output"]["approval_status"], "rejected")
+        self.assertEqual(payload["span_data"]["decision_action"], "rejected")
 
     def test_reject_approval_span_appends_chat_event_for_chat_trace(self) -> None:
         session_response = self.client.post(
@@ -1352,6 +1368,8 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["output"]["approval_status"], "blocked")
         self.assertIsNone(payload["span_data"]["approved_by"])
         self.assertIsNone(payload["span_data"]["approved_at"])
+        self.assertEqual(payload["span_data"]["decision_action"], "reverted")
+        self.assertEqual(payload["span_data"]["decision_actor"]["display_name"], "Admin")
 
     def test_approval_action_rejects_non_approval_span(self) -> None:
         response = self.client.post(f"/traces/{self.trace.trace_id}/approvals/span_triage/approve")

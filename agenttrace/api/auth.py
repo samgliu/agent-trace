@@ -19,6 +19,22 @@ Role = str
 
 
 @dataclass(frozen=True)
+class AuthActor:
+    type: str
+    id: str
+    display_name: str
+    role: Role
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "type": self.type,
+            "id": self.id,
+            "display_name": self.display_name,
+            "role": self.role,
+        }
+
+
+@dataclass(frozen=True)
 class AuthConfig:
     enabled: bool
     tokens_by_role: dict[Role, str]
@@ -58,6 +74,7 @@ def register_auth(app: FastAPI, config: AuthConfig) -> None:
         role = authenticated_role(request, config)
         if role is not None:
             request.state.auth_role = role
+            request.state.auth_actor = actor_for_role(role)
             return await call_next(request)
         return JSONResponse({"detail": "Authentication required."}, status_code=401)
 
@@ -130,6 +147,20 @@ def require_roles(*allowed_roles: Role) -> Callable[[Request], None]:
             raise HTTPException(status_code=403, detail="Insufficient role for this action.")
 
     return dependency
+
+
+def actor_for_role(role: Role) -> AuthActor:
+    return AuthActor(type="token_role", id=role, display_name=role.replace("_", " ").title(), role=role)
+
+
+def request_actor(request: Request) -> AuthActor:
+    actor = getattr(request.state, "auth_actor", None)
+    if isinstance(actor, AuthActor):
+        return actor
+    role = getattr(request.state, "auth_role", None)
+    if not isinstance(role, str):
+        role = "admin"
+    return actor_for_role(role)
 
 
 def _is_public_path(path: str) -> bool:

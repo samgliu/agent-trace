@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from agenttrace.api.auth import AuthActor, actor_for_role
 from agenttrace.api.event_bus import EventBus
 from agenttrace.core.models import Span, Trace
 from agenttrace.storage.sqlite import SQLiteTraceStore
@@ -18,6 +19,7 @@ def update_approval_span(
     span_id: str,
     status: str,
     *,
+    actor: AuthActor | None = None,
     event_bus: EventBus | None = None,
 ) -> Span:
     trace = _require_trace(store, trace_id)
@@ -31,6 +33,18 @@ def update_approval_span(
     output = dict(span.output) if isinstance(span.output, dict) else {}
     span_data["approval_status"] = status
     output["approval_status"] = status
+    decision_actor = actor or actor_for_role("admin")
+    decision_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    actor_payload = decision_actor.to_dict()
+    action_label = {"approved": "approved", "rejected": "rejected", "blocked": "reverted"}.get(status, status)
+    span_data["decision_actor"] = actor_payload
+    span_data["decision_source"] = "dashboard"
+    span_data["decision_action"] = action_label
+    span_data["decision_at"] = decision_at
+    output["decision_actor"] = actor_payload
+    output["decision_source"] = "dashboard"
+    output["decision_action"] = action_label
+    output["decision_at"] = decision_at
 
     if status == "blocked":
         span_data["approved_by"] = None
@@ -38,11 +52,10 @@ def update_approval_span(
         output["approved_by"] = None
         output["approved_at"] = None
     else:
-        approved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        span_data["approved_by"] = "demo_user"
-        span_data["approved_at"] = approved_at
-        output["approved_by"] = "demo_user"
-        output["approved_at"] = approved_at
+        span_data["approved_by"] = decision_actor.display_name
+        span_data["approved_at"] = decision_at
+        output["approved_by"] = decision_actor.display_name
+        output["approved_at"] = decision_at
 
     updated = store.update_span_payload(trace_id, span_id, output=output, span_data=span_data)
     if updated is None:
