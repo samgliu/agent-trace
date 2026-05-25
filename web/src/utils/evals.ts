@@ -100,6 +100,29 @@ export type EvalTrendPoint = {
 
 export type EvalTrendSeries = Record<EvalExecutionMode, EvalTrendPoint[]>;
 
+export type EvalFailureTrendPoint = {
+  run_id: string;
+  label: string;
+  created_at: string;
+  execution_mode: EvalExecutionMode;
+  model_provider: string;
+  model_name: string;
+  status: string;
+  pass_rate: number;
+  failed_cases: number;
+  failed_checks: number;
+  categories: Record<EvalCheckCategory, number>;
+};
+
+export type EvalFailureTrends = {
+  suite_id: string;
+  limit: number;
+  execution_mode: EvalExecutionMode | null;
+  categories: EvalCheckCategory[];
+  totals: Record<EvalCheckCategory, number>;
+  points: EvalFailureTrendPoint[];
+};
+
 export type EvalProgress = {
   completed: number;
   total: number;
@@ -160,6 +183,13 @@ export function listEvalRuns(transport: EvalSuiteGetTransport): Promise<EvalRunL
 
 export function getSupportTriageEvalComparison(transport: EvalSuiteGetTransport): Promise<EvalComparison> {
   return transport("/eval-runs/support-triage/comparison");
+}
+
+export function getSupportTriageEvalFailureTrends(
+  transport: EvalSuiteGetTransport,
+  mode: EvalExecutionMode = "llm",
+): Promise<EvalFailureTrends> {
+  return transport(`/eval-runs/support-triage/failure-trends?mode=${mode}&limit=20`);
 }
 
 export function getEvalRun(transport: EvalSuiteGetTransport, runId: string): Promise<EvalSuiteRun> {
