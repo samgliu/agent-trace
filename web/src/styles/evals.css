@@ -518,6 +518,16 @@
   border-radius: 6px;
 }
 
+.evalFailureTrendPanel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
 .evalTrendHeader {
   display: flex;
   align-items: flex-start;
@@ -591,6 +601,41 @@
 
 .evalTrendSeries .evalTrendChart {
   height: 150px;
+}
+
+.evalFailureTrendPanel .evalTrendChart {
+  height: 180px;
+}
+
+.evalFailureLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.evalFailureLegend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  color: #3e4a50;
+  background: #f8fafb;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evalFailureLegend i {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.evalFailureLegend strong {
+  color: #172026;
 }
 
 .evalTrendEmpty {
@@ -680,4 +725,3 @@
   color: #172026;
   font-size: 16px;
 }
-

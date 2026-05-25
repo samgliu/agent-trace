@@ -41,10 +41,23 @@ def update_approval_span(
     span_data["decision_source"] = "dashboard"
     span_data["decision_action"] = action_label
     span_data["decision_at"] = decision_at
+    decision_event = {
+        "decision_actor": actor_payload,
+        "decision_source": "dashboard",
+        "decision_action": action_label,
+        "decision_at": decision_at,
+        "approval_status": status,
+    }
+    decision_history = span_data.get("decision_history")
+    span_data["decision_history"] = [
+        *(decision_history if isinstance(decision_history, list) else []),
+        decision_event,
+    ]
     output["decision_actor"] = actor_payload
     output["decision_source"] = "dashboard"
     output["decision_action"] = action_label
     output["decision_at"] = decision_at
+    output["decision_history"] = span_data["decision_history"]
 
     if status == "blocked":
         span_data["approved_by"] = None

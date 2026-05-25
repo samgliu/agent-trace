@@ -174,6 +174,7 @@ function ApprovalQueue({
               canManageApprovals={canManageApprovals}
               onApprovalAction={onApprovalAction}
             />
+            <ApprovalHistory status={status} />
           </div>
         );
       })}
@@ -386,8 +387,32 @@ function ApprovalNotice({
         canManageApprovals={canManageApprovals}
         onApprovalAction={onApprovalAction}
       />
-      <small>{canManageApprovals ? "Approval state is stored on the approval span." : "Operator role required to change approvals."}</small>
+      <ApprovalHistory status={status} />
+      <small>{canManageApprovals ? "Approval decisions are retained on the approval span." : "Operator role required to change approvals."}</small>
     </div>
+  );
+}
+
+function ApprovalHistory({ status }: { status: ApprovalStatus }) {
+  return (
+    <section className="approvalHistory" aria-label="Decision history">
+      <strong>Decision history</strong>
+      {status.decisionHistory.length === 0 ? (
+        <p>No recorded decisions yet.</p>
+      ) : (
+        <ol>
+          {status.decisionHistory.map((decision, index) => (
+            <li key={`${decision.decisionAt}-${decision.decisionAction}-${index}`}>
+              <div>
+                <b>{decision.decisionAction}</b>
+                <span>{decision.decisionActor ? `${decision.decisionActor.displayName} (${decision.decisionActor.role})` : "Unknown actor"}</span>
+              </div>
+              <time dateTime={decision.decisionAt}>{formatShortTimestamp(decision.decisionAt)}</time>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }
 

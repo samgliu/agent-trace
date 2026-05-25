@@ -10,6 +10,7 @@ from agenttrace.core.models import Trace
 from agenttrace.evals.support_triage import (
     SUPPORT_TRIAGE_EVAL_CASES,
     EvalExecutionMode,
+    eval_check_category,
     run_support_triage_eval_case,
 )
 from agenttrace.storage.sqlite import SQLiteTraceStore
@@ -99,6 +100,63 @@ def build_eval_comparison(
         elif not baseline_case["passed"] and not llm_case["passed"]:
             comparison["both_failed"].append(case_summary)
     return comparison
+
+
+def build_eval_failure_trends(
+    store: SQLiteTraceStore,
+    *,
+    suite_id: str,
+    limit: int = 20,
+    execution_mode: str | None = None,
+) -> dict[str, Any]:
+    limit = min(max(limit, 1), 100)
+    summaries = store.list_eval_runs(limit=100, offset=0)["items"]
+    selected_summaries = [
+        summary
+        for summary in summaries
+        if summary["suite_id"] == suite_id and (execution_mode is None or summary["execution_mode"] == execution_mode)
+    ][:limit]
+    runs = [run for summary in selected_summaries if (run := store.get_eval_run(summary["run_id"])) is not None]
+    runs.reverse()
+
+    categories = ["Routing", "Evidence", "Governance", "Response", "Memory", "Reliability", "Other"]
+    totals = {category: 0 for category in categories}
+    points: list[dict[str, Any]] = []
+    for index, run in enumerate(runs, start=1):
+        failed_by_category = {category: 0 for category in categories}
+        failed_check_count = 0
+        for result in run.get("results", []):
+            for check in result.get("checks", []):
+                if not isinstance(check, dict) or check.get("passed"):
+                    continue
+                category = eval_check_category(str(check.get("name") or ""))
+                failed_by_category[category] = failed_by_category.get(category, 0) + 1
+                totals[category] = totals.get(category, 0) + 1
+                failed_check_count += 1
+        points.append(
+            {
+                "run_id": run["run_id"],
+                "label": f"Run {index}",
+                "created_at": run["created_at"],
+                "execution_mode": run["execution_mode"],
+                "model_provider": run["model_provider"],
+                "model_name": run["model_name"],
+                "status": run["status"],
+                "pass_rate": run["pass_rate"],
+                "failed_cases": run["failed"],
+                "failed_checks": failed_check_count,
+                "categories": failed_by_category,
+            }
+        )
+
+    return {
+        "suite_id": suite_id,
+        "limit": limit,
+        "execution_mode": execution_mode,
+        "categories": categories,
+        "totals": totals,
+        "points": points,
+    }
 
 
 def eval_run_is_degraded(run: dict[str, Any]) -> bool:

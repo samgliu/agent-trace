@@ -20,6 +20,7 @@ from agenttrace.evals.support_triage import (
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 BuildEvalComparison = Callable[..., dict[str, Any]]
+BuildEvalFailureTrends = Callable[..., dict[str, Any]]
 ExecuteEvalCases = Callable[..., None]
 LlmRuntimeErrorStatus = Callable[[str], int]
 PublishTraceEvents = Callable[..., None]
@@ -34,6 +35,7 @@ def register_eval_routes(
     trace_store: SQLiteTraceStore,
     event_bus: EventBus,
     build_eval_comparison: BuildEvalComparison,
+    build_eval_failure_trends: BuildEvalFailureTrends,
     eval_case_result_has_provider_issue: EvalRunPredicate,
     eval_run_is_degraded: EvalRunPredicate,
     execute_eval_cases: ExecuteEvalCases,
@@ -55,6 +57,18 @@ def register_eval_routes(
         deterministic = trace_store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="deterministic")
         llm = trace_store.get_latest_eval_run(suite_id="support-triage-core", execution_mode="llm")
         return build_eval_comparison(suite_id="support-triage-core", deterministic=deterministic, llm=llm)
+
+    @app.get("/eval-runs/support-triage/failure-trends")
+    def get_support_triage_eval_failure_trends(
+        limit: int = Query(20, ge=1, le=100),
+        mode: str | None = Query(None, pattern="^(deterministic|llm)$"),
+    ) -> dict[str, Any]:
+        return build_eval_failure_trends(
+            trace_store,
+            suite_id="support-triage-core",
+            limit=limit,
+            execution_mode=mode,
+        )
 
     @app.get("/eval-runs/{run_id}")
     def get_eval_run(run_id: str) -> dict[str, Any]:

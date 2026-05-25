@@ -300,6 +300,47 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertIsNone(payload["pass_rate_delta"])
         self.assertEqual(payload["llm_regressions"], [])
 
+    def test_support_triage_eval_failure_trends_aggregate_failed_check_categories(self) -> None:
+        self.store.save_eval_run(
+            {
+                "suite_id": "support-triage-core",
+                "name": "Support triage core",
+                "execution_mode": "llm",
+                "model_provider": "gemini",
+                "model_name": "gemini-test",
+                "status": "completed",
+                "total": 1,
+                "passed": 0,
+                "failed": 1,
+                "pass_rate": 0.0,
+                "created_at": "2026-05-02T00:00:00Z",
+                "results": [
+                    {
+                        "case_id": "duplicate-charge-refund",
+                        "name": "Duplicate charge refund",
+                        "trace_id": "trace_eval_trend_llm",
+                        "passed": False,
+                        "score": 0.5,
+                        "checks": [
+                            {"name": "action_type", "expected": "refund_review", "actual": "clarification_request", "passed": False},
+                            {"name": "evidence_id:cus_123", "expected": "includes cus_123", "actual": [], "passed": False},
+                        ],
+                    }
+                ],
+            },
+            run_id="eval_trend_llm",
+        )
+
+        response = self.client.get("/eval-runs/support-triage/failure-trends?mode=llm")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_mode"], "llm")
+        self.assertEqual(payload["totals"]["Routing"], 1)
+        self.assertEqual(payload["totals"]["Evidence"], 1)
+        self.assertEqual(payload["points"][0]["run_id"], "eval_trend_llm")
+        self.assertEqual(payload["points"][0]["categories"]["Routing"], 1)
+
     def test_llm_eval_provider_failure_returns_clean_error(self) -> None:
         with patch(
             "agenttrace.api.routes.evals.run_support_triage_eval_suite",
@@ -1319,6 +1360,9 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["span_data"]["decision_source"], "dashboard")
         self.assertEqual(payload["span_data"]["decision_action"], "approved")
         self.assertIsNotNone(payload["span_data"]["decision_at"])
+        self.assertEqual(len(payload["span_data"]["decision_history"]), 1)
+        self.assertEqual(payload["span_data"]["decision_history"][0]["decision_action"], "approved")
+        self.assertEqual(payload["output"]["decision_history"], payload["span_data"]["decision_history"])
 
     def test_reject_approval_span(self) -> None:
         trace = load_trace_file(Path("examples/support_triage/sample_trace_grounding_failure.json"))
@@ -1370,6 +1414,16 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertIsNone(payload["span_data"]["approved_at"])
         self.assertEqual(payload["span_data"]["decision_action"], "reverted")
         self.assertEqual(payload["span_data"]["decision_actor"]["display_name"], "Admin")
+        self.assertEqual(
+            [event["decision_action"] for event in payload["span_data"]["decision_history"]],
+            ["approved", "reverted"],
+        )
+        saved = self.client.get(f"/traces/{trace.trace_id}").json()
+        saved_span = next(span for span in saved["spans"] if span["span_id"] == "span_approval_failure")
+        self.assertEqual(
+            [event["decision_action"] for event in saved_span["span_data"]["decision_history"]],
+            ["approved", "reverted"],
+        )
 
     def test_approval_action_rejects_non_approval_span(self) -> None:
         response = self.client.post(f"/traces/{self.trace.trace_id}/approvals/span_triage/approve")

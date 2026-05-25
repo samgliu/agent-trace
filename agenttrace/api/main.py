@@ -22,6 +22,7 @@ from agenttrace.api.chat_sessions import (
 )
 from agenttrace.api.eval_runs import (
     build_eval_comparison,
+    build_eval_failure_trends,
     eval_case_result_has_provider_issue,
     eval_run_is_degraded,
     execute_eval_cases,
@@ -89,6 +90,7 @@ def create_app(store: SQLiteTraceStore | None = None) -> FastAPI:
         trace_store=trace_store,
         event_bus=event_bus,
         build_eval_comparison=build_eval_comparison,
+        build_eval_failure_trends=build_eval_failure_trends,
         eval_case_result_has_provider_issue=eval_case_result_has_provider_issue,
         eval_run_is_degraded=eval_run_is_degraded,
         execute_eval_cases=execute_eval_cases,

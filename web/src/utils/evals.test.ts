@@ -19,6 +19,7 @@ import {
   formatEvalValue,
   getEvalRun,
   getSupportTriageEvalComparison,
+  getSupportTriageEvalFailureTrends,
   listEvalRuns,
   resumeEvalRun,
   runSupportTriageEvalSuite,
@@ -210,6 +211,22 @@ describe("eval helpers", () => {
     });
 
     expect(result.pass_rate_delta).toBe(-0.25);
+  });
+
+  it("gets backend-backed LLM failure trends", async () => {
+    const result = await getSupportTriageEvalFailureTrends(async <T>(path: string): Promise<T> => {
+      expect(path).toBe("/eval-runs/support-triage/failure-trends?mode=llm&limit=20");
+      return {
+        suite_id: "support-triage-core",
+        limit: 20,
+        execution_mode: "llm",
+        categories: ["Routing", "Evidence"],
+        totals: { Routing: 1, Evidence: 2 },
+        points: [],
+      } as T;
+    });
+
+    expect(result.totals.Evidence).toBe(2);
   });
 
   it("gets eval run detail", async () => {

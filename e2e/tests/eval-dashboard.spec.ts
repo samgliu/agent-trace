@@ -82,6 +82,13 @@ test("eval dashboard shows running progress, fallback model, and failed check de
       }),
     });
   });
+  await page.route("**/eval-runs/support-triage/failure-trends?mode=llm&limit=20", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ suite_id: "support-triage-core", limit: 20, execution_mode: "llm", categories: [], totals: {}, points: [] }),
+    });
+  });
   await page.route("**/evals/support-triage/run/async?mode=llm", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(runningRun) });
   });
@@ -173,6 +180,34 @@ test("recent eval runs can be opened from history", async ({ page }) => {
       }),
     });
   });
+  await page.route("**/eval-runs/support-triage/failure-trends?mode=llm&limit=20", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        suite_id: "support-triage-core",
+        limit: 20,
+        execution_mode: "llm",
+        categories: ["Routing", "Evidence", "Governance", "Response", "Memory", "Reliability", "Other"],
+        totals: { Routing: 1, Evidence: 2, Governance: 1, Response: 0, Memory: 0, Reliability: 0, Other: 0 },
+        points: [
+          {
+            run_id: summary.run_id,
+            label: "Run 1",
+            created_at: summary.created_at,
+            execution_mode: "llm",
+            model_provider: "gemini",
+            model_name: "gemini-primary",
+            status: "degraded",
+            pass_rate: 0.5,
+            failed_cases: 1,
+            failed_checks: 4,
+            categories: { Routing: 1, Evidence: 2, Governance: 1, Response: 0, Memory: 0, Reliability: 0, Other: 0 },
+          },
+        ],
+      }),
+    });
+  });
   await page.route("**/eval-runs/eval_e2e_history", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detail) });
   });
@@ -190,5 +225,7 @@ test("recent eval runs can be opened from history", async ({ page }) => {
   await expect(evalPanel.getByText("Expected: true")).toBeVisible();
   await expect(evalPanel.getByText("Actual: false")).toBeVisible();
   await expect(evalPanel.getByText("approval policy and validator guardrails")).toBeVisible();
+  await expect(evalPanel.getByRole("img", { name: "LLM eval failed-check category trend" })).toBeVisible();
+  await expect(evalPanel.getByText("Failure trend")).toBeVisible();
   await expect(historyRun).toHaveAttribute("aria-current", "true");
 });

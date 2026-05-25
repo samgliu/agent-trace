@@ -26,18 +26,24 @@ test("approval gate can be approved, rejected, and reverted", async ({ page }) =
   await expect(selectedTrace.getByText(traceId)).toBeVisible();
   await expect(approvalGates.getByText("Human Approval Gate")).toBeVisible();
   await expect(approvalGates.getByText("blocked")).toBeVisible();
+  await expect(approvalGates.getByRole("region", { name: "Decision history" }).getByText("No recorded decisions yet.")).toBeVisible();
   await expect(approvalGates.getByRole("button", { name: "Revert", exact: true })).toBeDisabled();
 
   await approvalGates.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(approvalGates.getByText("approved")).toBeVisible();
+  await expect(approvalGates.getByRole("button", { name: "Human Approval Gate approved", exact: true })).toBeVisible();
   await expect(approvalGates.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
   await expect(approvalGates.getByRole("button", { name: "Revert", exact: true })).toBeEnabled();
 
   await approvalGates.getByRole("button", { name: "Revert", exact: true }).click();
-  await expect(approvalGates.getByText("blocked")).toBeVisible();
+  await expect(approvalGates.getByRole("button", { name: "Human Approval Gate blocked", exact: true })).toBeVisible();
 
   await approvalGates.getByRole("button", { name: "Reject", exact: true }).click();
-  await expect(approvalGates.getByText("rejected")).toBeVisible();
+  await expect(approvalGates.getByRole("button", { name: "Human Approval Gate rejected", exact: true })).toBeVisible();
   await expect(approvalGates.getByRole("button", { name: "Reject", exact: true })).toBeDisabled();
   await expect(approvalGates.getByRole("button", { name: "Revert", exact: true })).toBeEnabled();
+
+  const decisionHistory = approvalGates.getByRole("region", { name: "Decision history" });
+  await expect(decisionHistory.getByText("approved")).toBeVisible();
+  await expect(decisionHistory.getByText("reverted")).toBeVisible();
+  await expect(decisionHistory.getByText("rejected")).toBeVisible();
 });
