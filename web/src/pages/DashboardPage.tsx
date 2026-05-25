@@ -69,6 +69,7 @@ export function DashboardPage({
           run={evals.run}
           history={evals.history}
           comparison={evals.comparison}
+          failureTrends={evals.failureTrends}
           status={evals.status}
           mode={evals.mode}
           onModeChange={evals.setMode}
