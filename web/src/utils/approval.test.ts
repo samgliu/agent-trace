@@ -18,6 +18,21 @@ describe("getApprovalStatus", () => {
         decision_action: "approved",
         decision_at: "2026-05-24T01:02:03Z",
         decision_source: "dashboard",
+        decision_history: [
+          {
+            approval_status: "approved",
+            decision_actor: {
+              type: "token_role",
+              id: "operator",
+              display_name: "Operator",
+              role: "operator",
+            },
+            decision_action: "approved",
+            decision_at: "2026-05-24T01:02:03Z",
+            decision_source: "dashboard",
+          },
+          { decision_action: "reverted", decision_at: "2026-05-24T01:04:03Z", approval_status: "blocked" },
+        ],
       }),
     ).toEqual({
       approvalStatus: "blocked",
@@ -34,6 +49,25 @@ describe("getApprovalStatus", () => {
       decisionAction: "approved",
       decisionAt: "2026-05-24T01:02:03Z",
       decisionSource: "dashboard",
+      decisionHistory: [
+        {
+          approvalStatus: "approved",
+          decisionActor: {
+            type: "token_role",
+            id: "operator",
+            displayName: "Operator",
+            role: "operator",
+          },
+          decisionAction: "approved",
+          decisionAt: "2026-05-24T01:02:03Z",
+          decisionSource: "dashboard",
+        },
+        {
+          approvalStatus: "blocked",
+          decisionAction: "reverted",
+          decisionAt: "2026-05-24T01:04:03Z",
+        },
+      ],
     });
   });
 
