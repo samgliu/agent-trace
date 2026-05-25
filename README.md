@@ -19,6 +19,7 @@ metadata, and eval results.
 - OpenAI Agents-style trace import and normalization.
 - SSE updates for runs, chat, traces, summaries, and eval progress.
 - Deterministic and LLM-backed support-triage evals.
+- Optional role-based dashboard access with audited approval decisions.
 - Dockerized Playwright e2e tests.
 
 ## Architecture
@@ -162,6 +163,9 @@ the token once and sets an httpOnly, signed, expiring session cookie; the
 frontend does not store the secret and the cookie value is not the admin token.
 Admin and operator sessions can approve, reject, and revert approval gates.
 Viewer sessions can read dashboards and traces but cannot mutate approvals.
+Approval decisions retain an ordered history with actor, role, source, action,
+and timestamp metadata, leaving room for future user identities from OAuth or
+SSO.
 `/health`, `/auth/status`, `/auth/login`, and `/auth/logout` stay public.
 Dashboard, trace, chat, eval, workflow, approval, and SSE routes require auth.
 
@@ -286,8 +290,9 @@ docker compose run --rm --build e2e
 ```
 
 The Playwright report is written to `e2e/playwright-report/index.html`.
-Auth-enabled e2e coverage is included and runs when the API has auth enabled and
-`PLAYWRIGHT_AUTH_TOKEN` is set for the `e2e` service.
+Auth-enabled e2e coverage uses `AGENTTRACE_ADMIN_TOKEN` from
+`agenttrace/api/.env` (or a `PLAYWRIGHT_AUTH_TOKEN` override); when
+`AGENTTRACE_VIEWER_TOKEN` is set, it also verifies read-only approval controls.
 
 CI runs backend tests, deterministic evals, frontend tests/build, and Dockerized
 Playwright e2e on pushes to `development`.

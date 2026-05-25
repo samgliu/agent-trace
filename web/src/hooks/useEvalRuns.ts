@@ -3,12 +3,14 @@ import { apiPostJson, fetchJson } from "../utils/apiClient";
 import {
   getEvalRun,
   getSupportTriageEvalComparison,
+  getSupportTriageEvalFailureTrends,
   listEvalRuns,
   resumeEvalRun,
   runSupportTriageEvalSuite,
   startSupportTriageEvalSuite,
   type EvalComparison,
   type EvalExecutionMode,
+  type EvalFailureTrends,
   type EvalRunSummary,
   type EvalSuiteRun,
 } from "../utils/evals";
@@ -18,6 +20,7 @@ export function useEvalRuns(onRefresh: () => void) {
   const [run, setRun] = useState<EvalSuiteRun | null>(null);
   const [history, setHistory] = useState<EvalRunSummary[]>([]);
   const [comparison, setComparison] = useState<EvalComparison | null>(null);
+  const [failureTrends, setFailureTrends] = useState<EvalFailureTrends | null>(null);
   const [status, setStatus] = useState<EvalRunStatus>({ status: "idle" });
   const [mode, setMode] = useState<EvalExecutionMode>("deterministic");
 
@@ -26,9 +29,11 @@ export function useEvalRuns(onRefresh: () => void) {
       const nextHistory = await listEvalRuns(fetchJson);
       setHistory(nextHistory.items);
       setComparison(await getSupportTriageEvalComparison(fetchJson));
+      setFailureTrends(await getSupportTriageEvalFailureTrends(fetchJson, "llm"));
     } catch {
       setHistory([]);
       setComparison(null);
+      setFailureTrends(null);
     }
   }, []);
 
@@ -60,6 +65,7 @@ export function useEvalRuns(onRefresh: () => void) {
       setRun(result);
       setHistory((items) => [result, ...items.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setComparison(await getSupportTriageEvalComparison(fetchJson));
+      setFailureTrends(await getSupportTriageEvalFailureTrends(fetchJson, "llm"));
       setStatus(result.status === "running" ? { status: "running" } : { status: "idle" });
       onRefresh();
     } catch (error) {
@@ -77,6 +83,7 @@ export function useEvalRuns(onRefresh: () => void) {
       setRun(result);
       setHistory((items) => [result, ...items.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setComparison(await getSupportTriageEvalComparison(fetchJson));
+      setFailureTrends(await getSupportTriageEvalFailureTrends(fetchJson, "llm"));
       setStatus(result.status === "running" ? { status: "running" } : { status: "idle" });
       onRefresh();
     } catch (error) {
@@ -88,6 +95,7 @@ export function useEvalRuns(onRefresh: () => void) {
     run,
     history,
     comparison,
+    failureTrends,
     status,
     mode,
     setMode,
