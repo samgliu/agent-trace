@@ -37,6 +37,8 @@ import {
   formatEvalValue,
   type EvalComparison,
   type EvalExecutionMode,
+  type EvalFailureTrendPoint,
+  type EvalFailureTrends,
   type EvalRunSummary,
   type EvalSuiteRun,
   type EvalTrendPoint,
@@ -47,6 +49,7 @@ export function EvalDashboardPanel({
   run,
   history,
   comparison,
+  failureTrends,
   status,
   mode,
   onModeChange,
@@ -58,6 +61,7 @@ export function EvalDashboardPanel({
   run: EvalSuiteRun | null;
   history: EvalRunSummary[];
   comparison: EvalComparison | null;
+  failureTrends: EvalFailureTrends | null;
   status: EvalRunStatus;
   mode: EvalExecutionMode;
   onModeChange: (mode: EvalExecutionMode) => void;
@@ -128,6 +132,7 @@ export function EvalDashboardPanel({
         ))}
       </div>
       <EvalTrendChart history={history} selectedRunId={run?.run_id ?? null} onSelectEvalRun={onSelectEvalRun} />
+      <EvalFailureTrendChart trends={failureTrends} onSelectEvalRun={onSelectEvalRun} />
       <div
         className={
           comparison?.status === "degraded_llm" || evalRunHasProviderIssue(comparison?.llm_run ?? null)
@@ -237,6 +242,106 @@ export function EvalDashboardPanel({
       ) : null}
     </section>
   );
+}
+
+function EvalFailureTrendChart({
+  trends,
+  onSelectEvalRun,
+}: {
+  trends: EvalFailureTrends | null;
+  onSelectEvalRun: (runId: string) => Promise<void>;
+}) {
+  const points = trends?.points ?? [];
+  const categories = (trends?.categories ?? []).filter((category) => (trends?.totals[category] ?? 0) > 0).slice(0, 4);
+  if (points.length === 0 || categories.length === 0) {
+    return null;
+  }
+
+  function handleChartClick(event: MouseHandlerDataParam) {
+    const point = points.find((item) => item.label === event.activeLabel);
+    if (point) {
+      void onSelectEvalRun(point.run_id);
+    }
+  }
+
+  return (
+    <div className="evalFailureTrendPanel">
+      <div className="evalTrendHeader">
+        <div>
+          <small>Failure trend</small>
+          <strong>LLM failed checks by category</strong>
+        </div>
+        <span>{points.length} runs</span>
+      </div>
+      <div className="evalTrendChart" role="img" aria-label="LLM eval failed-check category trend">
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={points} margin={{ top: 12, right: 10, bottom: 0, left: -20 }} onClick={handleChartClick}>
+            <CartesianGrid stroke="#edf1f3" vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: "#637179", fontSize: 11 }} />
+            <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: "#637179", fontSize: 11 }} />
+            <Tooltip content={<EvalFailureTrendTooltip />} cursor={{ stroke: "#9bb7af", strokeWidth: 1 }} />
+            {categories.map((category) => (
+              <Line
+                dataKey={`categories.${category}`}
+                dot={{ r: 3, strokeWidth: 2, fill: "#ffffff" }}
+                key={category}
+                name={category}
+                stroke={failureTrendColor(category)}
+                strokeWidth={2}
+                type="monotone"
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="evalFailureLegend">
+        {categories.map((category) => (
+          <span key={category}>
+            <i style={{ background: failureTrendColor(category) }} />
+            <span>{category}</span>
+            <strong>{trends?.totals[category] ?? 0}</strong>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EvalFailureTrendTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: EvalFailureTrendPoint }> }) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) {
+    return null;
+  }
+  const failedCategories = Object.entries(point.categories)
+    .filter(([, value]) => value > 0)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 4);
+  return (
+    <div className="evalTrendTooltip">
+      <small>{formatShortTimestamp(point.created_at)}</small>
+      <strong>{point.failed_checks} failed checks</strong>
+      <span>
+        {point.failed_cases} failed cases · {evalPassRateLabel(point.pass_rate)} pass rate
+      </span>
+      {failedCategories.map(([category, value]) => (
+        <em key={category}>
+          {category}: {value}
+        </em>
+      ))}
+    </div>
+  );
+}
+
+function failureTrendColor(category: string): string {
+  return {
+    Routing: "#9b2c2c",
+    Evidence: "#6f4ab8",
+    Governance: "#b35f00",
+    Response: "#246b5b",
+    Memory: "#2870a6",
+    Reliability: "#3e4a50",
+    Other: "#637179",
+  }[category] ?? "#637179";
 }
 
 function EvalTrendChart({

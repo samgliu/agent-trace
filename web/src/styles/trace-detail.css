@@ -567,6 +567,67 @@ h3 {
   cursor: not-allowed;
 }
 
+.approvalHistory {
+  margin: 2px 0 10px;
+  padding-top: 10px;
+  border-top: 1px solid #efd79c;
+}
+
+.approvalHistory > strong {
+  margin-bottom: 8px;
+  color: #3e4a50;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.approvalHistory ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.approvalHistory p {
+  margin: 0;
+  color: #637179;
+  font-size: 12px;
+}
+
+.approvalHistory li {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  color: #3e4a50;
+  background: #ffffff;
+  border: 1px solid #efd79c;
+  border-radius: 5px;
+}
+
+.approvalHistory li div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.approvalHistory li b {
+  color: #172026;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.approvalHistory li span,
+.approvalHistory li time {
+  color: #637179;
+  font-size: 12px;
+}
+
+.approvalHistory li time {
+  flex: 0 0 auto;
+}
+
 .approvalQueue {
   display: grid;
   gap: 10px;
@@ -878,4 +939,3 @@ h3 {
   border: 1px solid #f0c4ba;
   border-radius: 6px;
 }
-
