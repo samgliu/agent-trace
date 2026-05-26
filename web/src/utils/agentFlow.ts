@@ -19,6 +19,7 @@ export type AgentFlowStep = {
   model: string | null;
   modelFallbackUsed: boolean;
   decisionSource: string | null;
+  route: string | null;
   durationMs: number | null;
   tokenTotal: number;
   estimatedCost: number | null;
@@ -49,6 +50,7 @@ export function buildAgentFlow(spans: AgentFlowSpan[]): AgentFlowStep[] {
         model: stringValue(span.span_data.model),
         modelFallbackUsed: span.span_data.model_fallback_used === true,
         decisionSource: stringValue(span.span_data.decision_source),
+        route: stringValue(span.span_data.supervisor_route),
         durationMs: span.duration_ms,
         tokenTotal: (span.input_tokens ?? 0) + (span.output_tokens ?? 0),
         estimatedCost: span.estimated_cost,

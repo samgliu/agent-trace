@@ -144,7 +144,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["suites"][0]["suite_id"], "support-triage-core")
-        self.assertEqual(payload["suites"][0]["case_count"], 11)
+        self.assertEqual(payload["suites"][0]["case_count"], 12)
 
     def test_run_support_triage_evals_saves_eval_traces(self) -> None:
         response = self.client.post("/evals/support-triage/run")
@@ -155,7 +155,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["suite_id"], "support-triage-core")
         self.assertEqual(payload["execution_mode"], "deterministic")
         self.assertEqual(payload["model_provider"], "static")
-        self.assertEqual(payload["passed"], 11)
+        self.assertEqual(payload["passed"], 12)
         self.assertEqual(payload["failed"], 0)
         history_response = self.client.get("/eval-runs")
         detail_response = self.client.get(f"/eval-runs/{payload['run_id']}")
@@ -340,6 +340,48 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["totals"]["Evidence"], 1)
         self.assertEqual(payload["points"][0]["run_id"], "eval_trend_llm")
         self.assertEqual(payload["points"][0]["categories"]["Routing"], 1)
+
+    def test_support_triage_eval_failure_trends_exclude_provider_failed_runs(self) -> None:
+        for run_id, status, error in [
+            ("eval_quality_failure", "failed", None),
+            ("eval_provider_failure", "failed", "LLM provider request failed with HTTP 500: upstream error"),
+        ]:
+            self.store.save_eval_run(
+                {
+                    "suite_id": "support-triage-core",
+                    "name": "Support triage core",
+                    "execution_mode": "llm",
+                    "model_provider": "gemini",
+                    "model_name": "gemini-test",
+                    "status": status,
+                    "error": error,
+                    "total": 1,
+                    "passed": 0,
+                    "failed": 1,
+                    "pass_rate": 0.0,
+                    "created_at": "2026-05-02T00:00:00Z" if run_id == "eval_quality_failure" else "2026-05-03T00:00:00Z",
+                    "results": [
+                        {
+                            "case_id": "duplicate-charge-refund",
+                            "name": "Duplicate charge refund",
+                            "trace_id": f"trace_{run_id}",
+                            "passed": False,
+                            "score": 0.0,
+                            "checks": [
+                                {"name": "action_type", "expected": "refund_review", "actual": "clarification_request", "passed": False},
+                            ],
+                        }
+                    ],
+                },
+                run_id=run_id,
+            )
+
+        response = self.client.get("/eval-runs/support-triage/failure-trends?mode=llm&limit=1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([point["run_id"] for point in payload["points"]], ["eval_quality_failure"])
+        self.assertEqual(payload["totals"]["Routing"], 1)
 
     def test_llm_eval_provider_failure_returns_clean_error(self) -> None:
         with patch(
@@ -554,6 +596,69 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(completed["status"], "passed")
         self.assertEqual([result["case_id"] for result in completed["results"]], [cases[0].case_id, cases[1].case_id])
         self.assertEqual(calls, [cases[1].case_id])
+
+    def test_resume_historical_provider_api_failure_reruns_failed_completed_cases(self) -> None:
+        from agenttrace.evals.support_triage import EvalCaseResult, EvalCheck, SUPPORT_TRIAGE_EVAL_CASES
+
+        cases = SUPPORT_TRIAGE_EVAL_CASES[:2]
+        self.store.save_eval_run(
+            {
+                "suite_id": "support-triage-core",
+                "name": "Support triage core",
+                "execution_mode": "llm",
+                "model_provider": "gemini",
+                "model_name": "gemini-test",
+                "status": "failed",
+                "error": "LLM provider request failed with HTTP 500: upstream internal error",
+                "total": 2,
+                "passed": 0,
+                "failed": 2,
+                "pass_rate": 0.0,
+                "results": [
+                    {
+                        "case_id": case.case_id,
+                        "name": case.name,
+                        "trace_id": f"trace_old_{case.case_id}",
+                        "passed": False,
+                        "score": 0.0,
+                        "checks": [{"name": "trace_status", "expected": "passed", "actual": "failed", "passed": False}],
+                    }
+                    for case in cases
+                ],
+            },
+            run_id="eval_historical_provider_failure",
+        )
+        calls: list[str] = []
+
+        def fake_run_case(case, **_kwargs):
+            calls.append(case.case_id)
+            return EvalCaseResult(
+                case=case,
+                trace=Trace(
+                    trace_id=f"trace_rerun_{case.case_id}",
+                    workflow_name="support-triage",
+                    status="passed",
+                ),
+                checks=[EvalCheck("trace_status", "passed", "passed", True)],
+            )
+
+        with patch("agenttrace.api.routes.evals.SUPPORT_TRIAGE_EVAL_CASES", cases):
+            with patch("agenttrace.api.eval_runs.SUPPORT_TRIAGE_EVAL_CASES", cases):
+                with patch("agenttrace.api.eval_runs.run_support_triage_eval_case", side_effect=fake_run_case):
+                    response = self.client.post("/eval-runs/eval_historical_provider_failure/resume")
+                    self.assertEqual(response.status_code, 200)
+                    completed = None
+                    for _ in range(20):
+                        detail = self.client.get("/eval-runs/eval_historical_provider_failure").json()
+                        if detail["status"] != "running":
+                            completed = detail
+                            break
+                        time.sleep(0.01)
+
+        assert completed is not None
+        self.assertEqual(completed["status"], "passed")
+        self.assertEqual(completed["pass_rate"], 1.0)
+        self.assertEqual(calls, [cases[0].case_id, cases[1].case_id])
 
     def test_get_missing_eval_run_returns_404(self) -> None:
         response = self.client.get("/eval-runs/missing")

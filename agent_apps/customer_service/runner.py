@@ -49,9 +49,16 @@ from agent_apps.customer_service.policy_logic import (
     working_memory as _working_memory,
 )
 from agent_apps.customer_service.response_generation import (
+    clarification_response_input as _clarification_response_input,
+    clarification_response_instructions as _clarification_response_instructions,
     customer_response_input as _customer_response_input,
     customer_response_instructions as _customer_response_instructions,
     customer_response_safety as _customer_response_safety,
+)
+from agent_apps.customer_service.routing import (
+    CLARIFY_REQUEST_ROUTE,
+    fallback_supervisor_decision as _fallback_supervisor_decision,
+    validate_supervisor_decision as _validate_supervisor_decision,
 )
 from agent_apps.customer_service.static_llm import StaticLLMClient
 from agent_apps.customer_service.support_tools import LocalSupportToolsClient, McpSupportToolsClient, SupportToolsClient
@@ -104,9 +111,15 @@ class SupportTriageRunner:
             agent_name="Supervisor Agent",
             instructions=_supervisor_instructions(),
             input_data={"message": message, "customer_email": customer_email, "conversation_history": conversation_history},
-            fallback={"route": "triage", "handoff_reason": "Initial customer request requires triage."},
+            fallback=_fallback_supervisor_decision(message, conversation_history),
             allowed_keys={"route", "handoff_reason"},
         )
+        supervisor_decision, supervisor_validation = _validate_supervisor_decision(
+            supervisor_decision,
+            message=message,
+            conversation_history=conversation_history,
+        )
+        supervisor_route = str(supervisor_decision["route"])
         supervisor = _span(
             trace_id=trace_id,
             span_id=span_ids["supervisor"],
@@ -120,12 +133,64 @@ class SupportTriageRunner:
                 "agent_role": "supervisor",
                 "model_provider": self.llm_client.provider_name,
                 **_agent_decision_span_data(supervisor_llm),
+                **supervisor_validation,
+                "supervisor_route": supervisor_route,
             },
             input_tokens=supervisor_llm.input_tokens,
             output_tokens=supervisor_llm.output_tokens,
             estimated_cost=supervisor_llm.estimated_cost,
         )
         emit(supervisor)
+        if supervisor_route == CLARIFY_REQUEST_ROUTE:
+            emit(
+                _span(
+                    trace_id=trace_id,
+                    span_id=span_ids["handoff_response"],
+                    name="Supervisor -> Customer Response Generator",
+                    span_type="handoff",
+                    parent_id=supervisor.span_id,
+                    clock=clock,
+                    duration_ms=75,
+                    span_data={
+                        "from_agent": "Supervisor Agent",
+                        "to_agent": "Customer Response Generator",
+                        "supervisor_route": supervisor_route,
+                    },
+                )
+            )
+            llm_response = self.llm_client.generate(
+                instructions=_clarification_response_instructions(),
+                input_text=_clarification_response_input(message, conversation_history),
+            )
+            emit(
+                _span(
+                    trace_id=trace_id,
+                    span_id=span_ids["customer_response"],
+                    name="Customer Response Generator",
+                    span_type="generation",
+                    parent_id=supervisor.span_id,
+                    clock=clock,
+                    duration_ms=350,
+                    input={"message": message},
+                    output={"response": llm_response.output_text},
+                    span_data={
+                        "agent_role": "response",
+                        "supervisor_route": supervisor_route,
+                        "model_provider": self.llm_client.provider_name,
+                        **_model_call_span_data(llm_response.raw_response),
+                        "raw_response": llm_response.raw_response,
+                    },
+                    input_tokens=llm_response.input_tokens,
+                    output_tokens=llm_response.output_tokens,
+                    estimated_cost=llm_response.estimated_cost,
+                )
+            )
+            return context.finish(
+                status="passed",
+                llm_provider=self.llm_client.provider_name,
+                agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
+                supervisor_route=supervisor_route,
+            )
         emit(
             _span(
                 trace_id=trace_id,
@@ -216,6 +281,7 @@ class SupportTriageRunner:
                 status="failed",
                 llm_provider=self.llm_client.provider_name,
                 agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
+                supervisor_route=supervisor_route,
             )
 
         emit(
@@ -629,6 +695,7 @@ class SupportTriageRunner:
             status="recovered" if validation["approval_required"] else "passed",
             llm_provider=self.llm_client.provider_name,
             agent_decision_mode="llm" if self.use_llm_agents else "deterministic",
+            supervisor_route=supervisor_route,
         )
 
     def _agent_decision(

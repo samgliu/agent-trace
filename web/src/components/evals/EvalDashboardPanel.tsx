@@ -77,7 +77,9 @@ export function EvalDashboardPanel({
   const progress = evalProgress(run);
   const visibleResults = run ? (failures.length > 0 ? failures : run.results).slice(0, 4) : [];
   const improvementPlan = buildEvalImprovementPlan(run);
-  const resumable = Boolean(run && run.execution_mode === "llm" && evalRunHasProviderIssue(run) && run.results.length < run.total);
+  const providerAffected = evalRunHasProviderIssue(run);
+  const resumable = Boolean(run && run.execution_mode === "llm" && providerAffected && !activeRun);
+  const resumeLabel = run && run.results.length >= run.total ? "Retry eval" : "Resume eval";
 
   return (
     <section className="evalDashboard">
@@ -98,7 +100,7 @@ export function EvalDashboardPanel({
           {resumable ? (
             <button className="secondary" type="button" onClick={() => void onResume()} disabled={running}>
               <RotateCcw size={15} />
-              Resume eval
+              {resumeLabel}
             </button>
           ) : null}
         </div>
@@ -106,9 +108,9 @@ export function EvalDashboardPanel({
       <div className="evalSummaryGrid">
         <SummaryFact icon={<CheckCircle2 size={16} />} label="Status" value={evalStatusLabel(run)} />
         <SummaryFact icon={<Bot size={16} />} label="Mode" value={run ? evalModeLabel(run.execution_mode) : evalModeLabel(mode)} />
-        <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? evalPassRateLabel(run.pass_rate) : "-"} />
+        <SummaryFact icon={<Activity size={16} />} label="Pass rate" value={run ? (providerAffected ? "not scored" : evalPassRateLabel(run.pass_rate)) : "-"} />
         <SummaryFact icon={<GitBranch size={16} />} label="Cases" value={run ? (activeRun ? `${progress.completed}/${progress.total}` : `${run.passed}/${run.total}`) : "-"} />
-        <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? String(run.failed) : "-"} />
+        <SummaryFact icon={<AlertCircle size={16} />} label="Failures" value={run ? (providerAffected ? "not scored" : String(run.failed)) : "-"} />
       </div>
       {activeRun ? (
         <div className="evalProgressPanel" role="status" aria-live="polite">
@@ -224,20 +226,24 @@ export function EvalDashboardPanel({
       {history.length > 0 ? (
         <div className="evalHistory">
           <small>Recent eval runs</small>
-          {history.map((item) => (
-            <button
-              aria-label={`Open recent eval run ${formatShortTimestamp(item.created_at)} ${evalPassRateLabel(item.pass_rate)} ${evalModeLabel(item.execution_mode)}`}
-              aria-current={run?.run_id === item.run_id ? "true" : undefined}
-              className={item.failed === 0 ? "passed" : "failed"}
-              key={item.run_id}
-              onClick={() => void onSelectEvalRun(item.run_id)}
-              type="button"
-            >
-              <span>{formatShortTimestamp(item.created_at)}</span>
-              <strong>{evalPassRateLabel(item.pass_rate)}</strong>
-              <em>{evalModeLabel(item.execution_mode)}</em>
-            </button>
-          ))}
+          {history.map((item) => {
+            const unscored = evalRunHasProviderIssue(item);
+            const scoreLabel = unscored ? "not scored" : evalPassRateLabel(item.pass_rate);
+            return (
+              <button
+                aria-label={`Open recent eval run ${formatShortTimestamp(item.created_at)} ${scoreLabel} ${evalModeLabel(item.execution_mode)}`}
+                aria-current={run?.run_id === item.run_id ? "true" : undefined}
+                className={unscored ? "degraded" : item.failed === 0 ? "passed" : "failed"}
+                key={item.run_id}
+                onClick={() => void onSelectEvalRun(item.run_id)}
+                type="button"
+              >
+                <span>{formatShortTimestamp(item.created_at)}</span>
+                <strong>{scoreLabel}</strong>
+                <em>{evalModeLabel(item.execution_mode)}</em>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </section>

@@ -13,7 +13,10 @@ PROMPT_VERSION = "support-triage-v1"
 def supervisor_instructions() -> str:
     return (
         "You are the Supervisor Agent in a customer-service multi-agent workflow. "
-        "Return only JSON with route and handoff_reason. Route should be triage unless the request is unsafe."
+        "Return only JSON with route and handoff_reason. Use standard_support when the customer states an "
+        "order, billing, refund, subscription, return, or account issue that needs specialist investigation. "
+        "Use clarify_request only for an initial greeting or general capability question with no stated "
+        "support issue. Supported routes are standard_support and clarify_request."
     )
 
 

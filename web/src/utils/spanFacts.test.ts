@@ -69,6 +69,7 @@ describe("buildSpanFacts", () => {
         estimated_cost: 0.0002,
         span_data: {
           decision_source: "fallback",
+          supervisor_route: "clarify_request",
           prompt_version: "support-triage-v1",
           fallback_reason: "invalid_json",
           model_provider: "openai-compatible-chat-completions",
@@ -79,6 +80,7 @@ describe("buildSpanFacts", () => {
       { label: "Tokens", value: "22/9" },
       { label: "Cost", value: "$0.0002" },
       { label: "Decision", value: "fallback" },
+      { label: "Route", value: "clarify request" },
       { label: "Prompt", value: "support-triage-v1" },
       { label: "Fallback", value: "invalid json" },
       { label: "Provider", value: "openai-compatible-chat-completions" },

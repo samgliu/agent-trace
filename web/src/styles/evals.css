@@ -463,6 +463,19 @@
   box-shadow: 0 0 0 2px rgba(155, 44, 44, 0.12);
 }
 
+.evalHistory button.degraded {
+  color: #6f4f0f;
+  background: #fff8e8;
+  border-color: #e2b85f;
+}
+
+.evalHistory button.degraded:hover,
+.evalHistory button.degraded:focus-visible,
+.evalHistory button.degraded[aria-current="true"] {
+  border-color: #ae791a;
+  box-shadow: 0 0 0 2px rgba(174, 121, 26, 0.12);
+}
+
 .evalComparison {
   display: grid;
   grid-template-columns: minmax(160px, 1.4fr) repeat(3, minmax(90px, auto));

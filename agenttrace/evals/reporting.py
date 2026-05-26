@@ -112,7 +112,7 @@ def format_eval_report(report: dict[str, Any]) -> str:
 def eval_check_category(name: str) -> str:
     if name in {"trace_status", "error_count"}:
         return "Reliability"
-    if name in {"issue_type", "policy_id", "action_type"}:
+    if name in {"supervisor_route", "issue_type", "policy_id", "action_type"}:
         return "Routing"
     if name.startswith("tool_used") or name.startswith("evidence_id") or name.startswith("agent_state"):
         return "Evidence"
@@ -138,7 +138,7 @@ def _improvement_owner_area(category: str) -> str:
 
 def _improvement_recommended_action(category: str) -> str:
     return {
-        "Routing": "tighten triage, policy retrieval, or action prompts so the selected issue/policy/action matches the request.",
+        "Routing": "tighten supervisor routing, triage, policy retrieval, or action prompts so the selected workflow path and outcome match the request.",
         "Evidence": "verify required tool calls and carry evidence ids into agent state, validation, and final action output.",
         "Governance": "align validator approval decisions and approval reasons with policy requirements.",
         "Response": "adjust response instructions so the answer contains required facts and avoids prohibited claims.",
@@ -150,7 +150,7 @@ def _improvement_recommended_action(category: str) -> str:
 def _improvement_suggested_files(category: str) -> list[str]:
     common = ["agent_apps/customer_service/runner.py", "agenttrace/evals/support_triage.py"]
     extra = {
-        "Routing": ["agent_apps/customer_service/domain.py"],
+        "Routing": ["agent_apps/customer_service/routing.py", "agent_apps/customer_service/domain.py"],
         "Evidence": ["agent_apps/customer_service/domain.py"],
         "Governance": ["agent_apps/customer_service/domain.py"],
         "Response": [],

@@ -201,7 +201,7 @@ export function evalPassRateLabel(passRate: number): string {
 }
 
 export function buildEvalTrendPoints(history: EvalRunSummary[]): EvalTrendPoint[] {
-  return [...history].reverse().map((run, index) => ({
+  return [...history].reverse().filter((run) => !evalRunHasProviderIssue(run)).map((run, index) => ({
     runId: run.run_id,
     label: `Run ${index + 1}`,
     mode: run.execution_mode,
@@ -274,7 +274,10 @@ export function evalRunHasProviderIssue(run: EvalSuiteRun | EvalRunSummary | nul
   const error = run.error?.toLowerCase() ?? "";
   return (
     run.status === "degraded" ||
+    error.includes("llm provider request failed") ||
     error.includes("http 429") ||
+    error.includes("http 500") ||
+    error.includes("http 502") ||
     error.includes("http 503") ||
     error.includes("http 504") ||
     error.includes("http 529") ||
@@ -284,7 +287,9 @@ export function evalRunHasProviderIssue(run: EvalSuiteRun | EvalRunSummary | nul
     error.includes("rate limit") ||
     error.includes("high demand") ||
     error.includes("timed out") ||
-    error.includes("timeout")
+    error.includes("timeout") ||
+    error.includes("missing api key") ||
+    error.includes("not configured")
   );
 }
 
@@ -312,7 +317,7 @@ export function evalComparisonStatusLabel(comparison: EvalComparison | null): st
 
 export function evalCheckCategory(checkName: string): EvalCheckCategory {
   if (checkName === "trace_status" || checkName === "error_count") return "Reliability";
-  if (checkName === "issue_type" || checkName === "policy_id" || checkName === "action_type") return "Routing";
+  if (checkName === "supervisor_route" || checkName === "issue_type" || checkName === "policy_id" || checkName === "action_type") return "Routing";
   if (checkName.startsWith("tool_used") || checkName.startsWith("evidence_id") || checkName.startsWith("agent_state")) return "Evidence";
   if (checkName === "approval_required" || checkName === "approval_reason") return "Governance";
   if (checkName === "grounding_status" || checkName.startsWith("response_")) return "Response";
@@ -366,7 +371,7 @@ export function evalImprovementOwnerArea(category: EvalCheckCategory): string {
 
 export function evalImprovementRecommendedAction(category: EvalCheckCategory): string {
   return {
-    Routing: "Tighten triage, policy retrieval, or action prompts so the selected issue, policy, and action match the request.",
+    Routing: "Tighten supervisor routing, triage, policy retrieval, or action prompts so the selected workflow path and outcome match the request.",
     Evidence: "Verify required tool calls and carry evidence IDs into agent state, validation, and final action output.",
     Governance: "Align validator approval decisions and approval reasons with policy requirements.",
     Response: "Adjust response instructions so the answer contains required facts and avoids prohibited claims.",
@@ -379,7 +384,7 @@ export function evalImprovementRecommendedAction(category: EvalCheckCategory): s
 export function evalImprovementSuggestedFiles(category: EvalCheckCategory): string[] {
   const common = ["agent_apps/customer_service/runner.py", "agenttrace/evals/support_triage.py"];
   const extra: Partial<Record<EvalCheckCategory, string[]>> = {
-    Routing: ["agent_apps/customer_service/domain.py"],
+    Routing: ["agent_apps/customer_service/routing.py", "agent_apps/customer_service/domain.py"],
     Evidence: ["agent_apps/customer_service/domain.py"],
     Governance: ["agent_apps/customer_service/domain.py"],
     Memory: ["agent_apps/customer_service/domain.py"],

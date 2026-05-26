@@ -15,6 +15,7 @@ def support_triage_span_ids(trace_id: str) -> dict[str, str]:
     return {
         "supervisor": span_id(trace_id, "supervisor"),
         "handoff_triage": span_id(trace_id, "handoff_triage"),
+        "handoff_response": span_id(trace_id, "handoff_response"),
         "triage": span_id(trace_id, "triage"),
         "working_memory_write": span_id(trace_id, "working_memory_write"),
         "lookup_customer": span_id(trace_id, "lookup_customer"),
@@ -69,7 +70,7 @@ class WorkflowRunContext:
             self.on_span(span)
         return span
 
-    def finish(self, *, status: str, llm_provider: str, agent_decision_mode: str) -> Trace:
+    def finish(self, *, status: str, llm_provider: str, agent_decision_mode: str, supervisor_route: str) -> Trace:
         return trace(
             trace_id=self.trace_id,
             status=status,
@@ -78,5 +79,6 @@ class WorkflowRunContext:
             spans=self.spans,
             llm_provider=llm_provider,
             agent_decision_mode=agent_decision_mode,
+            supervisor_route=supervisor_route,
             conversation_history_count=self.conversation_history_count,
         )

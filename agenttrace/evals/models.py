@@ -18,6 +18,7 @@ class EvalCase:
     customer_email: str
     expected_trace_status: str
     conversation_history: tuple[dict[str, Any], ...] = ()
+    expected_supervisor_route: str | None = None
     expected_issue_type: str | None = None
     expected_policy_id: str | None = None
     expected_action_type: str | None = None

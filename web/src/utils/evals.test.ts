@@ -189,6 +189,16 @@ describe("eval helpers", () => {
         ...sampleRun,
         run_id: "deterministic_run",
       },
+      {
+        ...sampleRun,
+        run_id: "provider_failed_run",
+        execution_mode: "llm",
+        model_provider: "gemini",
+        model_name: "gemini-test",
+        pass_rate: 0,
+        status: "failed",
+        error: "LLM provider request failed with HTTP 500: upstream internal error",
+      },
     ]);
 
     expect(series.deterministic.map((point) => point.runId)).toEqual(["deterministic_run"]);
@@ -252,6 +262,7 @@ describe("eval helpers", () => {
       }),
     ).toBe("Provider degraded");
     expect(evalRunHasProviderIssue({ ...sampleRun, error: "LLM provider request failed with HTTP 503: UNAVAILABLE" })).toBe(true);
+    expect(evalRunHasProviderIssue({ ...sampleRun, error: "LLM provider request failed with HTTP 500: upstream internal error" })).toBe(true);
     expect(evalRunHasProviderIssue({ ...sampleRun, error: "LLM provider request failed: The read operation timed out" })).toBe(true);
     expect(
       evalComparisonStatusLabel({

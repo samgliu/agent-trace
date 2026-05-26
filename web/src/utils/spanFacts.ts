@@ -29,6 +29,11 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
     facts.push({ label: "Decision", value: formatDecisionSource(decisionSource) });
   }
 
+  const supervisorRoute = stringValue(span.span_data.supervisor_route);
+  if (supervisorRoute) {
+    facts.push({ label: "Route", value: supervisorRoute.replaceAll("_", " ") });
+  }
+
   const promptVersion = stringValue(span.span_data.prompt_version);
   if (promptVersion) {
     facts.push({ label: "Prompt", value: promptVersion });
