@@ -115,8 +115,12 @@ def build_eval_failure_trends(
         summary
         for summary in summaries
         if summary["suite_id"] == suite_id and (execution_mode is None or summary["execution_mode"] == execution_mode)
+    ]
+    runs = [
+        run
+        for summary in selected_summaries
+        if (run := store.get_eval_run(summary["run_id"])) is not None and not eval_run_is_degraded(run)
     ][:limit]
-    runs = [run for summary in selected_summaries if (run := store.get_eval_run(summary["run_id"])) is not None]
     runs.reverse()
 
     categories = ["Routing", "Evidence", "Governance", "Response", "Memory", "Reliability", "Other"]
@@ -160,7 +164,15 @@ def build_eval_failure_trends(
 
 
 def eval_run_is_degraded(run: dict[str, Any]) -> bool:
-    return run.get("status") == "degraded" or is_degraded_provider_error(str(run.get("error") or ""))
+    return (
+        run.get("status") == "degraded"
+        or is_degraded_provider_error(str(run.get("error") or ""))
+        or any(
+            eval_case_result_has_provider_issue(result)
+            for result in run.get("results") or []
+            if isinstance(result, dict)
+        )
+    )
 
 
 def eval_case_result_has_provider_issue(result: dict[str, Any]) -> bool:
@@ -182,7 +194,9 @@ def eval_case_result_has_provider_issue(result: dict[str, Any]) -> bool:
 
 def is_degraded_provider_error(message: str) -> bool:
     lowered = message.lower()
-    if "http 429" in lowered or "http 503" in lowered or "http 504" in lowered or "http 529" in lowered:
+    if "llm provider request failed" in lowered:
+        return True
+    if "http 429" in lowered or "http 500" in lowered or "http 502" in lowered or "http 503" in lowered or "http 504" in lowered or "http 529" in lowered:
         return True
     return any(
         marker in lowered
@@ -194,6 +208,8 @@ def is_degraded_provider_error(message: str) -> bool:
             "high demand",
             "timed out",
             "timeout",
+            "missing api key",
+            "not configured",
         )
     )
 

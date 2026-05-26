@@ -197,8 +197,9 @@ python3 -m agenttrace.cli eval support-triage --json
 ```
 
 Deterministic evals are the stable baseline. LLM-backed evals measure the
-configured provider/model and can be resumed when provider rate limits or
-capacity errors interrupt a run.
+configured provider/model. Provider/API failures are retained as unscored
+history instead of agent-quality trend points; affected runs can be retried in
+place after provider recovery without rerunning successful cases.
 
 ## CLI
 

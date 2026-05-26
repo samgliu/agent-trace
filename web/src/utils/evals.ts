@@ -201,7 +201,7 @@ export function evalPassRateLabel(passRate: number): string {
 }
 
 export function buildEvalTrendPoints(history: EvalRunSummary[]): EvalTrendPoint[] {
-  return [...history].reverse().map((run, index) => ({
+  return [...history].reverse().filter((run) => !evalRunHasProviderIssue(run)).map((run, index) => ({
     runId: run.run_id,
     label: `Run ${index + 1}`,
     mode: run.execution_mode,
@@ -274,7 +274,10 @@ export function evalRunHasProviderIssue(run: EvalSuiteRun | EvalRunSummary | nul
   const error = run.error?.toLowerCase() ?? "";
   return (
     run.status === "degraded" ||
+    error.includes("llm provider request failed") ||
     error.includes("http 429") ||
+    error.includes("http 500") ||
+    error.includes("http 502") ||
     error.includes("http 503") ||
     error.includes("http 504") ||
     error.includes("http 529") ||
@@ -284,7 +287,9 @@ export function evalRunHasProviderIssue(run: EvalSuiteRun | EvalRunSummary | nul
     error.includes("rate limit") ||
     error.includes("high demand") ||
     error.includes("timed out") ||
-    error.includes("timeout")
+    error.includes("timeout") ||
+    error.includes("missing api key") ||
+    error.includes("not configured")
   );
 }
 

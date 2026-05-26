@@ -122,7 +122,7 @@ test("recent eval runs can be opened from history", async ({ page }) => {
     model_name: "gemini-primary",
     status: "degraded",
     error: "LLM provider request failed with HTTP 429: quota exceeded",
-    total: 3,
+    total: 2,
     passed: 1,
     failed: 1,
     pass_rate: 0.5,
@@ -189,22 +189,8 @@ test("recent eval runs can be opened from history", async ({ page }) => {
         limit: 20,
         execution_mode: "llm",
         categories: ["Routing", "Evidence", "Governance", "Response", "Memory", "Reliability", "Other"],
-        totals: { Routing: 1, Evidence: 2, Governance: 1, Response: 0, Memory: 0, Reliability: 0, Other: 0 },
-        points: [
-          {
-            run_id: summary.run_id,
-            label: "Run 1",
-            created_at: summary.created_at,
-            execution_mode: "llm",
-            model_provider: "gemini",
-            model_name: "gemini-primary",
-            status: "degraded",
-            pass_rate: 0.5,
-            failed_cases: 1,
-            failed_checks: 4,
-            categories: { Routing: 1, Evidence: 2, Governance: 1, Response: 0, Memory: 0, Reliability: 0, Other: 0 },
-          },
-        ],
+        totals: { Routing: 0, Evidence: 0, Governance: 0, Response: 0, Memory: 0, Reliability: 0, Other: 0 },
+        points: [],
       }),
     });
   });
@@ -219,13 +205,12 @@ test("recent eval runs can be opened from history", async ({ page }) => {
   await historyRun.click();
 
   await expect(evalPanel.getByText("Provider degraded").first()).toBeVisible();
-  await expect(evalPanel.getByText("not scored")).toBeVisible();
-  await expect(evalPanel.getByRole("button", { name: "Resume eval" })).toBeVisible();
+  await expect(evalPanel.getByText("not scored").first()).toBeVisible();
+  await expect(evalPanel.getByRole("button", { name: "Retry eval" })).toBeVisible();
   await expect(evalPanel.getByRole("button", { name: /Historical failure case/ })).toBeVisible();
   await expect(evalPanel.getByText("Expected: true")).toBeVisible();
   await expect(evalPanel.getByText("Actual: false")).toBeVisible();
   await expect(evalPanel.getByText("approval policy and validator guardrails")).toBeVisible();
-  await expect(evalPanel.getByRole("img", { name: "LLM eval failed-check category trend" })).toBeVisible();
-  await expect(evalPanel.getByText("Failure trend")).toBeVisible();
+  await expect(evalPanel.getByRole("img", { name: "LLM eval failed-check category trend" })).not.toBeVisible();
   await expect(historyRun).toHaveAttribute("aria-current", "true");
 });

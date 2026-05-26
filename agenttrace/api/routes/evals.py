@@ -161,6 +161,12 @@ def register_eval_routes(
             for result in run.get("results", [])
             if eval_case_result_has_provider_issue(result)
         }
+        if not retry_case_ids and eval_run_is_degraded(run):
+            retry_case_ids = {
+                result["case_id"]
+                for result in run.get("results", [])
+                if not result.get("passed")
+            }
         preserved_results = [
             result for result in run.get("results", []) if result["case_id"] not in retry_case_ids
         ]
