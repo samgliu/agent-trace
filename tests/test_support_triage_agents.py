@@ -144,6 +144,61 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
         self.assertEqual(action.input_tokens, 11)
 
+    def test_supervisor_can_route_clarification_directly_to_response(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"clarify_request","handoff_reason":"The customer has not stated a support issue yet."}',
+                "I can help with orders, billing, subscriptions, or account access. What do you need help with?",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Hello, what can you help me with?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_clarify_route",
+        )
+
+        supervisor = next(span for span in trace.spans if span.name == "Supervisor Agent")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(trace.metadata["supervisor_route"], "clarify_request")
+        self.assertEqual(supervisor.output["route"], "clarify_request")
+        self.assertEqual(supervisor.span_data["supervisor_route"], "clarify_request")
+        self.assertEqual(
+            [span.name for span in trace.spans],
+            ["Supervisor Agent", "Supervisor -> Customer Response Generator", "Customer Response Generator"],
+        )
+        self.assertEqual(response.span_data["supervisor_route"], "clarify_request")
+        self.assertEqual(len(llm.calls), 2)
+
+    def test_supervisor_cannot_skip_support_flow_for_actionable_request(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"clarify_request","handoff_reason":"Ask what the customer needs."}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Verified duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_invalid_clarify_route",
+        )
+
+        supervisor = next(span for span in trace.spans if span.name == "Supervisor Agent")
+        self.assertEqual(trace.metadata["supervisor_route"], "standard_support")
+        self.assertEqual(supervisor.output["route"], "standard_support")
+        self.assertEqual(supervisor.span_data["decision_source"], "policy_validation")
+        self.assertEqual(supervisor.span_data["validation_reason"], "actionable_request_requires_support_route")
+        self.assertIn("Triage Agent", [span.name for span in trace.spans])
+        self.assertIn("create_refund_review", [span.name for span in trace.spans])
+
     def test_llm_agent_action_falls_back_when_action_type_is_unsupported(self) -> None:
         llm = QueueLLMClient(
             [

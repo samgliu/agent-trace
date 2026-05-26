@@ -18,6 +18,7 @@ def trace(
     spans: list[Span],
     llm_provider: str,
     agent_decision_mode: str,
+    supervisor_route: str,
     conversation_history_count: int = 0,
 ) -> Trace:
     result = Trace(
@@ -29,6 +30,7 @@ def trace(
             "runner": "agent_apps.customer_service.runner",
             "llm_provider": llm_provider,
             "agent_decision_mode": agent_decision_mode,
+            "supervisor_route": supervisor_route,
             "conversation_history_count": conversation_history_count,
         },
         raw_payload=None,

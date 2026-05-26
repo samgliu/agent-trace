@@ -312,7 +312,7 @@ export function evalComparisonStatusLabel(comparison: EvalComparison | null): st
 
 export function evalCheckCategory(checkName: string): EvalCheckCategory {
   if (checkName === "trace_status" || checkName === "error_count") return "Reliability";
-  if (checkName === "issue_type" || checkName === "policy_id" || checkName === "action_type") return "Routing";
+  if (checkName === "supervisor_route" || checkName === "issue_type" || checkName === "policy_id" || checkName === "action_type") return "Routing";
   if (checkName.startsWith("tool_used") || checkName.startsWith("evidence_id") || checkName.startsWith("agent_state")) return "Evidence";
   if (checkName === "approval_required" || checkName === "approval_reason") return "Governance";
   if (checkName === "grounding_status" || checkName.startsWith("response_")) return "Response";
@@ -366,7 +366,7 @@ export function evalImprovementOwnerArea(category: EvalCheckCategory): string {
 
 export function evalImprovementRecommendedAction(category: EvalCheckCategory): string {
   return {
-    Routing: "Tighten triage, policy retrieval, or action prompts so the selected issue, policy, and action match the request.",
+    Routing: "Tighten supervisor routing, triage, policy retrieval, or action prompts so the selected workflow path and outcome match the request.",
     Evidence: "Verify required tool calls and carry evidence IDs into agent state, validation, and final action output.",
     Governance: "Align validator approval decisions and approval reasons with policy requirements.",
     Response: "Adjust response instructions so the answer contains required facts and avoids prohibited claims.",
@@ -379,7 +379,7 @@ export function evalImprovementRecommendedAction(category: EvalCheckCategory): s
 export function evalImprovementSuggestedFiles(category: EvalCheckCategory): string[] {
   const common = ["agent_apps/customer_service/runner.py", "agenttrace/evals/support_triage.py"];
   const extra: Partial<Record<EvalCheckCategory, string[]>> = {
-    Routing: ["agent_apps/customer_service/domain.py"],
+    Routing: ["agent_apps/customer_service/routing.py", "agent_apps/customer_service/domain.py"],
     Evidence: ["agent_apps/customer_service/domain.py"],
     Governance: ["agent_apps/customer_service/domain.py"],
     Memory: ["agent_apps/customer_service/domain.py"],

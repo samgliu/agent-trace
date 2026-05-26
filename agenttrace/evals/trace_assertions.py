@@ -14,6 +14,8 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
     checks = [
         check("trace_status", case.expected_trace_status, trace.status),
     ]
+    if case.expected_supervisor_route is not None:
+        checks.append(check("supervisor_route", case.expected_supervisor_route, actual["supervisor_route"]))
     if case.expected_issue_type is not None:
         checks.append(check("issue_type", case.expected_issue_type, actual["issue_type"]))
     if case.expected_policy_id is not None:
@@ -73,6 +75,7 @@ def model_events(trace: Trace) -> list[dict[str, Any]]:
 
 
 def actual_values(trace: Trace) -> dict[str, Any]:
+    supervisor_span = find_span(trace, "Supervisor Agent")
     triage_span = find_span(trace, "Triage Agent")
     retrieval_span = find_span(trace, "retrieve_policy")
     action_span = find_span(trace, "Action Agent")
@@ -82,6 +85,7 @@ def actual_values(trace: Trace) -> dict[str, Any]:
     state_span = find_span(trace, "Update Agent State") or find_span(trace, "Write Working Memory")
     summary = build_trace_summary(trace)
     return {
+        "supervisor_route": dict_value(supervisor_span.output if supervisor_span else None, "route"),
         "issue_type": dict_value(triage_span.output if triage_span else None, "issue_type"),
         "policy_id": dict_value(retrieval_span.output if retrieval_span else None, "policy_id"),
         "action_type": dict_value(action_span.output if action_span else None, "action_type"),

@@ -111,6 +111,7 @@ function AgentFlowCard({
         {step.estimatedCost ? <span>{formatCost(step.estimatedCost)}</span> : null}
       </div>
       <div className="agentFlowBadges">
+        {step.route ? <em>Route: {step.route.replaceAll("_", " ")}</em> : null}
         {step.handoffCount > 0 ? <em>{step.handoffCount} handoff</em> : null}
         {step.toolCount > 0 ? <em>{step.toolCount} tool</em> : null}
         {step.modelFallbackUsed ? <strong>Model fallback</strong> : null}

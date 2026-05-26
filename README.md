@@ -2,9 +2,9 @@
 
 AgentTrace is a trace operations dashboard for debugging, monitoring, and
 evaluating multi-agent AI workflows. The repo includes a customer-service
-multi-agent app as the reference workload, so the dashboard can observe real
-chat turns, tool calls, handoffs, approvals, grounding, latency, token/cost
-metadata, and eval results.
+multi-agent app with Supervisor-directed execution as the reference workload.
+The dashboard observes real chat turns, routed handoffs, tool calls,
+approvals, grounding, latency, token/cost metadata, and eval results.
 
 <p align="center">
   <img src="demo/screencapture.png" alt="AgentTrace dashboard screenshot" width="680" />
@@ -89,6 +89,15 @@ Order number: #1234
 
 The agent should preserve the active issue, avoid unrelated duplicate-charge
 leakage, and explain the consumed-product return boundary.
+
+Routing case:
+
+```text
+Hello, what can you help me with?
+```
+
+This request takes the direct `clarify_request` route from Supervisor to the
+Customer Response Generator, without unnecessary account or policy tools.
 
 ## Model Configuration
 

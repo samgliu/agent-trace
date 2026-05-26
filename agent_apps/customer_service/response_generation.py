@@ -18,6 +18,23 @@ def customer_response_instructions() -> str:
     )
 
 
+def clarification_response_instructions() -> str:
+    return (
+        "You are a customer service agent receiving an initial message without an actionable support issue. "
+        "Respond briefly with the kinds of issues you can help investigate and ask what the customer needs. "
+        "Do not claim that tools were called, an account was reviewed, or an action was created."
+    )
+
+
+def clarification_response_input(message: str, conversation_history: list[dict[str, Any]]) -> str:
+    return (
+        "Route: clarify_request\n"
+        f"Customer message: {message}\n"
+        f"Conversation history: {conversation_history}\n"
+        "No customer lookup, policy retrieval, or support action was needed for this response."
+    )
+
+
 def customer_response_input(
     message: str,
     customer: dict[str, Any],
@@ -68,6 +85,8 @@ def customer_response_safety(
 
 
 def static_customer_response(input_text: str, default_response: str) -> str:
+    if "Route: clarify_request" in input_text:
+        return "I can help with orders, billing, subscriptions, returns, or account access. What do you need help with?"
     has_conversation_history = input_has_conversation_history(input_text)
     if "policy_consumed_product_return" in input_text:
         if has_quality_exception(input_text.lower()):
