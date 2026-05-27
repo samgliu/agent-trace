@@ -15,6 +15,7 @@ from agenttrace.core.importer import normalize_trace
 from agenttrace.core.metrics import build_trace_metrics
 from agenttrace.core.models import Span, Trace
 from agenttrace.core.provenance import with_source_metadata
+from agenttrace.core.redaction import redact_raw_payload, redact_span_dict, redact_trace_dict
 from agenttrace.storage.sqlite import SQLiteTraceStore
 
 RequireTrace = Callable[[SQLiteTraceStore, str], Trace]
@@ -76,7 +77,7 @@ def register_trace_routes(
         trace_store.upsert_trace(trace)
         publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = require_trace(trace_store, trace.trace_id)
-        return saved.to_dict()
+        return redact_trace_dict(saved.to_dict())
 
     @app.post("/ingest/openai-agents")
     def ingest_openai_agents_trace(payload: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +87,7 @@ def register_trace_routes(
             trace_store.upsert_span(span)
         publish_trace_events(event_bus, "trace.created", trace.trace_id)
         saved = require_trace(trace_store, trace.trace_id)
-        return saved.to_dict()
+        return redact_trace_dict(saved.to_dict())
 
     @app.post("/traces/{trace_id}/spans")
     def ingest_span(trace_id: str, payload: SpanIngestRequest) -> dict[str, Any]:
@@ -94,7 +95,7 @@ def register_trace_routes(
         span = Span.from_dict({**payload.model_dump(), "trace_id": trace_id}, trace_id=trace_id)
         saved = trace_store.upsert_span(span)
         publish_trace_events(event_bus, "span.updated", trace_id, span_id=saved.span_id)
-        return saved.to_dict()
+        return redact_span_dict(saved.to_dict())
 
     @app.patch("/traces/{trace_id}")
     def update_trace(trace_id: str, payload: TraceLifecycleUpdateRequest) -> dict[str, Any]:
@@ -106,22 +107,22 @@ def register_trace_routes(
         if updated is None:
             raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")
         publish_trace_events(event_bus, "trace.updated", trace_id)
-        return updated.to_dict()
+        return redact_trace_dict(updated.to_dict())
 
     @app.get("/traces/{trace_id}")
     def get_trace(trace_id: str) -> dict[str, Any]:
         trace = require_trace(trace_store, trace_id)
-        return trace.to_dict()
+        return redact_trace_dict(trace.to_dict())
 
     @app.get("/traces/{trace_id}/raw")
     def get_raw_trace(trace_id: str) -> dict[str, Any] | list[Any]:
         trace = require_trace(trace_store, trace_id)
-        return trace.raw_payload or trace.to_dict()
+        return redact_raw_payload(trace.raw_payload or trace.to_dict())
 
     @app.get("/traces/{trace_id}/spans")
     def get_spans(trace_id: str) -> list[dict[str, Any]]:
         trace = require_trace(trace_store, trace_id)
-        return [span.to_dict() for span in trace.spans]
+        return [redact_span_dict(span.to_dict()) for span in trace.spans]
 
     @app.get("/traces/{trace_id}/metrics")
     def get_metrics(trace_id: str) -> dict[str, Any]:
@@ -131,7 +132,7 @@ def register_trace_routes(
     @app.get("/traces/{trace_id}/grounding")
     def get_grounding(trace_id: str) -> dict[str, Any]:
         trace = require_trace(trace_store, trace_id)
-        return build_grounding_summary(trace)
+        return redact_raw_payload(build_grounding_summary(trace)) or {}
 
     @app.post(
         "/traces/{trace_id}/approvals/{span_id}/approve",
