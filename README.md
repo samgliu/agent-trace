@@ -20,6 +20,8 @@ approvals, grounding, latency, token/cost metadata, and eval results.
 - SSE updates for runs, chat, traces, summaries, and eval progress.
 - Deterministic and LLM-backed support-triage evals.
 - Optional role-based dashboard access with audited approval decisions.
+- Default redaction for common PII in trace, span, grounding, and raw payload
+  responses.
 - Dockerized Playwright e2e tests.
 
 ## Architecture
@@ -177,6 +179,14 @@ and timestamp metadata, leaving room for future user identities from OAuth or
 SSO.
 `/health`, `/auth/status`, `/auth/login`, and `/auth/logout` stay public.
 Dashboard, trace, chat, eval, workflow, approval, and SSE routes require auth.
+
+## Privacy
+
+Trace, span, grounding, and raw-payload responses redact common sensitive values
+such as emails, phone numbers, and payment-like numbers by default. Redacted
+responses include privacy metadata (`contains_pii`, `redaction_applied`, and
+`redaction_types`) so the dashboard can indicate when sensitive content was
+masked.
 
 ## Evals
 
