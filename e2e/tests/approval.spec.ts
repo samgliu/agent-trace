@@ -18,7 +18,9 @@ test("approval gate can be approved, rejected, and reverted", async ({ page }) =
 
   await page.goto("/");
   await page.getByRole("combobox", { name: "Workflow", exact: true }).selectOption(workflowName);
-  await page.getByRole("button", { name: new RegExp(traceId) }).click();
+  const runButton = page.getByRole("complementary", { name: "Runs inbox" }).getByRole("button", { name: new RegExp(traceId) });
+  await expect(runButton).toBeVisible();
+  await runButton.click();
 
   const selectedTrace = page.getByRole("region", { name: "Selected trace" });
   const approvalGates = page.getByRole("region", { name: "Approval gates" });

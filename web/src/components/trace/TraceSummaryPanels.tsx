@@ -12,13 +12,14 @@ import {
 import { SummaryFact } from "../common/SummaryFact";
 import type { GroundingSummary, Metrics, TraceDetail } from "../../types";
 import { formatCost, formatDuration, formatTokens } from "../../utils/format";
-import { sourceKindLabel, sourceLabel, stringMetadata } from "../../utils/source";
+import { privacyLabel, sourceKindLabel, sourceLabel, stringMetadata } from "../../utils/source";
 import { buildExecutiveSummary, countApprovals } from "../../utils/summary";
 
 export function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; executionStatus: string }) {
   const sourceFormat = stringMetadata(trace.metadata.source_format);
   const sourceKind = stringMetadata(trace.metadata.source_kind);
   const ingestedAt = stringMetadata(trace.metadata.ingested_at);
+  const privacy = privacyLabel(trace.metadata);
 
   return (
     <section className="traceHeader" aria-label="Selected trace">
@@ -31,6 +32,7 @@ export function TraceHeader({ trace, executionStatus }: { trace: TraceDetail; ex
         {sourceFormat ? <span>Source: {sourceLabel(sourceFormat)}</span> : null}
         {sourceKind ? <span>Format: {sourceKindLabel(sourceKind)}</span> : null}
         {ingestedAt ? <span>Ingested: {ingestedAt}</span> : null}
+        {privacy ? <span>Privacy: {privacy}</span> : null}
         <span>{formatDuration(trace.duration_ms)}</span>
       </div>
     </section>
