@@ -831,6 +831,47 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["trace_id"], self.trace.trace_id)
         self.assertEqual(len(payload["spans"]), 10)
 
+    def test_trace_detail_spans_and_raw_are_redacted_by_default(self) -> None:
+        trace = Trace(
+            trace_id="trace_sensitive",
+            workflow_name="support-triage",
+            status="passed",
+            metadata={"customer_email": "customer@example.com"},
+            raw_payload={
+                "id": "trace_sensitive",
+                "customer_email": "customer@example.com",
+                "message": "Call 415-555-0199 and use card 4242 4242 4242 4242.",
+            },
+            spans=[
+                Span(
+                    span_id="span_sensitive",
+                    trace_id="trace_sensitive",
+                    name="Customer Response Generator",
+                    span_type="generation",
+                    input={"message": "My email is customer@example.com"},
+                    output={"reply": "We will contact customer@example.com at 415-555-0199."},
+                    span_data={"model_output_text": "Card 4242 4242 4242 4242 was mentioned."},
+                )
+            ],
+        )
+        self.store.save_trace(trace)
+
+        detail_response = self.client.get("/traces/trace_sensitive")
+        spans_response = self.client.get("/traces/trace_sensitive/spans")
+        raw_response = self.client.get("/traces/trace_sensitive/raw")
+
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertTrue(detail["metadata"]["contains_pii"])
+        self.assertTrue(detail["metadata"]["redaction_applied"])
+        self.assertEqual(detail["metadata"]["customer_email"], "[REDACTED_EMAIL]")
+        self.assertEqual(detail["spans"][0]["input"]["message"], "My email is [REDACTED_EMAIL]")
+        self.assertEqual(detail["spans"][0]["span_data"]["model_output_text"], "Card [REDACTED_PAYMENT] was mentioned.")
+        self.assertTrue(detail["spans"][0]["span_data"]["contains_pii"])
+        self.assertEqual(spans_response.json()[0]["output"]["reply"], "We will contact [REDACTED_EMAIL] at [REDACTED_PHONE].")
+        self.assertEqual(raw_response.json()["customer_email"], "[REDACTED_EMAIL]")
+        self.assertEqual(raw_response.json()["message"], "Call [REDACTED_PHONE] and use card [REDACTED_PAYMENT].")
+
     def test_ingest_trace_span_and_lifecycle(self) -> None:
         trace_payload = {
             "trace_id": "live_trace_api",

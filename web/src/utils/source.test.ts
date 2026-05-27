@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sourceKindLabel, sourceLabel, stringMetadata } from "./source";
+import { privacyLabel, sourceKindLabel, sourceLabel, stringMetadata } from "./source";
 
 describe("source helpers", () => {
   it("formats known source labels", () => {
@@ -18,5 +18,11 @@ describe("source helpers", () => {
     expect(stringMetadata("live_api")).toBe("live_api");
     expect(stringMetadata("")).toBeNull();
     expect(stringMetadata(123)).toBeNull();
+  });
+
+  it("formats privacy metadata", () => {
+    expect(privacyLabel({ contains_pii: true, redaction_applied: true })).toBe("Redacted");
+    expect(privacyLabel({ contains_pii: true, redaction_applied: false })).toBe("Sensitive");
+    expect(privacyLabel({})).toBeNull();
   });
 });

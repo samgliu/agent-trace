@@ -30,3 +30,24 @@ test("agent flow cards focus matching timeline spans", async ({ page }) => {
 
   await expect(page.locator(".spanRow.selected").filter({ hasText: "Customer Response Generator" })).toBeVisible();
 });
+
+test("trace inspector redacts sensitive values by default", async ({ page }) => {
+  const traceId = uniqueId("trace_e2e_privacy");
+  await seedTrace({
+    traceId,
+    status: "passed",
+    sensitive: true,
+    startedAt: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+  });
+
+  await page.goto("/");
+  await page.getByRole("complementary", { name: "Runs inbox" }).getByRole("button", { name: new RegExp(traceId) }).click();
+
+  await expect(page.getByText("Privacy: Redacted")).toBeVisible();
+  await page.getByLabel("Agent flow").getByRole("button", { name: /Customer Response/ }).click();
+
+  const inspector = page.locator(".spanDetail");
+  await expect(inspector.getByText("[REDACTED_EMAIL]").first()).toBeVisible();
+  await expect(inspector.getByText("[REDACTED_PAYMENT]").first()).toBeVisible();
+  await expect(inspector.getByText("customer@example.com")).not.toBeVisible();
+});

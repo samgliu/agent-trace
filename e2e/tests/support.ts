@@ -17,6 +17,7 @@ type SeedTraceOptions = {
   status?: "passed" | "failed" | "running" | "recovered";
   approvalStatus?: "blocked" | "approved" | "rejected";
   hasError?: boolean;
+  sensitive?: boolean;
   startedAt?: string;
 };
 
@@ -193,7 +194,7 @@ export async function seedTrace(options: SeedTraceOptions): Promise<void> {
       name: "Supervisor Agent",
       started_at: startedAt,
       ended_at: endedAt,
-      input: { message: "E2E seeded trace" },
+      input: { message: options.sensitive ? "My email is customer@example.com and my phone is 415-555-0199." : "E2E seeded trace" },
       output: { final_status: options.status ?? "passed" },
       span_data: { agent_name: "Supervisor Agent" },
       input_tokens: 100,
@@ -208,8 +209,15 @@ export async function seedTrace(options: SeedTraceOptions): Promise<void> {
       started_at: startedAt,
       ended_at: endedAt,
       input: { policy: "e2e_policy" },
-      output: { final_response: "A monitored support response was generated for this seeded e2e trace." },
-      span_data: { model: "deterministic" },
+      output: {
+        final_response: options.sensitive
+          ? "We will contact customer@example.com and will not expose card 4242 4242 4242 4242."
+          : "A monitored support response was generated for this seeded e2e trace.",
+      },
+      span_data: {
+        model: "deterministic",
+        model_output_text: options.sensitive ? "Customer email customer@example.com was present." : undefined,
+      },
       input_tokens: 80,
       output_tokens: 30,
       estimated_cost: 0.0003,
@@ -267,7 +275,7 @@ export async function seedTrace(options: SeedTraceOptions): Promise<void> {
       status: options.status ?? "passed",
       started_at: startedAt,
       ended_at: endedAt,
-      metadata: { scenario: "e2e_seed" },
+      metadata: { scenario: "e2e_seed", customer_email: options.sensitive ? "customer@example.com" : undefined },
       spans,
     }),
   });
