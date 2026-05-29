@@ -688,6 +688,60 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(validator.output["abuse_risk"]["level"], "high")
         self.assertIn("high_prior_refund_count", validator.output["abuse_risk"]["signals"])
         self.assertIn("abuse_review_enforced", validator.output["validator_corrections"])
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        self.assertEqual(escalation.output["escalation_type"], "risk_review")
+        self.assertEqual(escalation.output["next_owner"], "trust_and_safety")
+        self.assertIn("policy_refund_duplicate_charge", escalation.output["evidence"])
+
+    def test_explicit_human_request_uses_escalation_agent(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I want to speak to a human agent about my account.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_explicit_escalation",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        state_update = next(span for span in trace.spans if span.name == "Update Agent State")
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertEqual(trace.status, "passed")
+        self.assertTrue(triage.output["escalation_requested"])
+        self.assertEqual(action.output["action_type"], "escalation")
+        self.assertEqual(state_update.output["agent_state"]["next_required_step"], "human_review")
+        self.assertEqual(escalation.output["escalation_type"], "human_review")
+        self.assertEqual(escalation.output["next_owner"], "support_specialist")
+        self.assertIn("escalating", response.output["response"].lower())
+
+    def test_llm_action_enforces_explicit_human_escalation(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"customer asked for human help"}',
+                '{"issue_type":"general_support","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"general_support","reason":"general support policy applies"}',
+                '{"action_type":"clarification_request","reason":"Ask for account details."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_general_support"]}',
+                '{"escalation_type":"human_review","reason":"Customer asked for human support.","handoff_summary":"Route to human support with account context.","next_owner":"support_specialist","evidence":["cus_123","policy_general_support"]}',
+                "I am escalating this to a human support specialist.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I want to speak to a human agent about my account.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_llm_explicit_escalation_enforced",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        self.assertEqual(trace.status, "passed")
+        self.assertEqual(action.output["action_type"], "escalation")
+        self.assertEqual(action.span_data["validation_reason"], "escalation_required_by_customer_request")
+        self.assertEqual(action.span_data["rejected_action_type"], "clarification_request")
+        self.assertEqual(escalation.output["escalation_type"], "human_review")
 
     def test_llm_triage_is_corrected_when_message_signals_stale_refund(self) -> None:
         llm = QueueLLMClient(
@@ -819,6 +873,9 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(len(errored_spans), 1)
         self.assertEqual(errored_spans[0].name, "lookup_customer")
         self.assertEqual(errored_spans[0].span_data["tool_protocol"], "mcp")
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        self.assertEqual(escalation.output["escalation_type"], "technical_recovery")
+        self.assertEqual(escalation.output["next_owner"], "support_operations")
 
     def test_openai_chat_completions_client_uses_generic_openai_protocol(self) -> None:
         calls: list[dict] = []
