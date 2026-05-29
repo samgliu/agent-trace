@@ -72,6 +72,8 @@ def customer_response_safety(
     has_order_evidence = isinstance(evidence_ids, list) and any(str(item).startswith("ord_") for item in evidence_ids)
 
     additions: list[str] = []
+    if has_order_evidence and "order number" not in normalized:
+        additions.append("I have the order number for this review.")
     if action.get("action_type") == "courtesy_credit" and "courtesy credit" not in normalized:
         additions.append("I can review this for a courtesy credit based on the quality issue and order evidence.")
     elif action.get("action_type") == "clarification_request" and has_order_evidence and "normal return" not in normalized:

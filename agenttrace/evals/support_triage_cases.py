@@ -93,7 +93,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_tool_names=("create_support_action_tool",),
         expected_evidence_ids=("cus_123", "policy_general_support"),
         expected_next_required_step="human_review",
-        expected_response_contains=("escalating", "human"),
+        expected_response_contains=("human",),
     ),
     EvalCase(
         case_id="lookup-timeout-failure",

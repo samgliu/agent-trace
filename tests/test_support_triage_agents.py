@@ -403,7 +403,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(trace.status, "recovered")
         self.assertTrue(validator.output["approval_required"])
         self.assertEqual(validator.output["grounding_status"], "recovered")
-        self.assertEqual(validator.output["validator_corrections"], ["required_approval_enforced"])
+        self.assertEqual(
+            validator.output["validator_corrections"],
+            ["required_approval_enforced", "required_approval_grounding_recovered"],
+        )
         self.assertEqual(len(approval_spans), 1)
 
     def test_validator_removes_unnecessary_approval_for_clarification(self) -> None:
@@ -652,6 +655,39 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("quality", response.output["response"].lower())
         self.assertIn("courtesy credit", response.output["response"].lower())
 
+    def test_llm_consumed_product_follow_up_acknowledges_order_evidence(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"product follow-up needs triage"}',
+                '{"issue_type":"consumed_product_return","urgency":"low","sentiment":"concerned"}',
+                '{"retrieval_query":"consumed_product_return","reason":"consumed product policy applies"}',
+                '{"action_type":"clarification_request","reason":"Ask for product issue reason."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","ord_1234","policy_consumed_product_return"]}',
+                "To see if we can make an exception, could you please tell me more about why you want to return the banana?",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Order number: #1234",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_llm_consumed_follow_up_order_evidence",
+            conversation_history=[
+                {
+                    "role": "user",
+                    "content": "I'd like to return the banana I bought last week. I ate all of them already.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please share the order number or receipt and what was wrong.",
+                },
+            ],
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("order number", response.output["response"].lower())
+        self.assertIn("normal return", response.output["response"].lower())
+
     def test_account_mismatch_uses_scoped_verification_tool(self) -> None:
         runner = SupportTriageRunner()
 
@@ -692,6 +728,32 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(escalation.output["escalation_type"], "risk_review")
         self.assertEqual(escalation.output["next_owner"], "trust_and_safety")
         self.assertIn("policy_refund_duplicate_charge", escalation.output["evidence"])
+
+    def test_llm_validator_recovers_grounding_when_abuse_review_already_approved(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Review duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":true,"evidence":["cus_risk","policy_refund_duplicate_charge"]}',
+                '{"escalation_type":"risk_review","reason":"Risk controls require review.","handoff_summary":"Review refund risk signals.","next_owner":"trust_and_safety","evidence":["cus_risk","policy_refund_duplicate_charge"]}',
+                "I started a refund review for human review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="risk@example.com",
+            trace_id="trace_runner_llm_abuse_review_grounding_recovered",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertEqual(trace.status, "recovered")
+        self.assertTrue(validator.output["approval_required"])
+        self.assertEqual(validator.output["grounding_status"], "recovered")
+        self.assertIn("abuse_review_grounding_recovered", validator.output["validator_corrections"])
 
     def test_explicit_human_request_uses_escalation_agent(self) -> None:
         runner = SupportTriageRunner()

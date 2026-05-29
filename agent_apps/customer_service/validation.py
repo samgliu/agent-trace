@@ -20,16 +20,22 @@ def enforce_validation(
         enforced["evidence"] = fallback["evidence"]
 
     corrections = []
-    if policy.get("requires_approval") and not enforced["approval_required"]:
-        enforced["approval_required"] = True
-        enforced["grounding_status"] = "recovered"
-        corrections.append("required_approval_enforced")
+    if policy.get("requires_approval"):
+        if not enforced["approval_required"]:
+            enforced["approval_required"] = True
+            corrections.append("required_approval_enforced")
+        if enforced["grounding_status"] != "recovered":
+            enforced["grounding_status"] = "recovered"
+            corrections.append("required_approval_grounding_recovered")
 
     abuse_risk_result = enforced.get("abuse_risk")
-    if isinstance(abuse_risk_result, dict) and abuse_risk_result.get("requires_human_review") and not enforced["approval_required"]:
-        enforced["approval_required"] = True
-        enforced["grounding_status"] = "recovered"
-        corrections.append("abuse_review_enforced")
+    if isinstance(abuse_risk_result, dict) and abuse_risk_result.get("requires_human_review"):
+        if not enforced["approval_required"]:
+            enforced["approval_required"] = True
+            corrections.append("abuse_review_enforced")
+        if enforced["grounding_status"] != "recovered":
+            enforced["grounding_status"] = "recovered"
+            corrections.append("abuse_review_grounding_recovered")
     enforced["risk_review_required"] = bool(isinstance(abuse_risk_result, dict) and abuse_risk_result.get("requires_human_review"))
 
     if (
