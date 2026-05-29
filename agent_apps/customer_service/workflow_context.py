@@ -31,6 +31,8 @@ def support_triage_span_ids(trace_id: str) -> dict[str, str]:
         "agent_state_update": span_id(trace_id, "agent_state_update"),
         "create_action": span_id(trace_id, "create_action"),
         "validator": span_id(trace_id, "validator"),
+        "handoff_escalation": span_id(trace_id, "handoff_escalation"),
+        "escalation_agent": span_id(trace_id, "escalation_agent"),
         "approval_required": span_id(trace_id, "approval_required"),
         "customer_response": span_id(trace_id, "customer_response"),
     }

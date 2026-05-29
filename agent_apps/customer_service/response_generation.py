@@ -118,6 +118,11 @@ def static_customer_response(input_text: str, default_response: str) -> str:
             "For this follow-up, the annual-plan refund review is still waiting for human approval because of "
             "the refund amount. I can include any new cancellation or billing details in the review."
         )
+    if "'action_type': 'escalation'" in input_text or '"action_type": "escalation"' in input_text:
+        return (
+            "I am escalating this to a human support specialist with the account context, policy evidence, "
+            "and the reason for review so they can follow up safely."
+        )
     if "policy_stale_subscription_refund" in input_text:
         return (
             "I started a refund review for the older subscription charge. Because the charge is older than "

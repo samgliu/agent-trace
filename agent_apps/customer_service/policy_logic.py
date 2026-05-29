@@ -71,6 +71,8 @@ def triage(message: str, conversation_history: list[dict[str, Any]] | None = Non
         issue_type = "general_support"
         urgency = "low"
     result = {"issue_type": issue_type, "urgency": urgency, "sentiment": "concerned"}
+    if has_escalation_request(text):
+        result["escalation_requested"] = True
     if quality_exception and issue_type == "consumed_product_return":
         result["quality_exception"] = True
     if issue_type == "general_support" and has_account_mismatch(current_text):
@@ -84,6 +86,23 @@ def has_quality_exception(text: str) -> bool:
 
 def has_account_mismatch(text: str) -> bool:
     return any(signal in text for signal in ("different email", "another email", "spouse", "not my account", "wrong account"))
+
+
+def has_escalation_request(text: str) -> bool:
+    return any(
+        signal in text
+        for signal in (
+            "human agent",
+            "real person",
+            "representative",
+            "speak to a human",
+            "talk to a human",
+            "talk to a person",
+            "manager",
+            "supervisor",
+            "escalate",
+        )
+    )
 
 
 def validation_correction(reason: str, **metadata: Any) -> dict[str, Any]:
@@ -153,6 +172,8 @@ def validate_policy_decision(policy_topic_value: str, expected_policy_topic: str
 def action_type(triage_result: dict[str, Any], customer: dict[str, Any]) -> str:
     if not customer.get("found"):
         return "clarification_request"
+    if triage_result.get("escalation_requested") and triage_result["issue_type"] in {"general_support", "account_access"}:
+        return "escalation"
     if triage_result["issue_type"] == "account_access":
         return "escalation"
     if triage_result["issue_type"] == "consumed_product_return" and triage_result.get("quality_exception"):
@@ -221,6 +242,12 @@ def validate_action_decision(action_type_value: str, policy: dict[str, Any], exp
     ):
         return validation_correction(
             "refund_review_required_by_policy_path",
+            rejected_action_type=action_type_value,
+            policy_id=policy_id,
+        )
+    if expected_action_type == "escalation" and normalized_action != "escalation":
+        return validation_correction(
+            "escalation_required_by_customer_request",
             rejected_action_type=action_type_value,
             policy_id=policy_id,
         )
@@ -350,6 +377,8 @@ def agent_state(
     next_required_step = "create_support_action"
     if missing_fields and proposed_action == "clarification_request":
         next_required_step = "collect_missing_information"
+    elif proposed_action == "escalation":
+        next_required_step = "human_review"
     elif policy and policy.get("requires_approval"):
         next_required_step = "human_approval"
     elif risk_signals:
