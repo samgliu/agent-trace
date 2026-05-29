@@ -144,7 +144,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["suites"][0]["suite_id"], "support-triage-core")
-        self.assertEqual(payload["suites"][0]["case_count"], 12)
+        self.assertEqual(payload["suites"][0]["case_count"], 13)
 
     def test_run_support_triage_evals_saves_eval_traces(self) -> None:
         response = self.client.post("/evals/support-triage/run")
@@ -155,7 +155,7 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["suite_id"], "support-triage-core")
         self.assertEqual(payload["execution_mode"], "deterministic")
         self.assertEqual(payload["model_provider"], "static")
-        self.assertEqual(payload["passed"], 12)
+        self.assertEqual(payload["passed"], 13)
         self.assertEqual(payload["failed"], 0)
         history_response = self.client.get("/eval-runs")
         detail_response = self.client.get(f"/eval-runs/{payload['run_id']}")

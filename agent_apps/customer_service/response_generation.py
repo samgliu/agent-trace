@@ -72,6 +72,8 @@ def customer_response_safety(
     has_order_evidence = isinstance(evidence_ids, list) and any(str(item).startswith("ord_") for item in evidence_ids)
 
     additions: list[str] = []
+    if has_order_evidence and "order number" not in normalized:
+        additions.append("I have the order number for this review.")
     if action.get("action_type") == "courtesy_credit" and "courtesy credit" not in normalized:
         additions.append("I can review this for a courtesy credit based on the quality issue and order evidence.")
     elif action.get("action_type") == "clarification_request" and has_order_evidence and "normal return" not in normalized:
@@ -117,6 +119,11 @@ def static_customer_response(input_text: str, default_response: str) -> str:
         return (
             "For this follow-up, the annual-plan refund review is still waiting for human approval because of "
             "the refund amount. I can include any new cancellation or billing details in the review."
+        )
+    if "'action_type': 'escalation'" in input_text or '"action_type": "escalation"' in input_text:
+        return (
+            "I am escalating this to a human support specialist with the account context, policy evidence, "
+            "and the reason for review so they can follow up safely."
         )
     if "policy_stale_subscription_refund" in input_text:
         return (

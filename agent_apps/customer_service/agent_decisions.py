@@ -54,6 +54,14 @@ def validator_agent_instructions() -> str:
     )
 
 
+def escalation_agent_instructions() -> str:
+    return (
+        "You are the Escalation Agent. Prepare a concise human handoff when automated support should not finish "
+        "the issue alone. Use only the provided validation, action, policy, and agent-state evidence. Return only "
+        "JSON with escalation_type, reason, handoff_summary, next_owner, and evidence."
+    )
+
+
 def deterministic_decision_response(decision: dict[str, Any]) -> LLMResponse:
     return LLMResponse(
         output_text=json_for_prompt(decision),

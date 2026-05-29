@@ -31,8 +31,8 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(result.execution_mode, "deterministic")
         self.assertEqual(result.model_provider, "static")
         self.assertEqual(result.model_name, "deterministic")
-        self.assertEqual(result.total, 12)
-        self.assertEqual(result.passed, 12)
+        self.assertEqual(result.total, 13)
+        self.assertEqual(result.passed, 13)
         self.assertEqual(result.failed, 0)
         self.assertEqual(result.pass_rate, 1.0)
         by_case = {case_result.case.case_id: case_result for case_result in result.results}
@@ -43,6 +43,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertTrue(by_case["explicit-topic-switch-to-duplicate-charge"].passed)
         self.assertTrue(by_case["consumed-product-quality-exception"].passed)
         self.assertTrue(by_case["repeated-refund-abuse-review"].passed)
+        self.assertTrue(by_case["explicit-human-escalation"].passed)
         self.assertTrue(by_case["capability-question-clarification-route"].passed)
         self.assertTrue(by_case["account-mismatch-clarification"].passed)
         self.assertEqual(by_case["consumed-product-return-follow-up"].case.conversation_history[0]["role"], "user")
@@ -50,7 +51,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
     def test_eval_result_payload_excludes_raw_trace_body(self) -> None:
         payload = run_support_triage_eval_suite().to_dict()
 
-        self.assertEqual(payload["passed"], 12)
+        self.assertEqual(payload["passed"], 13)
         self.assertEqual(payload["execution_mode"], "deterministic")
         self.assertEqual(payload["model_provider"], "static")
         self.assertEqual(payload["results"][0]["trace_id"], "trace_eval_support_triage_duplicate_charge_refund")
@@ -74,7 +75,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(report["suite_id"], "support-triage-core")
         self.assertEqual(report["execution_mode"], "deterministic")
         self.assertEqual(report["status"], "passed")
-        self.assertEqual(report["passed"], 12)
+        self.assertEqual(report["passed"], 13)
         self.assertEqual(report["failed_cases"], [])
         self.assertEqual(report["improvement_plan"], [])
         self.assertIn("Status: passed", format_eval_report(report))
@@ -97,7 +98,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertEqual(result.execution_mode, "llm")
         self.assertEqual(result.model_provider, "gemini")
         self.assertEqual(result.model_name, "gemini-test")
-        self.assertEqual(len(calls), 12)
+        self.assertEqual(len(calls), 13)
         self.assertTrue(result.results[0].trace.trace_id.startswith("trace_eval_support_triage_llm_test_"))
 
     def test_llm_eval_mode_records_model_fallback_in_trace_spans(self) -> None:

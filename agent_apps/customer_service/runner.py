@@ -10,6 +10,7 @@ from agent_apps.customer_service.agent_decisions import (
     action_agent_instructions as _action_agent_instructions,
     agent_decision_span_data as _agent_decision_span_data,
     deterministic_decision_response as _deterministic_decision_response,
+    escalation_agent_instructions as _escalation_agent_instructions,
     json_for_prompt as _json_for_prompt,
     model_call_span_data as _model_call_span_data,
     parse_agent_json as _parse_agent_json,
@@ -276,6 +277,24 @@ class SupportTriageRunner:
                     error={"type": exc.__class__.__name__, "message": str(exc)},
                     span_data=_mcp_span_data("lookup_customer_tool"),
                 )
+            )
+            self._emit_escalation_agent(
+                context,
+                parent_id=span_ids["lookup_customer"],
+                from_agent="Support Tool Recovery",
+                escalation_input={
+                    "message": message,
+                    "customer_email": customer_email,
+                    "error": {"type": exc.__class__.__name__, "message": str(exc)},
+                    "agent_state": agent_state.to_dict(),
+                },
+                fallback={
+                    "escalation_type": "technical_recovery",
+                    "reason": "Customer lookup failed before the workflow could safely continue.",
+                    "handoff_summary": "Support tools failed during customer lookup. A human should review the request and retry account verification.",
+                    "next_owner": "support_operations",
+                    "evidence": list(agent_state.evidence_ids),
+                },
             )
             return context.finish(
                 status="failed",
@@ -637,6 +656,27 @@ class SupportTriageRunner:
                 estimated_cost=validation_llm.estimated_cost,
             )
         )
+        escalation: dict[str, Any] | None = None
+        if action_type == "escalation" or validation.get("risk_review_required"):
+            escalation = self._emit_escalation_agent(
+                context,
+                parent_id=span_ids["validator"],
+                from_agent="Validator Agent",
+                escalation_input={
+                    "message": message,
+                    "customer": customer,
+                    "policy": policy,
+                    "action": action,
+                    "validation": validation,
+                    "agent_state": agent_state.to_dict(),
+                    "customer_memory": customer_memory,
+                },
+                fallback=self._escalation_fallback(
+                    action=action,
+                    validation=validation,
+                    agent_state=agent_state,
+                ),
+            )
         if validation["approval_required"]:
             emit(
                 _span(
@@ -655,6 +695,7 @@ class SupportTriageRunner:
                         "policy_id": policy.get("policy_id"),
                         "action_id": action.get("action_id"),
                         "risk_review_required": validation.get("risk_review_required", False),
+                        "escalation_type": escalation.get("escalation_type") if escalation else None,
                     },
                 )
             )
@@ -741,6 +782,90 @@ class SupportTriageRunner:
                 "raw_response": response.raw_response,
             },
         )
+
+    def _emit_escalation_agent(
+        self,
+        context: WorkflowRunContext,
+        *,
+        parent_id: str,
+        from_agent: str,
+        escalation_input: dict[str, Any],
+        fallback: dict[str, Any],
+    ) -> dict[str, Any]:
+        span_ids = context.span_ids
+        context.emit(
+            _span(
+                trace_id=context.trace_id,
+                span_id=span_ids["handoff_escalation"],
+                name=f"{from_agent} -> Escalation Agent",
+                span_type="handoff",
+                parent_id=parent_id,
+                clock=context.clock,
+                duration_ms=75,
+                span_data={
+                    "from_agent": from_agent,
+                    "to_agent": "Escalation Agent",
+                },
+            )
+        )
+        escalation, escalation_llm = self._agent_decision(
+            agent_name="Escalation Agent",
+            instructions=_escalation_agent_instructions(),
+            input_data=escalation_input,
+            fallback=fallback,
+            allowed_keys={"escalation_type", "reason", "handoff_summary", "next_owner", "evidence"},
+        )
+        context.emit(
+            _span(
+                trace_id=context.trace_id,
+                span_id=span_ids["escalation_agent"],
+                name="Escalation Agent",
+                span_type="agent",
+                parent_id=parent_id,
+                clock=context.clock,
+                duration_ms=300,
+                input=escalation_input,
+                output=escalation,
+                span_data={
+                    "agent_role": "escalation",
+                    "model_provider": self.llm_client.provider_name,
+                    "escalation_type": escalation.get("escalation_type"),
+                    "next_owner": escalation.get("next_owner"),
+                    **_agent_decision_span_data(escalation_llm),
+                },
+                input_tokens=escalation_llm.input_tokens,
+                output_tokens=escalation_llm.output_tokens,
+                estimated_cost=escalation_llm.estimated_cost,
+            )
+        )
+        return escalation
+
+    def _escalation_fallback(
+        self,
+        *,
+        action: dict[str, Any],
+        validation: dict[str, Any],
+        agent_state: AgentState,
+    ) -> dict[str, Any]:
+        validation_evidence = validation.get("evidence")
+        if not isinstance(validation_evidence, list):
+            validation_evidence = []
+        evidence = list(dict.fromkeys([*agent_state.evidence_ids, *[str(item) for item in validation_evidence]]))
+        if validation.get("risk_review_required"):
+            return {
+                "escalation_type": "risk_review",
+                "reason": "Abuse-risk controls require human review before the workflow can finish.",
+                "handoff_summary": "Review the refund request, risk signals, policy evidence, and proposed action before customer-impacting execution.",
+                "next_owner": "trust_and_safety",
+                "evidence": evidence,
+            }
+        return {
+            "escalation_type": "human_review",
+            "reason": str(action.get("reason") or "The customer requested human support or the issue needs manual review."),
+            "handoff_summary": "Human support should review the active issue, evidence, and proposed escalation action.",
+            "next_owner": "support_specialist",
+            "evidence": evidence,
+        }
 
 
 def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_completions") -> SupportTriageRunner:

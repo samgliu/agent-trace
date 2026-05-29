@@ -5,8 +5,8 @@ evaluating multi-agent AI workflows.
 
 This repo includes a real customer-service multi-agent app as the reference
 workload. The dashboard observes live chat turns, Supervisor-directed handoffs,
-tool calls, MCP activity, memory, approval gates, grounding, latency,
-token/cost metadata, privacy redaction, and eval results.
+Escalation Agent handoffs, tool calls, MCP activity, memory, approval gates,
+grounding, latency, token/cost metadata, privacy redaction, and eval results.
 
 <p align="center">
   <img src="demo/screencapture.png" alt="AgentTrace dashboard screenshot" width="680" />
@@ -17,7 +17,7 @@ token/cost metadata, privacy redaction, and eval results.
 - FastAPI AgentTrace API with SQLite storage.
 - React/TypeScript dashboard built with Vite and pnpm.
 - Standalone customer-service agent service in `agent_apps/customer_service`.
-- Supervisor-led multi-agent support workflow.
+- Supervisor-led multi-agent support workflow with escalation handoff.
 - FastMCP tool service for customer, policy, order, charge, and action tools.
 - OpenAI-compatible model client with provider/model fallback configuration.
 - OpenAI Agents-style trace import and normalization.
@@ -38,7 +38,7 @@ Customer-Service Agent Service
         |
 Multi-Agent Orchestrator
    |-- Supervisor Agent
-   |-- Triage / Policy / Action / Validator Agents
+   |-- Triage / Policy / Action / Validator / Escalation Agents
    |-- Customer Response Generator
    |-- MCP tools
    |-- memory

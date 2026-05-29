@@ -17,7 +17,7 @@ class CliTest(unittest.TestCase):
         self.assertIn("Eval suite: Support triage core", output.getvalue())
         self.assertIn("Mode: deterministic", output.getvalue())
         self.assertIn("Status: passed", output.getvalue())
-        self.assertIn("Cases: 12/12 passed", output.getvalue())
+        self.assertIn("Cases: 13/13 passed", output.getvalue())
 
     def test_eval_support_triage_json_report(self) -> None:
         output = io.StringIO()
