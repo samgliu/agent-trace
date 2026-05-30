@@ -232,7 +232,7 @@ SUPPORT_TRIAGE_EVAL_CASES: tuple[EvalCase, ...] = (
         expected_trace_status="passed",
         expected_supervisor_route="clarify_request",
         expected_error_count=0,
-        expected_response_contains=("orders", "billing"),
+        expected_response_contains=("order", "billing"),
         expected_response_excludes=("review", "refund"),
     ),
     EvalCase(

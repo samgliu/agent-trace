@@ -628,8 +628,8 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 '{"issue_type":"consumed_product_return","urgency":"low","sentiment":"concerned","quality_exception":true}',
                 '{"retrieval_query":"consumed_product_return","reason":"consumed product policy applies"}',
                 '{"action_type":"courtesy_credit","reason":"Quality exception can be reviewed."}',
-                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","ord_1234","policy_consumed_product_return"]}',
-                "I can review the quality issue with the order evidence.",
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["The order is verified and the customer reported unsafe bananas."]}',
+                "I understand these bananas were unsafe. I have submitted this for a courtesy credit review.",
             ]
         )
         runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
@@ -651,7 +651,9 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
 
         response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
         self.assertEqual(trace.status, "passed")
+        self.assertIn("ord_1234", validator.output["evidence"])
         self.assertIn("quality", response.output["response"].lower())
         self.assertIn("courtesy credit", response.output["response"].lower())
 
@@ -662,7 +664,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 '{"issue_type":"consumed_product_return","urgency":"low","sentiment":"concerned"}',
                 '{"retrieval_query":"consumed_product_return","reason":"consumed product policy applies"}',
                 '{"action_type":"clarification_request","reason":"Ask for product issue reason."}',
-                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","ord_1234","policy_consumed_product_return"]}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["The customer provided order evidence."]}',
                 "To see if we can make an exception, could you please tell me more about why you want to return the banana?",
             ]
         )
@@ -685,6 +687,9 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
 
         response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        self.assertIn("ord_1234", validator.output["evidence"])
+        self.assertIn("order_customer_match", validator.output["evidence"])
         self.assertIn("order number", response.output["response"].lower())
         self.assertIn("normal return", response.output["response"].lower())
 
