@@ -15,9 +15,13 @@ def enforce_validation(
     enforced["approval_required"] = bool(enforced.get("approval_required"))
     enforced["grounding_status"] = str(enforced.get("grounding_status") or fallback["grounding_status"])
 
+    fallback_evidence = fallback.get("evidence")
+    if not isinstance(fallback_evidence, list):
+        fallback_evidence = []
     evidence = enforced.get("evidence")
     if not isinstance(evidence, list):
-        enforced["evidence"] = fallback["evidence"]
+        evidence = []
+    enforced["evidence"] = list(dict.fromkeys([*fallback_evidence, *evidence]))
 
     corrections = []
     if policy.get("requires_approval"):
