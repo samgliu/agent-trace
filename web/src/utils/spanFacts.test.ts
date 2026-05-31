@@ -105,4 +105,23 @@ describe("buildSpanFacts", () => {
       { label: "Validation", value: "refund review required by policy path" },
     ]);
   });
+
+  it("summarizes escalation ownership", () => {
+    expect(
+      buildSpanFacts({
+        duration_ms: 300,
+        input_tokens: null,
+        output_tokens: null,
+        estimated_cost: null,
+        span_data: {
+          escalation_type: "risk_review",
+          next_owner: "trust_and_safety",
+        },
+      }),
+    ).toEqual([
+      { label: "Duration", value: "300ms" },
+      { label: "Escalation", value: "risk review" },
+      { label: "Next owner", value: "trust and safety" },
+    ]);
+  });
 });

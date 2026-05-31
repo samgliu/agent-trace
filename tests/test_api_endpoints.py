@@ -767,6 +767,44 @@ class ApiEndpointsTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["trace_id"], "trace_support_triage_tool_failure")
         self.assertEqual(payload["items"][0]["error_count"], 1)
 
+    def test_list_traces_filters_by_escalation(self) -> None:
+        trace = Trace(
+            trace_id="trace_escalation_api",
+            workflow_name="support-triage",
+            status="recovered",
+            spans=[
+                Span(
+                    span_id="span_escalation",
+                    trace_id="trace_escalation_api",
+                    name="Escalation Agent",
+                    span_type="agent",
+                    output={
+                        "escalation_type": "risk_review",
+                        "reason": "Risk controls require review.",
+                        "handoff_summary": "Review refund risk signals.",
+                        "next_owner": "trust_and_safety",
+                        "evidence": ["cus_risk", "policy_refund_duplicate_charge"],
+                    },
+                    span_data={
+                        "agent_role": "escalation",
+                        "escalation_type": "risk_review",
+                        "next_owner": "trust_and_safety",
+                    },
+                )
+            ],
+        )
+        self.store.save_trace(trace)
+
+        response = self.client.get("/traces?has_escalation=true&escalation_type=risk_review&escalation_owner=trust_and_safety")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["trace_id"], "trace_escalation_api")
+        self.assertEqual(payload["items"][0]["escalation_count"], 1)
+        self.assertEqual(payload["items"][0]["escalation_types"], ["risk_review"])
+        self.assertEqual(payload["items"][0]["escalation_next_owners"], ["trust_and_safety"])
+
     def test_list_workflows(self) -> None:
         response = self.client.get("/workflows")
 
@@ -796,19 +834,43 @@ class ApiEndpointsTest(unittest.TestCase):
             ],
         )
         self.store.save_trace(memory_trace)
+        escalation_trace = Trace(
+            trace_id="trace_escalation_summary",
+            workflow_name="support-triage",
+            status="recovered",
+            spans=[
+                Span(
+                    span_id="span_escalation_summary",
+                    trace_id="trace_escalation_summary",
+                    name="Escalation Agent",
+                    span_type="agent",
+                    output={"escalation_type": "human_review", "next_owner": "support_specialist"},
+                    span_data={
+                        "agent_role": "escalation",
+                        "escalation_type": "human_review",
+                        "next_owner": "support_specialist",
+                    },
+                )
+            ],
+        )
+        self.store.save_trace(escalation_trace)
 
         response = self.client.get("/dashboard/summary")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["total_runs"], 3)
+        self.assertEqual(payload["total_runs"], 4)
         self.assertEqual(payload["approval_pending_count"], 1)
         self.assertEqual(payload["unsupported_claim_count"], 1)
         self.assertEqual(payload["error_count"], 0)
-        self.assertEqual(payload["workflow_counts"]["support-triage"], 3)
+        self.assertEqual(payload["workflow_counts"]["support-triage"], 4)
         self.assertEqual(payload["memory_read_count"], 1)
         self.assertEqual(payload["memory_warning_count"], 3)
-        self.assertEqual(payload["status_counts"]["passed"], 3)
+        self.assertEqual(payload["status_counts"]["passed"], 4)
+        self.assertEqual(payload["escalation_count"], 1)
+        self.assertEqual(payload["escalation_human_review_count"], 1)
+        self.assertEqual(payload["escalation_type_counts"]["human_review"], 1)
+        self.assertEqual(payload["escalation_owner_counts"]["support_specialist"], 1)
 
     def test_event_bus_streams_published_sse_events(self) -> None:
         from agenttrace.api.event_bus import EventBus
