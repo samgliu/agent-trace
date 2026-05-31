@@ -4,6 +4,7 @@ import {
   CircleDollarSign,
   Clock3,
   GitBranch,
+  GitPullRequestArrow,
   ShieldCheck,
   UserCheck,
 } from "lucide-react";
@@ -25,6 +26,8 @@ export function DashboardSummaryPanel({ summary }: { summary: DashboardSummary }
       <div className="fleetSummary">
         <SummaryFact icon={<GitBranch size={16} />} label="Runs" value={String(summary.total_runs)} />
         <SummaryFact icon={<UserCheck size={16} />} label="Approvals waiting" value={String(summary.approval_pending_count)} />
+        <SummaryFact icon={<GitPullRequestArrow size={16} />} label="Escalated runs" value={String(summary.escalation_count)} />
+        <SummaryFact icon={<ShieldCheck size={16} />} label="Risk reviews" value={String(summary.escalation_risk_review_count)} />
         <SummaryFact icon={<ShieldCheck size={16} />} label="Grounding issues" value={String(summary.unsupported_claim_count)} />
         <SummaryFact icon={<AlertCircle size={16} />} label="Errors" value={String(summary.error_count)} />
         <SummaryFact icon={<Clock3 size={16} />} label="Avg duration" value={formatDuration(summary.average_duration_ms)} />

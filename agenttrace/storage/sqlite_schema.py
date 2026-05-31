@@ -76,6 +76,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             memory_stale_count INTEGER NOT NULL DEFAULT 0,
             memory_warning_count INTEGER NOT NULL DEFAULT 0,
             memory_average_relevance REAL,
+            escalation_count INTEGER,
+            escalation_human_review_count INTEGER,
+            escalation_risk_review_count INTEGER,
+            escalation_technical_recovery_count INTEGER,
+            escalation_types_json TEXT,
+            escalation_next_owners_json TEXT,
             FOREIGN KEY(trace_id) REFERENCES traces(trace_id)
         )
         """
@@ -177,6 +183,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             "memory_stale_count": "INTEGER NOT NULL DEFAULT 0",
             "memory_warning_count": "INTEGER NOT NULL DEFAULT 0",
             "memory_average_relevance": "REAL",
+            "escalation_count": "INTEGER",
+            "escalation_human_review_count": "INTEGER",
+            "escalation_risk_review_count": "INTEGER",
+            "escalation_technical_recovery_count": "INTEGER",
+            "escalation_types_json": "TEXT",
+            "escalation_next_owners_json": "TEXT",
         },
     )
     ensure_columns(

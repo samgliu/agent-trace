@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AlertCircle, ArrowRight, Braces, CircleDollarSign, RotateCcw, ShieldCheck, UserCheck, Wrench } from "lucide-react";
+import { AlertCircle, ArrowRight, Braces, CircleDollarSign, GitPullRequestArrow, RotateCcw, ShieldCheck, UserCheck, Wrench } from "lucide-react";
 import type { ApprovalAction, GroundingSummary, Metrics, Span } from "../../types";
 import { getApprovalStatus, type ApprovalStatus } from "../../utils/approval";
 import { canManageApprovals, type AuthRole } from "../../utils/authz";
@@ -30,6 +30,7 @@ export function AnalysisPanel({
   const mcpSpans = spans.filter((span) => span.span_data.tool_protocol === "mcp");
   const guardrails = spans.filter((span) => span.span_type === "guardrail" || span.span_type === "validation");
   const approvals = spans.filter((span) => span.span_type === "approval");
+  const escalations = spans.filter((span) => span.name === "Escalation Agent" || span.span_data.agent_role === "escalation");
   const pendingApprovals = approvals.filter((span) => getApprovalStatus(span.span_type, span.span_data)?.isPending);
   const handoffs = spans.filter((span) => span.span_type === "handoff");
   const memorySpans = spans.filter((span) => span.span_type === "memory_read" || span.span_type === "memory_write");
@@ -57,6 +58,7 @@ export function AnalysisPanel({
         <Insight icon={<Braces size={16} />} label="Memory" value={`${memoryReads} reads · ${memoryWrites} writes`} />
         <Insight icon={<ShieldCheck size={16} />} label="Guardrails" value={`${guardrails.length} validation span`} />
         <Insight icon={<UserCheck size={16} />} label="Approvals" value={`${pendingApprovals.length} waiting · ${approvals.length} total`} />
+        <Insight icon={<GitPullRequestArrow size={16} />} label="Escalations" value={`${escalations.length} handoff`} />
         <Insight icon={<AlertCircle size={16} />} label="Errors" value={`${erroredSpans.length} errored span`} />
         <Insight icon={<CircleDollarSign size={16} />} label="Most expensive" value={metrics.most_expensive_span?.name ?? "-"} />
       </div>
@@ -66,6 +68,7 @@ export function AnalysisPanel({
         onSelectSpan={onSelectSpan}
         onApprovalAction={onApprovalAction}
       />
+      <EscalationPanel escalations={escalations} onSelectSpan={onSelectSpan} />
       <GroundingPanel grounding={grounding} onSelectSpan={onSelectSpan} />
       <MemoryPanel summary={memorySummary} onSelectSpan={onSelectSpan} />
       <div className="typeBreakdown">
@@ -176,6 +179,41 @@ function ApprovalQueue({
             />
             <ApprovalHistory status={status} />
           </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function EscalationPanel({ escalations, onSelectSpan }: { escalations: Span[]; onSelectSpan: (spanId: string) => void }) {
+  if (escalations.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="escalationPanel" aria-label="Escalation handoffs">
+      <div className="escalationHeader">
+        <div>
+          <strong>Escalation handoffs</strong>
+          <small>{escalations.length} automation stop in this trace</small>
+        </div>
+        <GitPullRequestArrow size={18} />
+      </div>
+      {escalations.map((span) => {
+        const output = objectValue(span.output);
+        const escalationType = stringValue(output?.escalation_type) ?? stringValue(span.span_data.escalation_type) ?? "human_review";
+        const nextOwner = stringValue(output?.next_owner) ?? stringValue(span.span_data.next_owner) ?? "unassigned";
+        const reason = stringValue(output?.reason) ?? "Manual review required.";
+        const handoffSummary = stringValue(output?.handoff_summary);
+        const evidence = Array.isArray(output?.evidence) ? output.evidence.map(String) : [];
+        return (
+          <button className="escalationItem" key={span.span_id} onClick={() => onSelectSpan(span.span_id)}>
+            <span>{escalationType.replaceAll("_", " ")}</span>
+            <strong>{nextOwner.replaceAll("_", " ")}</strong>
+            <small>{reason}</small>
+            {handoffSummary ? <em>{handoffSummary}</em> : null}
+            {evidence.length > 0 ? <i>{evidence.slice(0, 4).join(" · ")}</i> : null}
+          </button>
         );
       })}
     </section>
@@ -491,4 +529,12 @@ function Insight({ icon, label, value }: { icon: React.ReactNode; label: string;
       </div>
     </div>
   );
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
