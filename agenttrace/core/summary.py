@@ -14,6 +14,7 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
     grounding = build_grounding_summary(trace)
     approvals = _approval_counts(trace)
     memory = _memory_counts(trace)
+    escalation = _escalation_counts(trace)
     source_format = trace.metadata.get("source_format") or _legacy_source_format(trace.metadata)
     source_kind = trace.metadata.get("source_kind") or _legacy_source_kind(trace.metadata)
     ingested_at = trace.metadata.get("ingested_at")
@@ -47,6 +48,12 @@ def build_trace_summary(trace: Trace) -> dict[str, Any]:
         "memory_stale_count": memory["stale_count"],
         "memory_warning_count": memory["warning_count"],
         "memory_average_relevance": memory["average_relevance"],
+        "escalation_count": escalation["count"],
+        "escalation_human_review_count": escalation["human_review"],
+        "escalation_risk_review_count": escalation["risk_review"],
+        "escalation_technical_recovery_count": escalation["technical_recovery"],
+        "escalation_types": escalation["types"],
+        "escalation_next_owners": escalation["next_owners"],
     }
 
 
@@ -61,6 +68,8 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     memory_relevance_scores = [
         item["memory_average_relevance"] for item in summaries if item.get("memory_average_relevance") is not None
     ]
+    escalation_type_counts: dict[str, int] = {}
+    escalation_owner_counts: dict[str, int] = {}
 
     for item in summaries:
         status = str(item.get("status") or "unknown")
@@ -73,6 +82,10 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         grounding_counts[grounding] = grounding_counts.get(grounding, 0) + 1
         source_format_counts[source_format] = source_format_counts.get(source_format, 0) + 1
         source_kind_counts[source_kind] = source_kind_counts.get(source_kind, 0) + 1
+        for escalation_type in item.get("escalation_types") or []:
+            escalation_type_counts[str(escalation_type)] = escalation_type_counts.get(str(escalation_type), 0) + 1
+        for next_owner in item.get("escalation_next_owners") or []:
+            escalation_owner_counts[str(next_owner)] = escalation_owner_counts.get(str(next_owner), 0) + 1
 
     return {
         "total_runs": total_runs,
@@ -99,6 +112,12 @@ def build_dashboard_summary(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "memory_average_relevance": (
             round(sum(memory_relevance_scores) / len(memory_relevance_scores), 4) if memory_relevance_scores else None
         ),
+        "escalation_count": sum(item.get("escalation_count", 0) for item in summaries),
+        "escalation_human_review_count": sum(item.get("escalation_human_review_count", 0) for item in summaries),
+        "escalation_risk_review_count": sum(item.get("escalation_risk_review_count", 0) for item in summaries),
+        "escalation_technical_recovery_count": sum(item.get("escalation_technical_recovery_count", 0) for item in summaries),
+        "escalation_type_counts": escalation_type_counts,
+        "escalation_owner_counts": escalation_owner_counts,
     }
 
 
@@ -169,6 +188,38 @@ def _memory_counts(trace: Trace) -> dict[str, Any]:
         "warning_count": ignored_count + stale_count + low_relevance_count,
         "average_relevance": round(sum(relevance_scores) / len(relevance_scores), 4) if relevance_scores else None,
     }
+
+
+def _escalation_counts(trace: Trace) -> dict[str, Any]:
+    escalation_spans = [
+        span
+        for span in trace.spans
+        if span.name == "Escalation Agent" or span.span_data.get("agent_role") == "escalation"
+    ]
+    types: list[str] = []
+    next_owners: list[str] = []
+    for span in escalation_spans:
+        escalation_type = _span_text_value(span.output, "escalation_type") or _span_text_value(span.span_data, "escalation_type")
+        next_owner = _span_text_value(span.output, "next_owner") or _span_text_value(span.span_data, "next_owner")
+        if escalation_type:
+            types.append(escalation_type)
+        if next_owner:
+            next_owners.append(next_owner)
+    unique_types = list(dict.fromkeys(types))
+    return {
+        "count": len(escalation_spans),
+        "human_review": sum(1 for value in types if value == "human_review"),
+        "risk_review": sum(1 for value in types if value == "risk_review"),
+        "technical_recovery": sum(1 for value in types if value == "technical_recovery"),
+        "types": unique_types,
+        "next_owners": list(dict.fromkeys(next_owners)),
+    }
+
+
+def _span_text_value(value: Any, key: str) -> str | None:
+    if isinstance(value, dict) and isinstance(value.get(key), str) and value[key]:
+        return str(value[key])
+    return None
 
 
 def _percentile(values: list[int], percentile: float) -> int | None:

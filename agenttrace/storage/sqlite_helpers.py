@@ -92,6 +92,12 @@ def summary_row(summary: dict[str, Any]) -> tuple[Any, ...]:
         summary["memory_stale_count"],
         summary["memory_warning_count"],
         summary["memory_average_relevance"],
+        summary["escalation_count"],
+        summary["escalation_human_review_count"],
+        summary["escalation_risk_review_count"],
+        summary["escalation_technical_recovery_count"],
+        to_json(summary["escalation_types"]),
+        to_json(summary["escalation_next_owners"]),
     )
 
 
@@ -126,6 +132,12 @@ def summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "memory_stale_count": row["memory_stale_count"],
         "memory_warning_count": row["memory_warning_count"],
         "memory_average_relevance": row["memory_average_relevance"],
+        "escalation_count": row["escalation_count"] or 0,
+        "escalation_human_review_count": row["escalation_human_review_count"] or 0,
+        "escalation_risk_review_count": row["escalation_risk_review_count"] or 0,
+        "escalation_technical_recovery_count": row["escalation_technical_recovery_count"] or 0,
+        "escalation_types": from_json(row["escalation_types_json"]) or [],
+        "escalation_next_owners": from_json(row["escalation_next_owners_json"]) or [],
     }
 
 
@@ -263,6 +275,9 @@ def summary_filters(
     source_kind: str | None,
     chat_session_id: str | None,
     has_errors: bool | None,
+    has_escalation: bool | None,
+    escalation_type: str | None,
+    escalation_owner: str | None,
     started_after: str | None,
     started_before: str | None,
 ) -> tuple[str, tuple[Any, ...]]:
@@ -303,6 +318,16 @@ def summary_filters(
         clauses.append("error_count > 0")
     elif has_errors is False:
         clauses.append("error_count = 0")
+    if has_escalation is True:
+        clauses.append("escalation_count > 0")
+    elif has_escalation is False:
+        clauses.append("COALESCE(escalation_count, 0) = 0")
+    if escalation_type:
+        clauses.append("escalation_types_json LIKE ? ESCAPE '\\'")
+        params.append(f'%"{escape_like(escalation_type)}"%')
+    if escalation_owner:
+        clauses.append("escalation_next_owners_json LIKE ? ESCAPE '\\'")
+        params.append(f'%"{escape_like(escalation_owner)}"%')
     if started_after:
         clauses.append("started_at >= ?")
         params.append(started_after)

@@ -163,6 +163,38 @@ function TraceFiltersPanel({
             </select>
           </label>
           <label>
+            <span>Escalation</span>
+            <select
+              value={filters.escalationStatus}
+              onChange={(event) => update({ escalationStatus: event.target.value })}
+            >
+              <option value="">Any</option>
+              <option value="true">Has escalation</option>
+              <option value="false">No escalation</option>
+            </select>
+          </label>
+          <label>
+            <span>Escalation type</span>
+            <select value={filters.escalationType} onChange={(event) => update({ escalationType: event.target.value })}>
+              <option value="">Any</option>
+              <option value="human_review">Human review</option>
+              <option value="risk_review">Risk review</option>
+              <option value="technical_recovery">Technical recovery</option>
+            </select>
+          </label>
+          <label>
+            <span>Next owner</span>
+            <select
+              value={filters.escalationOwner}
+              onChange={(event) => update({ escalationOwner: event.target.value })}
+            >
+              <option value="">Any</option>
+              <option value="support_specialist">Support specialist</option>
+              <option value="trust_and_safety">Trust and safety</option>
+              <option value="support_operations">Support operations</option>
+            </select>
+          </label>
+          <label>
             <span>Approval</span>
             <select
               value={filters.approvalStatus}
@@ -247,6 +279,11 @@ function TraceBadges({
         <span className={`chip grounding ${groundingTone(trace.grounding_status)}`}>Grounding: {trace.grounding_status}</span>
       ) : null}
       {trace.approval_pending_count > 0 ? <strong className="chip warning">Needs approval</strong> : null}
+      {trace.escalation_count > 0 ? (
+        <strong className="chip warning">
+          Escalated{trace.escalation_types.length > 0 ? `: ${trace.escalation_types.join(", ").replaceAll("_", " ")}` : ""}
+        </strong>
+      ) : null}
       {trace.approval_rejected_count > 0 ? <strong className="chip danger">Rejected</strong> : null}
       {trace.error_count > 0 ? <strong className="chip danger">Errors: {trace.error_count}</strong> : null}
       {trace.estimated_cost > 0.01 ? <strong className="chip warning">High cost</strong> : null}

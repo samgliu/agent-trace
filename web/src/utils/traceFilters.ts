@@ -7,6 +7,9 @@ export function filterQuery(filters: TraceFilters, activeChatSessionId: string |
   if (filters.sourceFormat) params.set("source_format", filters.sourceFormat);
   if (filters.sourceKind) params.set("source_kind", filters.sourceKind);
   if (filters.errorStatus) params.set("has_errors", filters.errorStatus);
+  if (filters.escalationStatus) params.set("has_escalation", filters.escalationStatus);
+  if (filters.escalationType) params.set("escalation_type", filters.escalationType);
+  if (filters.escalationOwner) params.set("escalation_owner", filters.escalationOwner);
   if (filters.approvalStatus) params.set("approval_status", filters.approvalStatus);
   if (filters.groundingStatus) params.set("grounding_status", filters.groundingStatus);
   if (filters.currentChatOnly && activeChatSessionId) params.set("chat_session_id", activeChatSessionId);
@@ -25,6 +28,9 @@ export function emptyFilters(): TraceFilters {
     sourceFormat: "",
     sourceKind: "",
     errorStatus: "",
+    escalationStatus: "",
+    escalationType: "",
+    escalationOwner: "",
     approvalStatus: "",
     groundingStatus: "",
     timeRange: "",
@@ -40,6 +46,9 @@ export function activeFilterCount(filters: TraceFilters): number {
     filters.sourceFormat,
     filters.sourceKind,
     filters.errorStatus,
+    filters.escalationStatus,
+    filters.escalationType,
+    filters.escalationOwner,
     filters.approvalStatus,
     filters.groundingStatus,
     filters.timeRange,

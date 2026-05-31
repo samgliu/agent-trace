@@ -309,6 +309,16 @@ h3 {
   background: #ffe4df;
 }
 
+.spanRow.escalated {
+  background: #eef7ff;
+  border-left: 4px solid #1d6fa5;
+}
+
+.spanRow.escalated:hover,
+.spanRow.escalated.selected {
+  background: #dff0ff;
+}
+
 .spanType {
   display: grid;
   place-items: center;
@@ -707,6 +717,69 @@ h3 {
   border: 1px solid #dce4e8;
   border-radius: 5px;
   font-size: 12px;
+}
+
+.escalationPanel {
+  display: grid;
+  gap: 10px;
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 2px solid #8bbfdf;
+  border-radius: 6px;
+  background: #eef7ff;
+}
+
+.escalationHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #14507a;
+}
+
+.escalationHeader strong,
+.escalationHeader small {
+  display: block;
+}
+
+.escalationHeader small {
+  margin-top: 3px;
+}
+
+.escalationItem {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 10px;
+  color: #172026;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #b9d9ed;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.escalationItem:hover {
+  border-color: #1d6fa5;
+}
+
+.escalationItem span {
+  width: fit-content;
+  padding: 4px 7px;
+  color: #14507a;
+  background: #e4f2fb;
+  border: 1px solid #b9d9ed;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.escalationItem small,
+.escalationItem em,
+.escalationItem i {
+  color: #52626a;
+  font-size: 12px;
+  font-style: normal;
 }
 
 .claimAlert strong {

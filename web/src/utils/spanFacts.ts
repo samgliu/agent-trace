@@ -64,6 +64,16 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
     facts.push({ label: "Model fallback", value: "used" });
   }
 
+  const escalationType = stringValue(span.span_data.escalation_type);
+  if (escalationType) {
+    facts.push({ label: "Escalation", value: escalationType.replaceAll("_", " ") });
+  }
+
+  const nextOwner = stringValue(span.span_data.next_owner);
+  if (nextOwner) {
+    facts.push({ label: "Next owner", value: nextOwner.replaceAll("_", " ") });
+  }
+
   const toolName = stringValue(span.span_data.tool_name);
   const toolServer = stringValue(span.span_data.tool_server);
   if (toolName || toolServer) {

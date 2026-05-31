@@ -456,9 +456,11 @@ class SQLiteTraceStore:
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count,
                     memory_read_count, memory_write_count, memory_retrieved_count, memory_ignored_count,
-                    memory_stale_count, memory_warning_count, memory_average_relevance
+                    memory_stale_count, memory_warning_count, memory_average_relevance,
+                    escalation_count, escalation_human_review_count, escalation_risk_review_count,
+                    escalation_technical_recovery_count, escalation_types_json, escalation_next_owners_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -589,6 +591,9 @@ class SQLiteTraceStore:
         source_kind: str | None = None,
         chat_session_id: str | None = None,
         has_errors: bool | None = None,
+        has_escalation: bool | None = None,
+        escalation_type: str | None = None,
+        escalation_owner: str | None = None,
         started_after: str | None = None,
         started_before: str | None = None,
     ) -> dict[str, Any]:
@@ -603,6 +608,9 @@ class SQLiteTraceStore:
             source_kind=source_kind,
             chat_session_id=chat_session_id,
             has_errors=has_errors,
+            has_escalation=has_escalation,
+            escalation_type=escalation_type,
+            escalation_owner=escalation_owner,
             started_after=started_after,
             started_before=started_before,
         )
@@ -755,9 +763,11 @@ class SQLiteTraceStore:
                     approval_total_count, approval_pending_count, approval_approved_count, approval_rejected_count,
                     grounding_status, unsupported_claim_count,
                     memory_read_count, memory_write_count, memory_retrieved_count, memory_ignored_count,
-                    memory_stale_count, memory_warning_count, memory_average_relevance
+                    memory_stale_count, memory_warning_count, memory_average_relevance,
+                    escalation_count, escalation_human_review_count, escalation_risk_review_count,
+                    escalation_technical_recovery_count, escalation_types_json, escalation_next_owners_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _summary_row(build_trace_summary(trace)),
             )
@@ -775,6 +785,7 @@ class SQLiteTraceStore:
                    OR s.source_kind = 'unknown'
                    OR s.ingested_at IS NULL
                    OR s.error_count IS NULL
+                   OR s.escalation_count IS NULL
                 """
             ).fetchall()
         for row in rows:

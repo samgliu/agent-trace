@@ -20,6 +20,12 @@ export type TraceSummary = {
   approval_rejected_count: number;
   grounding_status: string;
   unsupported_claim_count: number;
+  escalation_count: number;
+  escalation_human_review_count: number;
+  escalation_risk_review_count: number;
+  escalation_technical_recovery_count: number;
+  escalation_types: string[];
+  escalation_next_owners: string[];
   metadata?: Record<string, unknown>;
 };
 
@@ -112,6 +118,12 @@ export type DashboardSummary = {
   memory_stale_count: number;
   memory_warning_count: number;
   memory_average_relevance: number | null;
+  escalation_count: number;
+  escalation_human_review_count: number;
+  escalation_risk_review_count: number;
+  escalation_technical_recovery_count: number;
+  escalation_type_counts: Record<string, number>;
+  escalation_owner_counts: Record<string, number>;
 };
 
 export type TraceFilters = {
@@ -120,6 +132,9 @@ export type TraceFilters = {
   sourceFormat: string;
   sourceKind: string;
   errorStatus: string;
+  escalationStatus: string;
+  escalationType: string;
+  escalationOwner: string;
   approvalStatus: string;
   groundingStatus: string;
   timeRange: string;

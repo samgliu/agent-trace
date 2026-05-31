@@ -135,11 +135,13 @@ function SpanRow({
 }) {
   const span = node.span;
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
+  const isEscalation = span.name === "Escalation Agent" || span.span_data.agent_role === "escalation";
   const decisionSource = formatDecisionSource(span.span_data.decision_source);
   const rowClassName = [
     "spanRow",
     span.span_id === selectedSpanId ? "selected" : "",
     approvalStatus?.isPending ? "approvalPending" : "",
+    isEscalation ? "escalated" : "",
     span.error ? "errored" : "",
   ]
     .filter(Boolean)
@@ -158,6 +160,7 @@ function SpanRow({
         </div>
         <div className="spanMeta">
           {approvalStatus?.isPending ? <span className="approvalBadge">Needs approval</span> : null}
+          {isEscalation ? <span className="approvalBadge">Escalation</span> : null}
           {span.error ? <span className="errorBadge">Error</span> : null}
           {decisionSource ? <span className={`decisionBadge ${decisionSource.className}`}>{decisionSource.label}</span> : null}
           <span>{formatDuration(span.duration_ms)}</span>
