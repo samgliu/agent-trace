@@ -31,6 +31,9 @@ class EvalCase:
     expected_next_required_step: str | None = None
     expected_missing_fields: tuple[str, ...] = ()
     expected_risk_signals: tuple[str, ...] = ()
+    expected_escalation_type: str | None = None
+    expected_escalation_owner: str | None = None
+    expected_escalation_reason_contains: str | None = None
     expected_approval_reason_contains: str | None = None
     expected_response_contains: tuple[str, ...] = ()
     expected_response_excludes: tuple[str, ...] = ()

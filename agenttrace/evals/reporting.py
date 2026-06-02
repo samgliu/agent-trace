@@ -116,6 +116,8 @@ def eval_check_category(name: str) -> str:
         return "Routing"
     if name.startswith("tool_used") or name.startswith("evidence_id") or name.startswith("agent_state"):
         return "Evidence"
+    if name.startswith("escalation_"):
+        return "Escalation"
     if name == "approval_required" or name == "approval_reason":
         return "Governance"
     if name == "grounding_status" or name.startswith("response_"):
@@ -129,6 +131,7 @@ def _improvement_owner_area(category: str) -> str:
     return {
         "Routing": "multi-agent routing and policy/action planning",
         "Evidence": "tool usage, memory state, and evidence propagation",
+        "Escalation": "human handoff routing and escalation ownership",
         "Governance": "approval policy and validator guardrails",
         "Response": "customer-facing response generation and grounding",
         "Memory": "short-term continuity and long-term customer memory",
@@ -140,6 +143,7 @@ def _improvement_recommended_action(category: str) -> str:
     return {
         "Routing": "tighten supervisor routing, triage, policy retrieval, or action prompts so the selected workflow path and outcome match the request.",
         "Evidence": "verify required tool calls and carry evidence ids into agent state, validation, and final action output.",
+        "Escalation": "verify the escalation agent is emitted with the right escalation type, next owner, and handoff reason.",
         "Governance": "align validator approval decisions and approval reasons with policy requirements.",
         "Response": "adjust response instructions so the answer contains required facts and avoids prohibited claims.",
         "Memory": "preserve active issue state across turns and avoid topic drift unless the customer clearly switches topic.",
@@ -152,6 +156,7 @@ def _improvement_suggested_files(category: str) -> list[str]:
     extra = {
         "Routing": ["agent_apps/customer_service/routing.py", "agent_apps/customer_service/domain.py"],
         "Evidence": ["agent_apps/customer_service/domain.py"],
+        "Escalation": ["agent_apps/customer_service/domain.py", "agent_apps/customer_service/policy_logic.py"],
         "Governance": ["agent_apps/customer_service/domain.py"],
         "Response": [],
         "Memory": ["agent_apps/customer_service/domain.py"],
