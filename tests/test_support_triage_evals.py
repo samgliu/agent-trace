@@ -46,6 +46,15 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertTrue(by_case["explicit-human-escalation"].passed)
         self.assertTrue(by_case["capability-question-clarification-route"].passed)
         self.assertTrue(by_case["account-mismatch-clarification"].passed)
+        human_checks = {check.name: check.actual for check in by_case["explicit-human-escalation"].checks}
+        risk_checks = {check.name: check.actual for check in by_case["repeated-refund-abuse-review"].checks}
+        recovery_checks = {check.name: check.actual for check in by_case["lookup-timeout-failure"].checks}
+        self.assertEqual(human_checks["escalation_type"], "human_review")
+        self.assertEqual(human_checks["escalation_owner"], "support_specialist")
+        self.assertEqual(risk_checks["escalation_type"], "risk_review")
+        self.assertEqual(risk_checks["escalation_owner"], "trust_and_safety")
+        self.assertEqual(recovery_checks["escalation_type"], "technical_recovery")
+        self.assertEqual(recovery_checks["escalation_owner"], "support_operations")
         self.assertEqual(by_case["consumed-product-return-follow-up"].case.conversation_history[0]["role"], "user")
 
     def test_eval_result_payload_excludes_raw_trace_body(self) -> None:
@@ -67,6 +76,17 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertIn("response_contains:order number", check_names)
         self.assertIn("response_excludes:duplicate", check_names)
         self.assertTrue(follow_up.passed)
+
+    def test_eval_cases_include_escalation_quality_checks(self) -> None:
+        result = run_support_triage_eval_suite()
+        by_case = {case_result.case.case_id: case_result for case_result in result.results}
+
+        for case_id in ("explicit-human-escalation", "repeated-refund-abuse-review", "lookup-timeout-failure"):
+            check_names = {check.name for check in by_case[case_id].checks}
+            self.assertIn("escalation_type", check_names)
+            self.assertIn("escalation_owner", check_names)
+            self.assertIn("escalation_reason", check_names)
+            self.assertTrue(by_case[case_id].passed)
 
     def test_builds_ci_friendly_eval_report(self) -> None:
         result = run_support_triage_eval_suite()
@@ -172,6 +192,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
                     ),
                     checks=[
                         EvalCheck("approval_required", True, False, False),
+                        EvalCheck("escalation_owner", "trust_and_safety", "support_specialist", False),
                         EvalCheck("response_excludes:duplicate", "duplicate", "duplicate charge", False),
                     ],
                 )
@@ -182,15 +203,15 @@ class SupportTriageEvalsTest(unittest.TestCase):
         formatted = format_eval_report(report)
 
         self.assertEqual(report["status"], "failed")
-        self.assertEqual(report["failed_check_categories"], {"Governance": 1, "Response": 1})
-        self.assertEqual([item["category"] for item in report["improvement_plan"]], ["Governance", "Response"])
-        self.assertEqual(report["improvement_plan"][0]["owner_area"], "approval policy and validator guardrails")
+        self.assertEqual(report["failed_check_categories"], {"Governance": 1, "Escalation": 1, "Response": 1})
+        self.assertEqual([item["category"] for item in report["improvement_plan"]], ["Escalation", "Governance", "Response"])
+        self.assertEqual(report["improvement_plan"][0]["owner_area"], "human handoff routing and escalation ownership")
         self.assertEqual(report["improvement_plan"][0]["cases"][0]["case_id"], "approval-regression")
         self.assertIn("agent_apps/customer_service/runner.py", report["improvement_plan"][0]["suggested_files"])
         self.assertIn("approval-regression", formatted)
         self.assertIn("Failed check categories:", formatted)
         self.assertIn("Improvement workflow:", formatted)
-        self.assertIn("owner=approval policy and validator guardrails", formatted)
+        self.assertIn("owner=human handoff routing and escalation ownership", formatted)
 
 
 if __name__ == "__main__":

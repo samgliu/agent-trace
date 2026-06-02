@@ -50,6 +50,18 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
         checks.append(includes_check(f"agent_state.missing_field:{field}", actual["agent_state"].get("missing_fields", []), field))
     for signal in case.expected_risk_signals:
         checks.append(includes_check(f"agent_state.risk_signal:{signal}", actual["agent_state"].get("risk_signals", []), signal))
+    if case.expected_escalation_type is not None:
+        checks.append(check("escalation_type", case.expected_escalation_type, actual["escalation"].get("escalation_type")))
+    if case.expected_escalation_owner is not None:
+        checks.append(check("escalation_owner", case.expected_escalation_owner, actual["escalation"].get("next_owner")))
+    if case.expected_escalation_reason_contains is not None:
+        checks.append(
+            contains_check(
+                "escalation_reason",
+                actual["escalation"].get("reason", ""),
+                case.expected_escalation_reason_contains,
+            )
+        )
     if case.expected_approval_reason_contains is not None:
         checks.append(contains_check("approval_reason", actual["approval_reason"], case.expected_approval_reason_contains))
     return EvalCaseResult(case=case, trace=trace, checks=checks)
@@ -82,6 +94,7 @@ def actual_values(trace: Trace) -> dict[str, Any]:
     validator_span = find_span(trace, "Validator Agent")
     response_span = find_span(trace, "Customer Response Generator")
     approval_span = find_span(trace, "Human Approval Gate")
+    escalation_span = find_span(trace, "Escalation Agent")
     state_span = find_span(trace, "Update Agent State") or find_span(trace, "Write Working Memory")
     summary = build_trace_summary(trace)
     return {
@@ -95,6 +108,7 @@ def actual_values(trace: Trace) -> dict[str, Any]:
         "error_count": summary["error_count"],
         "response": dict_value(response_span.output if response_span else None, "response") or "",
         "approval_reason": dict_value(approval_span.output if approval_span else None, "reason") or "",
+        "escalation": escalation_from_span(escalation_span),
         "agent_state": agent_state_from_span(state_span),
         "tool_names": tool_names(trace),
         "evidence_ids": evidence_ids(trace),
@@ -115,6 +129,13 @@ def agent_state_from_span(span: Any) -> dict[str, Any]:
     output = span.output if span else None
     if isinstance(output, dict) and isinstance(output.get("agent_state"), dict):
         return output["agent_state"]
+    return {}
+
+
+def escalation_from_span(span: Any) -> dict[str, Any]:
+    output = span.output if span else None
+    if isinstance(output, dict):
+        return output
     return {}
 
 
