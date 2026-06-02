@@ -63,6 +63,7 @@ def customer_response_safety(
     action: dict[str, Any],
     working_memory: dict[str, Any],
 ) -> str:
+    response_text = account_mismatch_response_safety(response_text, working_memory=working_memory)
     if policy.get("policy_id") != "policy_consumed_product_return":
         return response_text
 
@@ -83,6 +84,30 @@ def customer_response_safety(
             "Because the items were fully consumed, this is not eligible for a normal return, but I can review a quality or safety exception if you share what was wrong."
         )
 
+    if not additions:
+        return response_text
+    return " ".join([response_text.rstrip(), *additions])
+
+
+def account_mismatch_response_safety(response_text: str, *, working_memory: dict[str, Any]) -> str:
+    agent_state = working_memory.get("agent_state") if isinstance(working_memory.get("agent_state"), dict) else {}
+    risk_signals = agent_state.get("risk_signals") if isinstance(agent_state, dict) else []
+    missing_fields = agent_state.get("missing_fields") if isinstance(agent_state, dict) else []
+    has_account_mismatch = (
+        isinstance(risk_signals, list)
+        and "requested_resource_belongs_to_different_account" in risk_signals
+        and isinstance(missing_fields, list)
+        and "verified_account_ownership" in missing_fields
+    )
+    if not has_account_mismatch:
+        return response_text
+
+    normalized = response_text.lower()
+    additions: list[str] = []
+    if "account" not in normalized:
+        additions.append("I need to verify the account before reviewing any refund.")
+    if "detail" not in normalized:
+        additions.append("Please provide the matching account details or order owner details so I can confirm access.")
     if not additions:
         return response_text
     return " ".join([response_text.rstrip(), *additions])

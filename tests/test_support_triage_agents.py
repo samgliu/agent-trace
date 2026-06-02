@@ -711,6 +711,33 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(verification.span_data["tool_name"], "verify_account_access_tool")
         self.assertEqual(action.output["action_type"], "clarification_request")
         self.assertIn("account_access_mismatch", validator.output["evidence"])
+        self.assertIn("account", response.output["response"].lower())
+        self.assertIn("detail", response.output["response"].lower())
+        self.assertNotIn("refund review", response.output["response"].lower())
+
+    def test_account_mismatch_response_safety_preserves_account_detail_wording(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"account ownership request needs triage"}',
+                '{"issue_type":"general_support","urgency":"medium","sentiment":"concerned","missing_information":"verified account or matching order ownership"}',
+                '{"retrieval_query":"general_support","reason":"ownership must be verified"}',
+                '{"action_type":"clarification_request","reason":"Need matching account details."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["account_access_mismatch"]}',
+                "To help with this, please share the order number or the email address associated with the order. This will allow me to locate the purchase and review it.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="The order is under my spouse's different email. Can you refund it from this account?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_account_mismatch_response_safety",
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("account", response.output["response"].lower())
+        self.assertIn("detail", response.output["response"].lower())
+        self.assertIn("verify the account", response.output["response"].lower())
         self.assertNotIn("refund review", response.output["response"].lower())
 
     def test_validator_requires_human_review_for_high_abuse_risk_refund(self) -> None:
