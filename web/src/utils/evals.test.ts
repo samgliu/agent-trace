@@ -365,6 +365,7 @@ describe("eval helpers", () => {
     expect(evalCheckCategory("policy_id")).toBe("Routing");
     expect(evalCheckCategory("approval_required")).toBe("Governance");
     expect(evalCheckCategory("evidence_id:sub_123")).toBe("Evidence");
+    expect(evalCheckCategory("escalation_owner")).toBe("Escalation");
     expect(evalCheckCategory("memory_warning_count")).toBe("Memory");
     expect(evalCheckCategory("response_excludes:duplicate")).toBe("Response");
     expect(evalCheckCategory("error_count")).toBe("Reliability");
@@ -383,6 +384,7 @@ describe("eval helpers", () => {
           checks: [
             { name: "issue_type", expected: "billing", actual: "general", passed: false },
             { name: "policy_id", expected: "policy_a", actual: "policy_b", passed: false },
+            { name: "escalation_owner", expected: "trust_and_safety", actual: "support_specialist", passed: false },
             { name: "response_excludes:duplicate", expected: "excludes duplicate", actual: "duplicate", passed: false },
             { name: "error_count", expected: 0, actual: 0, passed: true },
           ],
@@ -393,6 +395,7 @@ describe("eval helpers", () => {
     expect(evalCategorySummaries(run)).toEqual([
       { category: "Routing", failed: 2, total: 2 },
       { category: "Evidence", failed: 0, total: 0 },
+      { category: "Escalation", failed: 1, total: 1 },
       { category: "Governance", failed: 0, total: 0 },
       { category: "Response", failed: 1, total: 1 },
       { category: "Memory", failed: 0, total: 0 },
@@ -409,12 +412,13 @@ describe("eval helpers", () => {
       score: 0.5,
       checks: [
         { name: "issue_type", expected: "billing", actual: "general", passed: false },
+        { name: "escalation_type", expected: "risk_review", actual: "human_review", passed: false },
         { name: "policy_id", expected: "policy_a", actual: "policy_b", passed: false },
         { name: "error_count", expected: 0, actual: 0, passed: true },
       ],
     });
 
-    expect(groups.map((group) => group.category)).toEqual(["Routing"]);
+    expect(groups.map((group) => group.category)).toEqual(["Routing", "Escalation"]);
     expect(groups[0].checks[0].name).toBe("issue_type");
   });
 
@@ -430,16 +434,17 @@ describe("eval helpers", () => {
           score: 0.5,
           checks: [
             { name: "approval_required", expected: true, actual: false, passed: false },
+            { name: "escalation_owner", expected: "trust_and_safety", actual: "support_specialist", passed: false },
             { name: "response_excludes:duplicate", expected: "duplicate", actual: "duplicate charge", passed: false },
           ],
         },
       ],
     });
 
-    expect(plan.map((item) => item.category)).toEqual(["Governance", "Response"]);
-    expect(plan[0].owner_area).toBe("approval policy and validator guardrails");
+    expect(plan.map((item) => item.category)).toEqual(["Escalation", "Governance", "Response"]);
+    expect(plan[0].owner_area).toBe("human handoff routing and escalation ownership");
     expect(plan[0].suggested_files).toContain("agent_apps/customer_service/runner.py");
-    expect(plan[0].cases[0]).toMatchObject({
+    expect(plan[1].cases[0]).toMatchObject({
       case_id: "approval-regression",
       trace_id: "trace_approval",
       check: "approval_required",
