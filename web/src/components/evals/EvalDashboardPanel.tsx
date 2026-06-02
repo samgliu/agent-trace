@@ -342,6 +342,7 @@ function failureTrendColor(category: string): string {
   return {
     Routing: "#9b2c2c",
     Evidence: "#6f4ab8",
+    Escalation: "#0f766e",
     Governance: "#b35f00",
     Response: "#246b5b",
     Memory: "#2870a6",
