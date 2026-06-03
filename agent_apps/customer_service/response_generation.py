@@ -93,12 +93,11 @@ def account_mismatch_response_safety(response_text: str, *, working_memory: dict
     agent_state = working_memory.get("agent_state") if isinstance(working_memory.get("agent_state"), dict) else {}
     risk_signals = agent_state.get("risk_signals") if isinstance(agent_state, dict) else []
     missing_fields = agent_state.get("missing_fields") if isinstance(agent_state, dict) else []
-    has_account_mismatch = (
-        isinstance(risk_signals, list)
-        and "requested_resource_belongs_to_different_account" in risk_signals
-        and isinstance(missing_fields, list)
-        and "verified_account_ownership" in missing_fields
-    )
+    evidence_ids = agent_state.get("evidence_ids") if isinstance(agent_state, dict) else []
+    has_mismatch_evidence = isinstance(evidence_ids, list) and "account_access_mismatch" in evidence_ids
+    has_mismatch_risk = isinstance(risk_signals, list) and "requested_resource_belongs_to_different_account" in risk_signals
+    has_ownership_gap = isinstance(missing_fields, list) and "verified_account_ownership" in missing_fields
+    has_account_mismatch = has_mismatch_evidence or has_mismatch_risk or has_ownership_gap
     if not has_account_mismatch:
         return response_text
 
