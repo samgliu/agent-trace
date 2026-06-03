@@ -15,6 +15,7 @@ from agent_apps.customer_service.runner import (
     build_default_runner,
     resolve_model_config,
 )
+from agent_apps.customer_service.response_generation import account_mismatch_response_safety
 
 
 class FailingLookupTools(SupportToolsClient):
@@ -739,6 +740,22 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("detail", response.output["response"].lower())
         self.assertIn("verify the account", response.output["response"].lower())
         self.assertNotIn("refund review", response.output["response"].lower())
+
+    def test_account_mismatch_response_safety_uses_mismatch_evidence(self) -> None:
+        response = account_mismatch_response_safety(
+            "Please share the order number or email address associated with the order.",
+            working_memory={
+                "agent_state": {
+                    "evidence_ids": ["cus_123", "policy_general_support", "account_access_mismatch"],
+                    "missing_fields": [],
+                    "risk_signals": [],
+                }
+            },
+        )
+
+        self.assertIn("account", response.lower())
+        self.assertIn("detail", response.lower())
+        self.assertIn("verify the account", response.lower())
 
     def test_validator_requires_human_review_for_high_abuse_risk_refund(self) -> None:
         runner = SupportTriageRunner()
