@@ -22,7 +22,8 @@ grounding, latency, token/cost metadata, privacy redaction, and eval results.
 - OpenAI-compatible model client with provider/model fallback configuration.
 - OpenAI Agents-style trace import and normalization.
 - SSE updates for runs, chat, traces, summaries, and eval progress.
-- Deterministic and LLM-backed support-triage evals.
+- Deterministic and LLM-backed support-triage evals with resumable degraded
+  runs and trace-linked improvement plans.
 - Optional role-based dashboard auth with audited approval decisions.
 - Default redaction for common PII in trace/span/grounding/raw responses.
 - Dockerized Playwright e2e tests.
@@ -105,6 +106,20 @@ Hello, what can you help me with?
 
 This takes the direct `clarify_request` route from Supervisor to the Customer
 Response Generator without unnecessary account or policy tools.
+
+Escalation and account-ownership cases:
+
+```text
+I want to speak to a human agent about my account.
+```
+
+```text
+The order is under my spouse's different email. Can you refund it from this account?
+```
+
+The first request creates a human-support handoff. The second verifies account
+ownership boundaries before any refund action. Escalation traces include the
+handoff type, next owner, reason, summary, and supporting evidence.
 
 ## Configuration
 
@@ -208,6 +223,11 @@ configured provider/model. Provider/API failures are retained as unscored
 history instead of agent-quality trend points; affected runs can be retried in
 place after provider recovery without rerunning successful cases.
 
+Checks cover routing, evidence propagation, escalation ownership, governance,
+response quality, memory, and reliability. Failed checks link back to traces
+and produce an improvement plan grouped by the responsible workflow area.
+Model fallback attempts are visible on the affected agent spans.
+
 ## CLI
 
 ```bash
@@ -244,8 +264,12 @@ POST   /workflow-runs/{run_id}/retry
 
 GET    /evals
 POST   /evals/support-triage/run
+POST   /evals/support-triage/run/async
 POST   /eval-runs/{run_id}/resume
 GET    /eval-runs
+GET    /eval-runs/{run_id}
+GET    /eval-runs/support-triage/comparison
+GET    /eval-runs/support-triage/failure-trends
 
 GET    /traces
 POST   /traces
