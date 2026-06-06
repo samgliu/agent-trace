@@ -52,6 +52,7 @@ from agent_apps.customer_service.policy_logic import (
 from agent_apps.customer_service.response_generation import (
     clarification_response_input as _clarification_response_input,
     clarification_response_instructions as _clarification_response_instructions,
+    clarification_response_safety as _clarification_response_safety,
     customer_response_input as _customer_response_input,
     customer_response_instructions as _customer_response_instructions,
     customer_response_safety as _customer_response_safety,
@@ -163,6 +164,7 @@ class SupportTriageRunner:
                 instructions=_clarification_response_instructions(),
                 input_text=_clarification_response_input(message, conversation_history),
             )
+            response_text = _clarification_response_safety(llm_response.output_text)
             emit(
                 _span(
                     trace_id=trace_id,
@@ -173,7 +175,7 @@ class SupportTriageRunner:
                     clock=clock,
                     duration_ms=350,
                     input={"message": message},
-                    output={"response": llm_response.output_text},
+                    output={"response": response_text},
                     span_data={
                         "agent_role": "response",
                         "supervisor_route": supervisor_route,
@@ -815,6 +817,7 @@ class SupportTriageRunner:
             fallback=fallback,
             allowed_keys={"escalation_type", "reason", "handoff_summary", "next_owner", "evidence"},
         )
+        escalation = _canonical_escalation(escalation, fallback)
         context.emit(
             _span(
                 trace_id=context.trace_id,
@@ -866,6 +869,34 @@ class SupportTriageRunner:
             "next_owner": "support_specialist",
             "evidence": evidence,
         }
+
+
+def _canonical_escalation(escalation: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    canonical = dict(escalation)
+    fallback_type = str(fallback.get("escalation_type") or "")
+    raw_type = str(canonical.get("escalation_type") or "").lower()
+    raw_owner = str(canonical.get("next_owner") or "").lower()
+    raw_reason = str(canonical.get("reason") or "")
+
+    if fallback_type == "technical_recovery" or "technical" in raw_type or "support-tools-mcp" in raw_reason.lower():
+        canonical["escalation_type"] = "technical_recovery"
+        canonical["next_owner"] = "support_operations"
+        if "lookup failed" not in raw_reason.lower():
+            canonical["reason"] = "Customer lookup failed before the workflow could safely continue."
+    elif fallback_type == "risk_review" or "risk" in raw_type or "abuse" in raw_type or "risk" in raw_owner or "abuse" in raw_owner:
+        canonical["escalation_type"] = "risk_review"
+        canonical["next_owner"] = "trust_and_safety"
+        if "abuse-risk controls" not in raw_reason.lower():
+            canonical["reason"] = "Abuse-risk controls require human review before the workflow can finish."
+    elif fallback_type == "human_review":
+        canonical["escalation_type"] = "human_review"
+        canonical["next_owner"] = "support_specialist"
+
+    if not isinstance(canonical.get("evidence"), list):
+        canonical["evidence"] = fallback.get("evidence", [])
+    if not canonical.get("handoff_summary"):
+        canonical["handoff_summary"] = fallback.get("handoff_summary", "")
+    return canonical
 
 
 def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_completions") -> SupportTriageRunner:
