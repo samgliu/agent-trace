@@ -35,6 +35,16 @@ def clarification_response_input(message: str, conversation_history: list[dict[s
     )
 
 
+def clarification_response_safety(response_text: str) -> str:
+    normalized = response_text.lower()
+    additions: list[str] = []
+    if "order" not in normalized:
+        additions.append("I can also help with orders.")
+    if not additions:
+        return response_text
+    return " ".join([response_text.rstrip(), *additions])
+
+
 def customer_response_input(
     message: str,
     customer: dict[str, Any],

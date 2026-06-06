@@ -149,7 +149,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         llm = QueueLLMClient(
             [
                 '{"route":"clarify_request","handoff_reason":"The customer has not stated a support issue yet."}',
-                "I can help with orders, billing, subscriptions, or account access. What do you need help with?",
+                "I can help with billing, subscriptions, or account access. What do you need help with?",
             ]
         )
         runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
@@ -171,6 +171,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
             ["Supervisor Agent", "Supervisor -> Customer Response Generator", "Customer Response Generator"],
         )
         self.assertEqual(response.span_data["supervisor_route"], "clarify_request")
+        self.assertIn("orders", response.output["response"].lower())
         self.assertEqual(len(llm.calls), 2)
 
     def test_supervisor_cannot_skip_support_flow_for_actionable_request(self) -> None:
@@ -804,6 +805,31 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(validator.output["grounding_status"], "recovered")
         self.assertIn("abuse_review_grounding_recovered", validator.output["validator_corrections"])
 
+    def test_escalation_agent_canonicalizes_llm_risk_review_labels(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Review duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":true,"evidence":["cus_risk_777","policy_refund_duplicate_charge"]}',
+                '{"escalation_type":"high_risk_refund_review","reason":"Customer is flagged for high abuse risk due to recent chargebacks.","handoff_summary":"Review refund risk.","next_owner":"Billing Risk & Abuse Team","evidence":["cus_risk_777","policy_refund_duplicate_charge"]}',
+                "I started a refund review for human review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="risk@example.com",
+            trace_id="trace_runner_llm_risk_escalation_canonical",
+        )
+
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        self.assertEqual(escalation.output["escalation_type"], "risk_review")
+        self.assertEqual(escalation.output["next_owner"], "trust_and_safety")
+        self.assertIn("Abuse-risk controls", escalation.output["reason"])
+
     def test_explicit_human_request_uses_escalation_agent(self) -> None:
         runner = SupportTriageRunner()
 
@@ -987,6 +1013,27 @@ class SupportTriageAgentsTest(unittest.TestCase):
         escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
         self.assertEqual(escalation.output["escalation_type"], "technical_recovery")
         self.assertEqual(escalation.output["next_owner"], "support_operations")
+
+    def test_tool_failure_canonicalizes_llm_technical_escalation_labels(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"account access request needs triage"}',
+                '{"issue_type":"account_access","urgency":"medium","sentiment":"concerned"}',
+                '{"escalation_type":"technical_error","reason":"The automated agent encountered a TimeoutError while attempting to contact support-tools-mcp.","handoff_summary":"Retry support tool lookup.","next_owner":"technical_support","evidence":[]}',
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, tools_client=FailingLookupTools(), use_llm_agents=True)
+
+        trace = runner.run(
+            message="I cannot access my account after upgrading.",
+            customer_email="timeout@example.com",
+            trace_id="trace_runner_llm_technical_escalation_canonical",
+        )
+
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        self.assertEqual(escalation.output["escalation_type"], "technical_recovery")
+        self.assertEqual(escalation.output["next_owner"], "support_operations")
+        self.assertIn("lookup failed", escalation.output["reason"])
 
     def test_openai_chat_completions_client_uses_generic_openai_protocol(self) -> None:
         calls: list[dict] = []
