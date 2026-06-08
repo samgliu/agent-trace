@@ -195,6 +195,12 @@ export function EvalDashboardPanel({
             <small>Improvement plan</small>
             <strong>Use failures to patch the agent</strong>
           </div>
+          <div className="evalImprovementWorkflow" aria-label="Eval improvement workflow">
+            <span>Inspect trace</span>
+            <span>Patch smallest cause</span>
+            <span>Add regression</span>
+            <span>Rerun evals</span>
+          </div>
           {improvementPlan.slice(0, 4).map((item) => (
             <article className="evalImprovementItem" key={item.category}>
               <div>

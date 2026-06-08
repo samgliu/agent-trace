@@ -324,6 +324,25 @@
   font-size: 14px;
 }
 
+.evalImprovementWorkflow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.evalImprovementWorkflow span {
+  min-width: 0;
+  padding: 7px 8px;
+  color: #243036;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .evalImprovementItem {
   display: grid;
   gap: 8px;
