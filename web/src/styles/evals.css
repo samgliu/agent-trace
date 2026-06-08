@@ -330,7 +330,8 @@
   gap: 6px;
 }
 
-.evalImprovementWorkflow span {
+.evalImprovementWorkflow span,
+.evalImprovementWorkflow button {
   min-width: 0;
   padding: 7px 8px;
   color: #243036;
@@ -341,6 +342,29 @@
   font-weight: 800;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.evalImprovementWorkflow button {
+  cursor: pointer;
+}
+
+.evalImprovementWorkflow button:hover,
+.evalImprovementWorkflow button:focus-visible {
+  color: #246b5b;
+  border-color: #246b5b;
+  box-shadow: 0 0 0 2px rgba(36, 107, 91, 0.12);
+}
+
+.evalImprovementWorkflow button:disabled {
+  color: #7f8b92;
+  background: #edf1f3;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.evalImprovementWorkflow span {
+  color: #637179;
+  background: #f8fafb;
 }
 
 .evalImprovementItem {
