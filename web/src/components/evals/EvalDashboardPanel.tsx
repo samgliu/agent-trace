@@ -80,6 +80,7 @@ export function EvalDashboardPanel({
   const providerAffected = evalRunHasProviderIssue(run);
   const resumable = Boolean(run && run.execution_mode === "llm" && providerAffected && !activeRun);
   const resumeLabel = run && run.results.length >= run.total ? "Retry eval" : "Resume eval";
+  const firstFailedTraceId = failures[0]?.trace_id ?? null;
 
   return (
     <section className="evalDashboard">
@@ -194,6 +195,16 @@ export function EvalDashboardPanel({
           <div className="evalImprovementHeader">
             <small>Improvement plan</small>
             <strong>Use failures to patch the agent</strong>
+          </div>
+          <div className="evalImprovementWorkflow" aria-label="Eval improvement workflow">
+            <button type="button" onClick={() => firstFailedTraceId && onSelectTrace(firstFailedTraceId)} disabled={!firstFailedTraceId}>
+              Inspect trace
+            </button>
+            <span>Patch smallest cause</span>
+            <span>Add regression</span>
+            <button type="button" onClick={() => void onRun()} disabled={running}>
+              Rerun evals
+            </button>
           </div>
           {improvementPlan.slice(0, 4).map((item) => (
             <article className="evalImprovementItem" key={item.category}>

@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { prepareApp } from "./support";
+import { prepareApp, seedTrace, uniqueId } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await prepareApp(page);
 });
 
 test("eval dashboard shows running progress, fallback model, and failed check detail", async ({ page }) => {
+  const traceId = uniqueId("trace_e2e_eval_fallback");
+  await seedTrace({ traceId, status: "failed", hasError: true });
   const runningRun = {
     run_id: "eval_e2e_llm_running",
     suite_id: "support-triage-core",
@@ -23,7 +25,7 @@ test("eval dashboard shows running progress, fallback model, and failed check de
       {
         case_id: "e2e-fallback-regression",
         name: "Fallback regression case",
-        trace_id: "trace_e2e_eval_fallback",
+        trace_id: traceId,
         passed: false,
         score: 0.5,
         checks: [
@@ -108,8 +110,15 @@ test("eval dashboard shows running progress, fallback model, and failed check de
   await expect(evalPanel.getByText("Expected: policy_refund_duplicate_charge")).toBeVisible();
   await expect(evalPanel.getByText("Actual: policy_general_refund")).toBeVisible();
   await expect(evalPanel.getByText("Improvement plan")).toBeVisible();
+  await expect(evalPanel.getByRole("button", { name: "Inspect trace" })).toBeVisible();
+  await expect(evalPanel.getByText("Patch smallest cause")).toBeVisible();
+  await expect(evalPanel.getByText("Add regression")).toBeVisible();
+  await expect(evalPanel.getByRole("button", { name: "Rerun evals" })).toBeDisabled();
   await expect(evalPanel.getByText("multi-agent routing and policy/action planning")).toBeVisible();
   await expect(evalPanel.getByText("agent_apps/customer_service/runner.py").first()).toBeVisible();
+
+  await evalPanel.getByRole("button", { name: "Inspect trace" }).click();
+  await expect(page.getByRole("region", { name: "Selected trace" }).getByText(traceId)).toBeVisible();
 });
 
 test("recent eval runs can be opened from history", async ({ page }) => {

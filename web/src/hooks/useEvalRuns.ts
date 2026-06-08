@@ -41,6 +41,7 @@ export function useEvalRuns(onRefresh: () => void) {
     try {
       const nextRun = await getEvalRun(fetchJson, runId);
       setRun(nextRun);
+      setMode(nextRun.execution_mode);
       if (nextRun.error) {
         setStatus({ status: "error", message: nextRun.error });
       } else {
@@ -63,6 +64,7 @@ export function useEvalRuns(onRefresh: () => void) {
           ? await startSupportTriageEvalSuite(apiPostJson, mode)
           : await runSupportTriageEvalSuite(apiPostJson, mode);
       setRun(result);
+      setMode(result.execution_mode);
       setHistory((items) => [result, ...items.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setComparison(await getSupportTriageEvalComparison(fetchJson));
       setFailureTrends(await getSupportTriageEvalFailureTrends(fetchJson, "llm"));
@@ -81,6 +83,7 @@ export function useEvalRuns(onRefresh: () => void) {
     try {
       const result = await resumeEvalRun(apiPostJson, run.run_id);
       setRun(result);
+      setMode(result.execution_mode);
       setHistory((items) => [result, ...items.filter((item) => item.run_id !== result.run_id)].slice(0, 5));
       setComparison(await getSupportTriageEvalComparison(fetchJson));
       setFailureTrends(await getSupportTriageEvalFailureTrends(fetchJson, "llm"));
