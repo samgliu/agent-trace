@@ -228,6 +228,17 @@ response quality, memory, and reliability. Failed checks link back to traces
 and produce an improvement plan grouped by the responsible workflow area.
 Model fallback attempts are visible on the affected agent spans.
 
+Eval improvement workflow:
+
+```text
+Run evals -> inspect failed trace -> patch prompt/policy/guardrail/tooling
+          -> add a focused regression test -> rerun deterministic and LLM evals
+```
+
+Provider failures such as quota, timeout, or high-demand responses should be
+treated separately from agent-quality failures. Resume or retry those runs after
+the provider recovers instead of tuning the agent from incomplete evidence.
+
 ## CLI
 
 ```bash
