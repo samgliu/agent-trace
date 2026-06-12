@@ -39,7 +39,7 @@ Customer-Service Agent Service
         |
 Multi-Agent Orchestrator
    |-- Supervisor Agent
-   |-- Triage / Policy / Action / Validator / Escalation Agents
+   |-- Triage / Investigation / Policy / Action / Validator / Escalation Agents
    |-- Customer Response Generator
    |-- MCP tools
    |-- memory
@@ -52,6 +52,23 @@ Multi-Agent Orchestrator
 The agent is provider-agnostic. Real model calls use OpenAI-compatible
 `/v1/chat/completions` by default, so switching providers stays in environment
 configuration instead of specialist-agent logic.
+
+## Agent Responsibilities
+
+The reference customer-service workload is a supervisor-led multi-agent system.
+Each agent owns a distinct decision surface so traces show why the workflow
+routed, collected evidence, acted, recovered, or escalated.
+
+| Agent | Responsibility |
+| --- | --- |
+| Supervisor Agent | Chooses the top-level route. It sends actionable support requests into the standard support workflow, but routes greetings or general capability questions directly to the response generator. |
+| Triage Agent | Classifies the active customer issue, urgency, sentiment, missing information, escalation intent, and follow-up context. It keeps multi-turn conversations on the right issue unless the customer clearly switches topics. |
+| Investigation Agent | Plans required evidence before tools run. It decides whether the workflow needs customer, charge, order, order-owner, subscription, or account-access evidence. Policy validation corrects missing or unsupported evidence plans. |
+| Policy Agent | Selects the support-policy retrieval topic based on triage and customer context. It prevents policy drift such as using duplicate-charge policy for unrelated refund or return requests. |
+| Action Agent | Chooses the next support action from policy-allowed options, such as refund review, clarification request, courtesy credit review, cancellation, or escalation. Policy validation rejects unsupported or unsafe actions. |
+| Validator Agent | Checks grounding, policy compliance, approval requirements, abuse-risk controls, and supporting evidence before the customer response is generated. It can recover a trace by enforcing required approval or removing unnecessary approval. |
+| Escalation Agent | Prepares human handoff details when automation should not finish alone, including escalation type, next owner, reason, summary, and evidence. It handles explicit human requests, technical recovery, and risk review. |
+| Customer Response Generator | Writes the final customer-facing reply using only grounded customer, policy, tool, memory, validation, and conversation context. Safety helpers prevent unrelated facts, duplicate-charge leakage, and unsupported refund claims. |
 
 ## Quick Start
 
