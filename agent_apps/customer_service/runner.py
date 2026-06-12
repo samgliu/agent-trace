@@ -11,6 +11,7 @@ from agent_apps.customer_service.agent_decisions import (
     agent_decision_span_data as _agent_decision_span_data,
     deterministic_decision_response as _deterministic_decision_response,
     escalation_agent_instructions as _escalation_agent_instructions,
+    investigation_agent_instructions as _investigation_agent_instructions,
     json_for_prompt as _json_for_prompt,
     model_call_span_data as _model_call_span_data,
     parse_agent_json as _parse_agent_json,
@@ -41,10 +42,12 @@ from agent_apps.customer_service.policy_logic import (
     extract_order_number as _extract_order_number,
     grounding_evidence as _grounding_evidence,
     has_account_mismatch as _has_account_mismatch,
+    investigation_plan as _investigation_plan,
     mcp_span_data as _mcp_span_data,
     policy_topic as _policy_topic,
     triage as _triage,
     validate_action_decision as _validate_action_decision,
+    validate_investigation_plan as _validate_investigation_plan,
     validate_policy_decision as _validate_policy_decision,
     validate_triage_decision as _validate_triage_decision,
     working_memory as _working_memory,
@@ -150,7 +153,7 @@ class SupportTriageRunner:
                     span_id=span_ids["handoff_response"],
                     name="Supervisor -> Customer Response Generator",
                     span_type="handoff",
-                    parent_id=supervisor.span_id,
+                    parent_id=span_ids["investigation_agent"],
                     clock=clock,
                     duration_ms=75,
                     span_data={
@@ -200,7 +203,7 @@ class SupportTriageRunner:
                 span_id=span_ids["handoff_triage"],
                 name="Supervisor -> Triage Agent",
                 span_type="handoff",
-                parent_id=supervisor.span_id,
+                parent_id=span_ids["investigation_agent"],
                 clock=clock,
                 duration_ms=75,
                 span_data={"from_agent": "Supervisor Agent", "to_agent": "Triage Agent"},
@@ -260,6 +263,64 @@ class SupportTriageRunner:
                     "memory_key": working_memory["memory_key"],
                     "memory_used_in_response": True,
                 },
+            )
+        )
+        emit(
+            _span(
+                trace_id=trace_id,
+                span_id=span_ids["handoff_investigation"],
+                name="Supervisor -> Investigation Agent",
+                span_type="handoff",
+                parent_id=supervisor.span_id,
+                clock=clock,
+                duration_ms=75,
+                span_data={"from_agent": "Supervisor Agent", "to_agent": "Investigation Agent"},
+            )
+        )
+        expected_investigation = _investigation_plan(
+            message=message,
+            triage_result=triage,
+            conversation_history=conversation_history,
+        )
+        investigation, investigation_llm = self._agent_decision(
+            agent_name="Investigation Agent",
+            instructions=_investigation_agent_instructions(),
+            input_data={
+                "message": message,
+                "triage": triage,
+                "recent_context": triage_context,
+                "known_order_number": _extract_order_number(message),
+            },
+            fallback=expected_investigation,
+            allowed_keys={"required_evidence", "reason"},
+        )
+        investigation, investigation_validation = _validate_investigation_plan(
+            investigation,
+            message=message,
+            triage_result=triage,
+            conversation_history=conversation_history,
+        )
+        required_evidence = set(str(item) for item in investigation.get("required_evidence", []))
+        emit(
+            _span(
+                trace_id=trace_id,
+                span_id=span_ids["investigation_agent"],
+                name="Investigation Agent",
+                span_type="agent",
+                parent_id=supervisor.span_id,
+                clock=clock,
+                duration_ms=325,
+                input={"message": message, "triage": triage, "recent_context": triage_context},
+                output=investigation,
+                span_data={
+                    "agent_role": "investigation",
+                    "model_provider": self.llm_client.provider_name,
+                    **_agent_decision_span_data(investigation_llm),
+                    **investigation_validation,
+                },
+                input_tokens=investigation_llm.input_tokens,
+                output_tokens=investigation_llm.output_tokens,
+                estimated_cost=investigation_llm.estimated_cost,
             )
         )
 
@@ -322,7 +383,24 @@ class SupportTriageRunner:
         order_number = _extract_order_number(message)
         order: dict[str, Any] | None = None
         order_owner: dict[str, Any] | None = None
-        if order_number:
+        charge: dict[str, Any] | None = None
+        if "charge" in required_evidence:
+            charge = self.tools_client.lookup_charge(str(customer.get("customer_id") or "unknown"))
+            emit(
+                _span(
+                    trace_id=trace_id,
+                    span_id=span_ids["lookup_charge"],
+                    name="lookup_charge",
+                    span_type="function_tool",
+                    parent_id=span_ids["investigation_agent"],
+                    clock=clock,
+                    duration_ms=125,
+                    input={"customer_id": customer.get("customer_id"), "charge_id": None},
+                    output=charge,
+                    span_data=_mcp_span_data("lookup_charge_tool"),
+                )
+            )
+        if order_number and "order" in required_evidence:
             order = self.tools_client.lookup_order(order_number)
             emit(
                 _span(
@@ -330,7 +408,7 @@ class SupportTriageRunner:
                     span_id=span_ids["lookup_order"],
                     name="lookup_order",
                     span_type="function_tool",
-                    parent_id=supervisor.span_id,
+                    parent_id=span_ids["investigation_agent"],
                     clock=clock,
                     duration_ms=120,
                     input={"order_number": order_number},
@@ -338,6 +416,7 @@ class SupportTriageRunner:
                     span_data=_mcp_span_data("lookup_order_tool"),
                 )
             )
+        if order_number and "order_owner" in required_evidence:
             order_owner = self.tools_client.verify_order_owner(
                 order_number,
                 str(customer.get("customer_id") or "unknown"),
@@ -357,7 +436,7 @@ class SupportTriageRunner:
                 )
             )
         account_access: dict[str, Any] | None = None
-        if _has_account_mismatch(message.lower()):
+        if "account_access" in required_evidence:
             account_access = self.tools_client.verify_account_access(
                 str(customer.get("customer_id") or "unknown"),
                 message,
@@ -381,10 +460,11 @@ class SupportTriageRunner:
             customer=customer,
             order=order,
             order_owner=order_owner,
+            charge=charge,
             account_access=account_access,
         )
         subscription: dict[str, Any] | None = None
-        if triage["issue_type"] in {"annual_plan_refund", "stale_subscription_refund"}:
+        if "subscription" in required_evidence:
             subscription = self.tools_client.lookup_subscription(str(customer.get("customer_id") or "unknown"))
             emit(
                 _span(
@@ -405,6 +485,7 @@ class SupportTriageRunner:
                 customer=customer,
                 order=order,
                 order_owner=order_owner,
+                charge=charge,
                 account_access=account_access,
                 subscription=subscription,
             )
@@ -559,6 +640,7 @@ class SupportTriageRunner:
             customer=customer,
             order=order,
             order_owner=order_owner,
+            charge=charge,
             account_access=account_access,
             subscription=subscription,
             proposed_action=action_type,

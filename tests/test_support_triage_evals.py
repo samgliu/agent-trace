@@ -73,6 +73,8 @@ class SupportTriageEvalsTest(unittest.TestCase):
         follow_up = next(item for item in result.results if item.case.case_id == "consumed-product-return-follow-up")
 
         check_names = [check.name for check in follow_up.checks]
+        self.assertIn("investigation_evidence:order", check_names)
+        self.assertIn("investigation_evidence:order_owner", check_names)
         self.assertIn("response_contains:order number", check_names)
         self.assertIn("response_excludes:duplicate", check_names)
         self.assertTrue(follow_up.passed)
@@ -126,6 +128,7 @@ class SupportTriageEvalsTest(unittest.TestCase):
         outputs = [
             '{"route":"triage","handoff_reason":"billing request needs triage"}',
             '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+            '{"required_evidence":["customer","charge"],"reason":"Duplicate billing requires customer and charge evidence."}',
             '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
             '{"action_type":"refund_review","reason":"Review duplicate charge."}',
             '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',

@@ -114,7 +114,12 @@ def eval_check_category(name: str) -> str:
         return "Reliability"
     if name in {"supervisor_route", "issue_type", "policy_id", "action_type"}:
         return "Routing"
-    if name.startswith("tool_used") or name.startswith("evidence_id") or name.startswith("agent_state"):
+    if (
+        name.startswith("tool_used")
+        or name.startswith("investigation_evidence")
+        or name.startswith("evidence_id")
+        or name.startswith("agent_state")
+    ):
         return "Evidence"
     if name.startswith("escalation_"):
         return "Escalation"

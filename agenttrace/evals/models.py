@@ -27,6 +27,7 @@ class EvalCase:
     expected_memory_warning_count: int | None = None
     expected_error_count: int | None = None
     expected_tool_names: tuple[str, ...] = ()
+    expected_investigation_evidence: tuple[str, ...] = ()
     expected_evidence_ids: tuple[str, ...] = ()
     expected_next_required_step: str | None = None
     expected_missing_fields: tuple[str, ...] = ()

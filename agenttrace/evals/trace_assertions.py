@@ -36,6 +36,14 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
         checks.append(excludes_check(f"response_excludes:{rejected_text}", actual["response"], rejected_text))
     for tool_name in case.expected_tool_names:
         checks.append(includes_check(f"tool_used:{tool_name}", actual["tool_names"], tool_name))
+    for evidence_name in case.expected_investigation_evidence:
+        checks.append(
+            includes_check(
+                f"investigation_evidence:{evidence_name}",
+                actual["investigation_evidence"],
+                evidence_name,
+            )
+        )
     for evidence_id in case.expected_evidence_ids:
         checks.append(includes_check(f"evidence_id:{evidence_id}", actual["evidence_ids"], evidence_id))
     if case.expected_next_required_step is not None:
@@ -89,6 +97,7 @@ def model_events(trace: Trace) -> list[dict[str, Any]]:
 def actual_values(trace: Trace) -> dict[str, Any]:
     supervisor_span = find_span(trace, "Supervisor Agent")
     triage_span = find_span(trace, "Triage Agent")
+    investigation_span = find_span(trace, "Investigation Agent")
     retrieval_span = find_span(trace, "retrieve_policy")
     action_span = find_span(trace, "Action Agent")
     validator_span = find_span(trace, "Validator Agent")
@@ -109,6 +118,7 @@ def actual_values(trace: Trace) -> dict[str, Any]:
         "response": dict_value(response_span.output if response_span else None, "response") or "",
         "approval_reason": dict_value(approval_span.output if approval_span else None, "reason") or "",
         "escalation": escalation_from_span(escalation_span),
+        "investigation_evidence": investigation_evidence_from_span(investigation_span),
         "agent_state": agent_state_from_span(state_span),
         "tool_names": tool_names(trace),
         "evidence_ids": evidence_ids(trace),
@@ -137,6 +147,15 @@ def escalation_from_span(span: Any) -> dict[str, Any]:
     if isinstance(output, dict):
         return output
     return {}
+
+
+def investigation_evidence_from_span(span: Any) -> list[str]:
+    output = span.output if span else None
+    if isinstance(output, dict):
+        required_evidence = output.get("required_evidence")
+        if isinstance(required_evidence, list):
+            return [str(item) for item in required_evidence]
+    return []
 
 
 def tool_names(trace: Trace) -> list[str]:
