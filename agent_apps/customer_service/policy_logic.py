@@ -169,6 +169,78 @@ def validate_policy_decision(policy_topic_value: str, expected_policy_topic: str
     return validation_correction("policy_topic_mismatch", rejected_policy_topic=policy_topic_value)
 
 
+ALLOWED_INVESTIGATION_EVIDENCE = {
+    "account_access",
+    "charge",
+    "customer",
+    "order",
+    "order_owner",
+    "subscription",
+}
+
+
+def investigation_plan(
+    *,
+    message: str,
+    triage_result: dict[str, Any],
+    conversation_history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    issue_type = str(triage_result.get("issue_type") or "general_support")
+    order_number = extract_order_number(message)
+    required_evidence = ["customer"]
+    reasons = ["customer identity is the baseline evidence for actionable support"]
+
+    if issue_type == "billing_duplicate_charge":
+        required_evidence.append("charge")
+        reasons.append("duplicate-billing claims need recent charge evidence")
+    if issue_type in {"annual_plan_refund", "stale_subscription_refund"}:
+        required_evidence.append("subscription")
+        reasons.append("subscription refund requests need active subscription and last-charge evidence")
+    if issue_type == "consumed_product_return":
+        if order_number:
+            required_evidence.extend(["order", "order_owner"])
+            reasons.append("provided order numbers must be verified against the current customer")
+        else:
+            reasons.append("no order number is available yet, so order evidence cannot be collected")
+    if has_account_mismatch(message.lower()):
+        required_evidence.append("account_access")
+        reasons.append("cross-account requests need account-access verification")
+
+    return {
+        "required_evidence": list(dict.fromkeys(required_evidence)),
+        "reason": "; ".join(reasons),
+    }
+
+
+def validate_investigation_plan(
+    plan: dict[str, Any],
+    *,
+    message: str,
+    triage_result: dict[str, Any],
+    conversation_history: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    expected = investigation_plan(message=message, triage_result=triage_result, conversation_history=conversation_history)
+    raw_evidence = plan.get("required_evidence")
+    planned = [str(item) for item in raw_evidence] if isinstance(raw_evidence, list) else []
+    unsupported = [item for item in planned if item not in ALLOWED_INVESTIGATION_EVIDENCE]
+    missing = [item for item in expected["required_evidence"] if item not in planned]
+    if unsupported or missing:
+        return (
+            {
+                **plan,
+                "required_evidence": expected["required_evidence"],
+                "reason": expected["reason"],
+            },
+            validation_correction(
+                "investigation_evidence_plan_corrected",
+                rejected_required_evidence=planned,
+                unsupported_evidence=unsupported,
+                missing_evidence=missing,
+            ),
+        )
+    return ({**plan, "required_evidence": list(dict.fromkeys(planned))}, {})
+
+
 def action_type(triage_result: dict[str, Any], customer: dict[str, Any]) -> str:
     if not customer.get("found"):
         return "clarification_request"
@@ -316,6 +388,7 @@ def agent_state(
     customer: dict[str, Any] | None = None,
     order: dict[str, Any] | None = None,
     order_owner: dict[str, Any] | None = None,
+    charge: dict[str, Any] | None = None,
     account_access: dict[str, Any] | None = None,
     subscription: dict[str, Any] | None = None,
     proposed_action: str | None = None,
@@ -356,6 +429,14 @@ def agent_state(
             evidence_ids.append(str(order_owner.get("reason") or "order_customer_match"))
         else:
             risk_signals.append("order_customer_mismatch")
+    if charge:
+        if charge.get("charge_id"):
+            evidence_ids.append(str(charge["charge_id"]))
+        charges = charge.get("charges")
+        if isinstance(charges, list):
+            evidence_ids.extend(str(item["charge_id"]) for item in charges if isinstance(item, dict) and item.get("charge_id"))
+        if not charge.get("found"):
+            missing_fields.extend(str(field) for field in charge.get("missing_fields", []))
     if account_access:
         evidence_id = account_access.get("evidence_id")
         if evidence_id:

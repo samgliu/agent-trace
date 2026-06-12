@@ -53,6 +53,17 @@ class QueueLLMClient(StaticLLMClient):
 
     def generate(self, *, instructions: str, input_text: str) -> LLMResponse:
         self.calls.append({"instructions": instructions, "input_text": input_text})
+        if "Investigation Agent" in instructions and (
+            not self.outputs or "required_evidence" not in self.outputs[0]
+        ):
+            output = '{"required_evidence":["customer"],"reason":"Default test investigation plan."}'
+            return LLMResponse(
+                output_text=output,
+                input_tokens=11,
+                output_tokens=7,
+                estimated_cost=0.0001,
+                raw_response={"output": output},
+            )
         output = self.outputs.pop(0)
         return LLMResponse(
             output_text=output,
@@ -87,7 +98,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 "Supervisor -> Triage Agent",
                 "Triage Agent",
                 "Write Working Memory",
+                "Supervisor -> Investigation Agent",
+                "Investigation Agent",
                 "lookup_customer",
+                "lookup_charge",
                 "Supervisor -> Policy Agent",
                 "Policy Agent",
                 "retrieve_policy",
@@ -127,7 +141,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
 
         self.assertEqual(trace.status, "passed")
         self.assertEqual(trace.metadata["agent_decision_mode"], "llm")
-        self.assertEqual(len(llm.calls), 6)
+        self.assertEqual(len(llm.calls), 7)
         triage = next(span for span in trace.spans if span.name == "Triage Agent")
         policy = next(span for span in trace.spans if span.name == "Policy Agent")
         action = next(span for span in trace.spans if span.name == "Action Agent")
@@ -137,13 +151,57 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(validator.output["grounding_status"], "grounded")
         self.assertEqual(triage.span_data["decision_source"], "llm")
-        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v1")
+        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v2")
         self.assertEqual(triage.span_data["model_provider"], "static")
         self.assertEqual(
             triage.span_data["model_output_text"],
             '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
         )
         self.assertEqual(action.input_tokens, 11)
+
+    def test_investigation_agent_plans_and_executes_charge_evidence(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_investigation_charge",
+        )
+
+        investigation = next(span for span in trace.spans if span.name == "Investigation Agent")
+        charge = next(span for span in trace.spans if span.name == "lookup_charge")
+        state_update = next(span for span in trace.spans if span.name == "Update Agent State")
+        self.assertEqual(investigation.output["required_evidence"], ["customer", "charge"])
+        self.assertEqual(charge.parent_id, investigation.span_id)
+        self.assertEqual(charge.span_data["tool_name"], "lookup_charge_tool")
+        self.assertIn("chg_dup_001", state_update.output["agent_state"]["evidence_ids"])
+
+    def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"required_evidence":["customer"],"reason":"Customer lookup is enough."}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Review duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_investigation_corrected",
+        )
+
+        investigation = next(span for span in trace.spans if span.name == "Investigation Agent")
+        self.assertEqual(investigation.output["required_evidence"], ["customer", "charge"])
+        self.assertEqual(investigation.span_data["decision_source"], "policy_validation")
+        self.assertEqual(investigation.span_data["validation_reason"], "investigation_evidence_plan_corrected")
+        self.assertEqual(investigation.span_data["missing_evidence"], ["charge"])
+        self.assertIn("lookup_charge", [span.name for span in trace.spans])
 
     def test_supervisor_can_route_clarification_directly_to_response(self) -> None:
         llm = QueueLLMClient(

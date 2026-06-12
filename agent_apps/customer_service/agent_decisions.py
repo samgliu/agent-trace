@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_apps.customer_service.model_client import LLMResponse
 
-PROMPT_VERSION = "support-triage-v1"
+PROMPT_VERSION = "support-triage-v2"
 
 
 def supervisor_instructions() -> str:
@@ -28,6 +28,18 @@ def triage_instructions() -> str:
         "or refund a product they already consumed. Use recent_context to preserve the active issue across "
         "follow-up messages such as order numbers. Return only JSON with issue_type, urgency, sentiment, and "
         "optional missing_information."
+    )
+
+
+def investigation_agent_instructions() -> str:
+    return (
+        "You are the Investigation Agent. Decide which evidence the workflow must collect before policy "
+        "and action planning. Return only JSON with required_evidence and reason. required_evidence must be "
+        "a list using only these values: customer, charge, order, order_owner, subscription, account_access. "
+        "Use customer for all actionable support requests. Use charge for duplicate-billing claims. Use order "
+        "and order_owner when an order number is present or the active issue is a product return. Use "
+        "subscription for subscription refund requests. Use account_access when the request mentions another "
+        "account, spouse, wrong account, or different email."
     )
 
 
