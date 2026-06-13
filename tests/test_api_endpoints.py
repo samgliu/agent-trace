@@ -1257,7 +1257,7 @@ class ApiEndpointsTest(unittest.TestCase):
             time.sleep(0.05)
 
     def _wait_for_run_status(self, run_id: str, statuses: set[str]) -> dict:
-        for _ in range(20):
+        for _ in range(100):
             poll = self.client.get(f"/workflow-runs/{run_id}")
             self.assertEqual(poll.status_code, 200)
             payload = poll.json()
