@@ -31,8 +31,7 @@ from agent_apps.customer_service.model_client import (
 from agent_apps.customer_service.policy_logic import (
     AgentState,
     abuse_risk as _abuse_risk,
-    action_reason as _action_reason,
-    action_type as _action_type,
+    action_plan as _action_plan,
     agent_state as _agent_state,
     approval_reason as _approval_reason,
     conversation_context as _conversation_context,
@@ -585,10 +584,13 @@ class SupportTriageRunner:
             )
         )
 
-        expected_action = {
-            "action_type": _action_type(triage, customer),
-            "reason": _action_reason(triage, customer, policy, customer_memory),
-        }
+        expected_action = _action_plan(
+            triage_result=triage,
+            customer=customer,
+            policy=policy,
+            customer_memory=customer_memory,
+            agent_state_value=agent_state,
+        )
         action_decision, action_llm = self._agent_decision(
             agent_name="Action Agent",
             instructions=_action_agent_instructions(),
@@ -600,14 +602,19 @@ class SupportTriageRunner:
                 "agent_state": agent_state.to_dict(),
             },
             fallback=expected_action,
-            allowed_keys={"action_type", "reason"},
+            allowed_keys={
+                "action_type",
+                "reason",
+                "customer_outcome",
+                "requires_human_review",
+                "customer_message_goal",
+                "policy_boundary",
+                "evidence_used",
+            },
         )
-        action_type = str(action_decision.get("action_type") or expected_action["action_type"])
-        action_reason = str(action_decision.get("reason") or expected_action["reason"])
-        action_validation = _validate_action_decision(action_type, policy, expected_action["action_type"])
-        if action_validation:
-            action_type = expected_action["action_type"]
-            action_reason = expected_action["reason"]
+        action_decision, action_validation = _validate_action_decision(action_decision, policy, expected_action)
+        action_type = str(action_decision["action_type"])
+        action_reason = str(action_decision["reason"])
         emit(
             _span(
                 trace_id=trace_id,
@@ -623,7 +630,7 @@ class SupportTriageRunner:
                     "memory": customer_memory,
                     "agent_state": agent_state.to_dict(),
                 },
-                output={"action_type": action_type, "reason": action_reason},
+                output=action_decision,
                 span_data={
                     "agent_role": "action",
                     "model_provider": self.llm_client.provider_name,
@@ -677,6 +684,13 @@ class SupportTriageRunner:
             order=order,
             agent_state=agent_state,
         )
+        action["resolution_plan"] = {
+            "customer_outcome": action_decision.get("customer_outcome"),
+            "requires_human_review": action_decision.get("requires_human_review"),
+            "customer_message_goal": action_decision.get("customer_message_goal"),
+            "policy_boundary": action_decision.get("policy_boundary"),
+            "evidence_used": action_decision.get("evidence_used", []),
+        }
         emit(
             _span(
                 trace_id=trace_id,
@@ -691,6 +705,7 @@ class SupportTriageRunner:
                     "action_type": action_type,
                     "reason": action_reason,
                     "evidence_ids": list(agent_state.evidence_ids),
+                    "resolution_plan": action.get("resolution_plan"),
                 },
                 output=action,
                 span_data=_mcp_span_data(action_tool_name),

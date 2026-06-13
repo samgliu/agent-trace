@@ -270,7 +270,106 @@ def action_reason(
     )
 
 
-def validate_action_decision(action_type_value: str, policy: dict[str, Any], expected_action_type: str) -> dict[str, Any]:
+def action_plan(
+    *,
+    triage_result: dict[str, Any],
+    customer: dict[str, Any],
+    policy: dict[str, Any],
+    customer_memory: dict[str, Any],
+    agent_state_value: AgentState,
+) -> dict[str, Any]:
+    selected_action = action_type(triage_result, customer)
+    policy_requires_approval = bool(policy.get("requires_approval"))
+    risk_review_required = bool(agent_state_value.risk_signals)
+    return {
+        "action_type": selected_action,
+        "reason": action_reason(triage_result, customer, policy, customer_memory),
+        "customer_outcome": customer_outcome(selected_action, policy, agent_state_value),
+        "requires_human_review": selected_action == "escalation" or policy_requires_approval or risk_review_required,
+        "customer_message_goal": customer_message_goal(selected_action, policy, agent_state_value),
+        "policy_boundary": policy_boundary(selected_action, policy, agent_state_value),
+        "evidence_used": list(agent_state_value.evidence_ids),
+    }
+
+
+def customer_outcome(action_type_value: str, policy: dict[str, Any], agent_state_value: AgentState) -> str:
+    if action_type_value == "refund_review" and policy.get("requires_approval"):
+        return "approval_ready_refund_review"
+    if action_type_value == "refund_review":
+        return "refund_review_prepared"
+    if action_type_value == "courtesy_credit":
+        return "quality_exception_review_prepared"
+    if action_type_value == "escalation":
+        return "human_handoff_prepared"
+    if action_type_value == "cancel_plan":
+        return "plan_cancellation_prepared"
+    if agent_state_value.missing_fields:
+        return "missing_information_requested"
+    return "support_action_prepared"
+
+
+def customer_message_goal(action_type_value: str, policy: dict[str, Any], agent_state_value: AgentState) -> str:
+    if action_type_value == "escalation":
+        return "confirm human handoff and set follow-up expectation"
+    if action_type_value == "refund_review" and policy.get("requires_approval"):
+        return "explain review is prepared and approval is required before refund execution"
+    if action_type_value == "refund_review":
+        return "confirm refund review was prepared using verified evidence"
+    if action_type_value == "courtesy_credit":
+        return "explain quality exception review and courtesy-credit path"
+    if agent_state_value.missing_fields:
+        return "ask for the smallest missing detail needed to continue"
+    return "explain the next support step clearly"
+
+
+def policy_boundary(action_type_value: str, policy: dict[str, Any], agent_state_value: AgentState) -> str:
+    policy_id = str(policy.get("policy_id") or "policy_unknown")
+    if policy.get("requires_approval"):
+        return f"{policy_id} requires human approval before customer-impacting execution."
+    if action_type_value == "courtesy_credit":
+        return f"{policy_id} allows exception review, not a normal consumed-product return."
+    if agent_state_value.risk_signals:
+        return f"{policy_id} requires human review for risk signals: {', '.join(agent_state_value.risk_signals)}."
+    if agent_state_value.missing_fields:
+        return f"{policy_id} requires more information before irreversible action."
+    return f"{policy_id} permits the selected action with collected evidence."
+
+
+def validate_action_decision(
+    action_decision: dict[str, Any],
+    policy: dict[str, Any],
+    expected_action: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    action_type_value = str(action_decision.get("action_type") or "")
+    expected_action_type = str(expected_action["action_type"])
+    validation = _validate_action_type(action_type_value, policy, expected_action_type)
+    if validation:
+        return expected_action, validation
+
+    corrected = {**expected_action, **action_decision, "action_type": action_type_value.strip().lower()}
+    invalid_fields = [
+        field
+        for field in ("customer_outcome", "customer_message_goal", "policy_boundary", "reason")
+        if not isinstance(corrected.get(field), str) or not str(corrected.get(field)).strip()
+    ]
+    evidence_used = corrected.get("evidence_used")
+    if not isinstance(evidence_used, list):
+        invalid_fields.append("evidence_used")
+    if not isinstance(corrected.get("requires_human_review"), bool):
+        invalid_fields.append("requires_human_review")
+    if invalid_fields:
+        return (
+            {**expected_action, "action_type": action_type_value.strip().lower()},
+            validation_correction(
+                "action_resolution_plan_corrected",
+                invalid_action_fields=invalid_fields,
+            ),
+        )
+    corrected["evidence_used"] = [str(item) for item in evidence_used]
+    return corrected, {}
+
+
+def _validate_action_type(action_type_value: str, policy: dict[str, Any], expected_action_type: str) -> dict[str, Any]:
     normalized_action = action_type_value.strip().lower()
     if normalized_action not in VALID_ACTIONS:
         return validation_correction("unsupported_action_type", rejected_action_type=action_type_value)

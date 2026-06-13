@@ -112,8 +112,10 @@ def format_eval_report(report: dict[str, Any]) -> str:
 def eval_check_category(name: str) -> str:
     if name in {"trace_status", "error_count"}:
         return "Reliability"
-    if name in {"supervisor_route", "issue_type", "policy_id", "action_type"}:
+    if name in {"supervisor_route", "issue_type", "policy_id", "action_type", "customer_outcome"}:
         return "Routing"
+    if name in {"policy_boundary", "action_requires_human_review"}:
+        return "Governance"
     if (
         name.startswith("tool_used")
         or name.startswith("investigation_evidence")

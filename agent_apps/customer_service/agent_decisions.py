@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_apps.customer_service.model_client import LLMResponse
 
-PROMPT_VERSION = "support-triage-v2"
+PROMPT_VERSION = "support-triage-v3"
 
 
 def supervisor_instructions() -> str:
@@ -55,7 +55,9 @@ def policy_agent_instructions() -> str:
 def action_agent_instructions() -> str:
     return (
         "You are the Action Agent. Choose the next support action based on customer, policy, "
-        "and memory context. Return only JSON with action_type and reason."
+        "memory, and agent-state context. Return only JSON with action_type, reason, "
+        "customer_outcome, requires_human_review, customer_message_goal, policy_boundary, and evidence_used. "
+        "evidence_used must list only evidence IDs already present in agent_state. Do not invent evidence."
     )
 
 

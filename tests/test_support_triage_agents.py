@@ -151,7 +151,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(validator.output["grounding_status"], "grounded")
         self.assertEqual(triage.span_data["decision_source"], "llm")
-        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v2")
+        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v3")
         self.assertEqual(triage.span_data["model_provider"], "static")
         self.assertEqual(
             triage.span_data["model_output_text"],
@@ -175,6 +175,53 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(charge.parent_id, investigation.span_id)
         self.assertEqual(charge.span_data["tool_name"], "lookup_charge_tool")
         self.assertIn("chg_dup_001", state_update.output["agent_state"]["evidence_ids"])
+
+    def test_action_agent_outputs_resolution_plan(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_action_resolution_plan",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        create_action = next(span for span in trace.spans if span.name == "create_refund_review")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(action.output["customer_outcome"], "refund_review_prepared")
+        self.assertFalse(action.output["requires_human_review"])
+        self.assertIn("customer_message_goal", action.output)
+        self.assertIn("policy_refund_duplicate_charge", action.output["policy_boundary"])
+        self.assertIn("chg_dup_001", action.output["evidence_used"])
+        self.assertEqual(create_action.output["resolution_plan"]["customer_outcome"], "refund_review_prepared")
+        self.assertIn("chg_dup_001", create_action.output["resolution_plan"]["evidence_used"])
+
+    def test_llm_action_resolution_plan_is_corrected_when_shape_is_invalid(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"triage","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Review duplicate charge.","requires_human_review":"no","evidence_used":"cus_123"}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_action_resolution_plan_corrected",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        self.assertEqual(action.output["action_type"], "refund_review")
+        self.assertEqual(action.output["customer_outcome"], "refund_review_prepared")
+        self.assertFalse(action.output["requires_human_review"])
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
+        self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used", "requires_human_review"])
 
     def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
         llm = QueueLLMClient(

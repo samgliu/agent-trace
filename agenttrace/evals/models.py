@@ -22,6 +22,9 @@ class EvalCase:
     expected_issue_type: str | None = None
     expected_policy_id: str | None = None
     expected_action_type: str | None = None
+    expected_customer_outcome: str | None = None
+    expected_requires_human_review: bool | None = None
+    expected_policy_boundary_contains: str | None = None
     expected_approval_required: bool | None = None
     expected_grounding_status: str | None = None
     expected_memory_warning_count: int | None = None
