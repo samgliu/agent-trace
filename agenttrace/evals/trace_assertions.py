@@ -22,6 +22,24 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
         checks.append(check("policy_id", case.expected_policy_id, actual["policy_id"]))
     if case.expected_action_type is not None:
         checks.append(check("action_type", case.expected_action_type, actual["action_type"]))
+    if case.expected_customer_outcome is not None:
+        checks.append(check("customer_outcome", case.expected_customer_outcome, actual["customer_outcome"]))
+    if case.expected_requires_human_review is not None:
+        checks.append(
+            check(
+                "action_requires_human_review",
+                case.expected_requires_human_review,
+                actual["action_requires_human_review"],
+            )
+        )
+    if case.expected_policy_boundary_contains is not None:
+        checks.append(
+            contains_check(
+                "policy_boundary",
+                actual["policy_boundary"],
+                case.expected_policy_boundary_contains,
+            )
+        )
     if case.expected_approval_required is not None:
         checks.append(check("approval_required", case.expected_approval_required, actual["approval_required"]))
     if case.expected_grounding_status is not None:
@@ -111,6 +129,9 @@ def actual_values(trace: Trace) -> dict[str, Any]:
         "issue_type": dict_value(triage_span.output if triage_span else None, "issue_type"),
         "policy_id": dict_value(retrieval_span.output if retrieval_span else None, "policy_id"),
         "action_type": dict_value(action_span.output if action_span else None, "action_type"),
+        "customer_outcome": dict_value(action_span.output if action_span else None, "customer_outcome"),
+        "action_requires_human_review": dict_value(action_span.output if action_span else None, "requires_human_review"),
+        "policy_boundary": dict_value(action_span.output if action_span else None, "policy_boundary") or "",
         "approval_required": dict_value(validator_span.output if validator_span else None, "approval_required"),
         "grounding_status": dict_value(validator_span.output if validator_span else None, "grounding_status"),
         "memory_warning_count": summary["memory_warning_count"],

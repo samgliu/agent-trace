@@ -337,7 +337,14 @@ export function evalComparisonStatusLabel(comparison: EvalComparison | null): st
 
 export function evalCheckCategory(checkName: string): EvalCheckCategory {
   if (checkName === "trace_status" || checkName === "error_count") return "Reliability";
-  if (checkName === "supervisor_route" || checkName === "issue_type" || checkName === "policy_id" || checkName === "action_type") return "Routing";
+  if (
+    checkName === "supervisor_route" ||
+    checkName === "issue_type" ||
+    checkName === "policy_id" ||
+    checkName === "action_type" ||
+    checkName === "customer_outcome"
+  )
+    return "Routing";
   if (
     checkName.startsWith("tool_used") ||
     checkName.startsWith("investigation_evidence") ||
@@ -346,7 +353,13 @@ export function evalCheckCategory(checkName: string): EvalCheckCategory {
   )
     return "Evidence";
   if (checkName.startsWith("escalation_")) return "Escalation";
-  if (checkName === "approval_required" || checkName === "approval_reason") return "Governance";
+  if (
+    checkName === "approval_required" ||
+    checkName === "approval_reason" ||
+    checkName === "policy_boundary" ||
+    checkName === "action_requires_human_review"
+  )
+    return "Governance";
   if (checkName === "grounding_status" || checkName.startsWith("response_")) return "Response";
   if (checkName.startsWith("memory_")) return "Memory";
   return "Other";
