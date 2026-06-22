@@ -357,6 +357,9 @@ def validate_action_decision(
         invalid_fields.append("evidence_used")
     if not isinstance(corrected.get("requires_human_review"), bool):
         invalid_fields.append("requires_human_review")
+    for field in ("customer_outcome", "requires_human_review", "policy_boundary"):
+        if field not in invalid_fields and corrected.get(field) != expected_action.get(field):
+            invalid_fields.append(field)
     if invalid_fields:
         return (
             {**expected_action, "action_type": action_type_value.strip().lower()},

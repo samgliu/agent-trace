@@ -243,6 +243,40 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
         self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used", "requires_human_review"])
 
+    def test_llm_action_resolution_plan_is_corrected_when_canonical_fields_drift(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"annual refund needs review"}',
+                '{"issue_type":"annual_plan_refund","urgency":"medium","sentiment":"concerned"}',
+                '{"required_evidence":["customer","subscription"],"reason":"Annual refund needs account and subscription evidence."}',
+                '{"retrieval_query":"annual_plan_refund","reason":"Annual refund policy applies."}',
+                (
+                    '{"action_type":"refund_review","reason":"Review annual refund.",'
+                    '"customer_outcome":"The customer is informed that their request is being prioritized for review.",'
+                    '"requires_human_review":true,'
+                    '"customer_message_goal":"Set expectations for review.",'
+                    '"policy_boundary":"policy_annual_refund",'
+                    '"evidence_used":["cus_annual_800","sub_annual_800"]}'
+                ),
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_annual_800","sub_annual_800"]}',
+                "I created a refund review pending approval.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Can you refund my annual plan?",
+            customer_email="annual@example.com",
+            trace_id="trace_runner_action_resolution_plan_canonicalized",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        self.assertEqual(action.output["customer_outcome"], "approval_ready_refund_review")
+        self.assertIn("requires human approval", action.output["policy_boundary"])
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
+        self.assertEqual(action.span_data["invalid_action_fields"], ["customer_outcome", "policy_boundary"])
+
     def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
         llm = QueueLLMClient(
             [
