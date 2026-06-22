@@ -67,7 +67,52 @@ def enforce_validation(
 
     if corrections:
         enforced["validator_corrections"] = corrections
+    else:
+        enforced.setdefault("validator_corrections", [])
+    enforced["validation_report"] = validation_report(policy, action, enforced)
     return enforced
+
+
+def validation_report(policy: dict[str, Any], action: dict[str, Any], validation: dict[str, Any]) -> dict[str, Any]:
+    allowed_actions = policy.get("allowed_actions")
+    action_allowed = not isinstance(allowed_actions, list) or action.get("action_type") in allowed_actions
+    action_created = action.get("status") == "created"
+    unsupported_claims = validation.get("unsupported_claims")
+    if not isinstance(unsupported_claims, list):
+        unsupported_claims = []
+    missing_evidence = validation.get("missing_evidence")
+    if not isinstance(missing_evidence, list):
+        missing_evidence = []
+
+    policy_compliance_status = "passed" if action_created and action_allowed else "failed"
+    approval_required = bool(validation.get("approval_required"))
+    risk_review_required = bool(validation.get("risk_review_required"))
+    grounding_status = str(validation.get("grounding_status") or "unknown")
+    customer_safe_to_send = (
+        grounding_status == "grounded"
+        and not approval_required
+        and not risk_review_required
+        and action_created
+        and action_allowed
+        and not unsupported_claims
+    )
+
+    return {
+        "grounding_status": grounding_status,
+        "approval_required": approval_required,
+        "policy_compliance": {
+            "status": policy_compliance_status,
+            "action_allowed": action_allowed,
+            "action_created": action_created,
+            "policy_id": policy.get("policy_id"),
+            "action_type": action.get("action_type"),
+        },
+        "unsupported_claims": unsupported_claims,
+        "missing_evidence": missing_evidence,
+        "risk_review_required": risk_review_required,
+        "customer_safe_to_send": customer_safe_to_send,
+        "validator_corrections": validation.get("validator_corrections", []),
+    }
 
 
 def abuse_risk(customer: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:

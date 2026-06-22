@@ -44,6 +44,14 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
         checks.append(check("approval_required", case.expected_approval_required, actual["approval_required"]))
     if case.expected_grounding_status is not None:
         checks.append(check("grounding_status", case.expected_grounding_status, actual["grounding_status"]))
+    if case.expected_customer_safe_to_send is not None:
+        checks.append(
+            check(
+                "customer_safe_to_send",
+                case.expected_customer_safe_to_send,
+                actual["customer_safe_to_send"],
+            )
+        )
     if case.expected_memory_warning_count is not None:
         checks.append(check("memory_warning_count", case.expected_memory_warning_count, actual["memory_warning_count"]))
     if case.expected_error_count is not None:
@@ -134,6 +142,7 @@ def actual_values(trace: Trace) -> dict[str, Any]:
         "policy_boundary": dict_value(action_span.output if action_span else None, "policy_boundary") or "",
         "approval_required": dict_value(validator_span.output if validator_span else None, "approval_required"),
         "grounding_status": dict_value(validator_span.output if validator_span else None, "grounding_status"),
+        "customer_safe_to_send": validation_report_value(validator_span, "customer_safe_to_send"),
         "memory_warning_count": summary["memory_warning_count"],
         "error_count": summary["error_count"],
         "response": dict_value(response_span.output if response_span else None, "response") or "",
@@ -154,6 +163,13 @@ def dict_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return None
+
+
+def validation_report_value(span: Any, key: str) -> Any:
+    output = span.output if span else None
+    if isinstance(output, dict) and isinstance(output.get("validation_report"), dict):
+        return output["validation_report"].get(key)
+    return dict_value(output, key)
 
 
 def agent_state_from_span(span: Any) -> dict[str, Any]:

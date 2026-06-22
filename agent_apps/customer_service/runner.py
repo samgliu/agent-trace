@@ -730,7 +730,17 @@ class SupportTriageRunner:
             instructions=_validator_agent_instructions(),
             input_data={"customer": customer, "policy": policy, "action": action, "fallback": validation_fallback},
             fallback=validation_fallback,
-            allowed_keys={"grounding_status", "approval_required", "evidence", "unsupported_claims"},
+            allowed_keys={
+                "grounding_status",
+                "approval_required",
+                "evidence",
+                "policy_compliance",
+                "missing_evidence",
+                "unsupported_claims",
+                "risk_review_required",
+                "customer_safe_to_send",
+                "validator_corrections",
+            },
         )
         validation = _enforce_validation(policy, action, validation, validation_fallback)
         emit(

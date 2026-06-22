@@ -27,6 +27,7 @@ class EvalCase:
     expected_policy_boundary_contains: str | None = None
     expected_approval_required: bool | None = None
     expected_grounding_status: str | None = None
+    expected_customer_safe_to_send: bool | None = None
     expected_memory_warning_count: int | None = None
     expected_error_count: int | None = None
     expected_tool_names: tuple[str, ...] = ()

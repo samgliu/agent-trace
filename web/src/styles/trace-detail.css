@@ -500,6 +500,82 @@ h3 {
   border-bottom: 1px solid #f0c4ba;
 }
 
+.validatorReport {
+  padding: 12px;
+  background: #f7fbf9;
+  border-bottom: 1px solid #d5e7de;
+}
+
+.validatorReportHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.validatorReportHeader strong {
+  color: #223238;
+}
+
+.validatorReportHeader span {
+  padding: 4px 8px;
+  border: 1px solid #dce4e8;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.validatorReportHeader span.safe {
+  color: #17604e;
+  background: #e7f5ef;
+  border-color: #b9ddcf;
+}
+
+.validatorReportHeader span.blocked {
+  color: #8a4c0f;
+  background: #fff5dc;
+  border-color: #ead28d;
+}
+
+.validatorReportGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.validatorReportGrid div,
+.validatorCorrections {
+  min-width: 0;
+  padding: 9px 10px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.validatorReportGrid small,
+.validatorCorrections small {
+  display: block;
+  margin-bottom: 4px;
+  color: #637179;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.validatorReportGrid strong,
+.validatorCorrections p {
+  margin: 0;
+  color: #223238;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.validatorCorrections {
+  margin-top: 8px;
+}
+
 .approvalNotice {
   padding: 12px;
   background: #fff8e8;

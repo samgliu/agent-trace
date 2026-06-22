@@ -151,7 +151,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(validator.output["grounding_status"], "grounded")
         self.assertEqual(triage.span_data["decision_source"], "llm")
-        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v3")
+        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v4")
         self.assertEqual(triage.span_data["model_provider"], "static")
         self.assertEqual(
             triage.span_data["model_output_text"],
@@ -196,6 +196,26 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(create_action.output["resolution_plan"]["customer_outcome"], "refund_review_prepared")
         self.assertIn("chg_dup_001", create_action.output["resolution_plan"]["evidence_used"])
 
+    def test_validator_outputs_structured_report_for_safe_response(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_validator_report",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        report = validator.output["validation_report"]
+        self.assertEqual(report["grounding_status"], "grounded")
+        self.assertFalse(report["approval_required"])
+        self.assertEqual(report["policy_compliance"]["status"], "passed")
+        self.assertEqual(report["policy_compliance"]["action_type"], "refund_review")
+        self.assertEqual(report["unsupported_claims"], [])
+        self.assertEqual(report["missing_evidence"], [])
+        self.assertFalse(report["risk_review_required"])
+        self.assertTrue(report["customer_safe_to_send"])
+
     def test_llm_action_resolution_plan_is_corrected_when_shape_is_invalid(self) -> None:
         llm = QueueLLMClient(
             [
@@ -222,6 +242,40 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["decision_source"], "policy_validation")
         self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
         self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used", "requires_human_review"])
+
+    def test_llm_action_resolution_plan_is_corrected_when_canonical_fields_drift(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"annual refund needs review"}',
+                '{"issue_type":"annual_plan_refund","urgency":"medium","sentiment":"concerned"}',
+                '{"required_evidence":["customer","subscription"],"reason":"Annual refund needs account and subscription evidence."}',
+                '{"retrieval_query":"annual_plan_refund","reason":"Annual refund policy applies."}',
+                (
+                    '{"action_type":"refund_review","reason":"Review annual refund.",'
+                    '"customer_outcome":"The customer is informed that their request is being prioritized for review.",'
+                    '"requires_human_review":true,'
+                    '"customer_message_goal":"Set expectations for review.",'
+                    '"policy_boundary":"policy_annual_refund",'
+                    '"evidence_used":["cus_annual_800","sub_annual_800"]}'
+                ),
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_annual_800","sub_annual_800"]}',
+                "I created a refund review pending approval.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="Can you refund my annual plan?",
+            customer_email="annual@example.com",
+            trace_id="trace_runner_action_resolution_plan_canonicalized",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        self.assertEqual(action.output["customer_outcome"], "approval_ready_refund_review")
+        self.assertIn("requires human approval", action.output["policy_boundary"])
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
+        self.assertEqual(action.span_data["invalid_action_fields"], ["customer_outcome", "policy_boundary"])
 
     def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
         llm = QueueLLMClient(
@@ -514,6 +568,11 @@ class SupportTriageAgentsTest(unittest.TestCase):
             validator.output["validator_corrections"],
             ["required_approval_enforced", "required_approval_grounding_recovered"],
         )
+        report = validator.output["validation_report"]
+        self.assertEqual(report["grounding_status"], "recovered")
+        self.assertTrue(report["approval_required"])
+        self.assertFalse(report["customer_safe_to_send"])
+        self.assertEqual(report["validator_corrections"], ["required_approval_enforced", "required_approval_grounding_recovered"])
         self.assertEqual(len(approval_spans), 1)
 
     def test_validator_removes_unnecessary_approval_for_clarification(self) -> None:
