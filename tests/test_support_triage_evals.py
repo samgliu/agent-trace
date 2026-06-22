@@ -49,6 +49,10 @@ class SupportTriageEvalsTest(unittest.TestCase):
         human_checks = {check.name: check.actual for check in by_case["explicit-human-escalation"].checks}
         risk_checks = {check.name: check.actual for check in by_case["repeated-refund-abuse-review"].checks}
         recovery_checks = {check.name: check.actual for check in by_case["lookup-timeout-failure"].checks}
+        duplicate_checks = {check.name: check.actual for check in by_case["duplicate-charge-refund"].checks}
+        annual_checks = {check.name: check.actual for check in by_case["annual-refund-approval"].checks}
+        self.assertTrue(duplicate_checks["customer_safe_to_send"])
+        self.assertFalse(annual_checks["customer_safe_to_send"])
         self.assertEqual(human_checks["escalation_type"], "human_review")
         self.assertEqual(human_checks["escalation_owner"], "support_specialist")
         self.assertEqual(risk_checks["escalation_type"], "risk_review")

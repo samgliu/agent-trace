@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_apps.customer_service.model_client import LLMResponse
 
-PROMPT_VERSION = "support-triage-v3"
+PROMPT_VERSION = "support-triage-v4"
 
 
 def supervisor_instructions() -> str:
@@ -64,7 +64,9 @@ def action_agent_instructions() -> str:
 def validator_agent_instructions() -> str:
     return (
         "You are the Validator Agent. Check grounding, policy compliance, abuse-risk signals, and approval needs. "
-        "Return only JSON with grounding_status, approval_required, evidence, and optional unsupported_claims."
+        "Return only JSON with grounding_status, approval_required, evidence, policy_compliance, missing_evidence, "
+        "unsupported_claims, risk_review_required, customer_safe_to_send, and validator_corrections. "
+        "Do not invent evidence or claims."
     )
 
 

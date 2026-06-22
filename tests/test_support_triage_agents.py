@@ -151,7 +151,7 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(validator.output["grounding_status"], "grounded")
         self.assertEqual(triage.span_data["decision_source"], "llm")
-        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v3")
+        self.assertEqual(triage.span_data["prompt_version"], "support-triage-v4")
         self.assertEqual(triage.span_data["model_provider"], "static")
         self.assertEqual(
             triage.span_data["model_output_text"],
@@ -195,6 +195,26 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("chg_dup_001", action.output["evidence_used"])
         self.assertEqual(create_action.output["resolution_plan"]["customer_outcome"], "refund_review_prepared")
         self.assertIn("chg_dup_001", create_action.output["resolution_plan"]["evidence_used"])
+
+    def test_validator_outputs_structured_report_for_safe_response(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_validator_report",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        report = validator.output["validation_report"]
+        self.assertEqual(report["grounding_status"], "grounded")
+        self.assertFalse(report["approval_required"])
+        self.assertEqual(report["policy_compliance"]["status"], "passed")
+        self.assertEqual(report["policy_compliance"]["action_type"], "refund_review")
+        self.assertEqual(report["unsupported_claims"], [])
+        self.assertEqual(report["missing_evidence"], [])
+        self.assertFalse(report["risk_review_required"])
+        self.assertTrue(report["customer_safe_to_send"])
 
     def test_llm_action_resolution_plan_is_corrected_when_shape_is_invalid(self) -> None:
         llm = QueueLLMClient(
@@ -514,6 +534,11 @@ class SupportTriageAgentsTest(unittest.TestCase):
             validator.output["validator_corrections"],
             ["required_approval_enforced", "required_approval_grounding_recovered"],
         )
+        report = validator.output["validation_report"]
+        self.assertEqual(report["grounding_status"], "recovered")
+        self.assertTrue(report["approval_required"])
+        self.assertFalse(report["customer_safe_to_send"])
+        self.assertEqual(report["validator_corrections"], ["required_approval_enforced", "required_approval_grounding_recovered"])
         self.assertEqual(len(approval_spans), 1)
 
     def test_validator_removes_unnecessary_approval_for_clarification(self) -> None:

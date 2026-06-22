@@ -7,6 +7,7 @@ import { extractUnsupportedClaims } from "../../utils/claims";
 import { formatShortTimestamp } from "../../utils/format";
 import { buildMemorySummary, type MemorySummary } from "../../utils/memoryAnalysis";
 import { buildSpanFacts } from "../../utils/spanFacts";
+import { extractValidatorReport, type ValidatorReport } from "../../utils/validationReport";
 
 export function AnalysisPanel({
   metrics,
@@ -310,6 +311,7 @@ function SpanDetail({
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
   const facts = buildSpanFacts(span);
   const modelOutputText = typeof span.span_data.model_output_text === "string" ? span.span_data.model_output_text : null;
+  const validatorReport = extractValidatorReport(span.output);
 
   return (
     <div className="spanDetail">
@@ -365,6 +367,7 @@ function SpanDetail({
             />
           ) : null}
 
+          {validatorReport ? <ValidatorReportCard report={validatorReport} /> : null}
           {modelOutputText ? <JsonBlock label="Model output" value={modelOutputText} /> : null}
           <JsonBlock label="Input" value={span.input} />
           <JsonBlock label="Output" value={span.output} />
@@ -375,6 +378,42 @@ function SpanDetail({
 
       {activeTab === "span" ? <JsonBlock label="Normalized span" value={span} /> : null}
       {activeTab === "trace" ? <JsonBlock label="Original trace payload" value={rawTrace} /> : null}
+    </div>
+  );
+}
+
+function ValidatorReportCard({ report }: { report: ValidatorReport }) {
+  return (
+    <div className="validatorReport">
+      <div className="validatorReportHeader">
+        <strong>Validator report</strong>
+        <span className={report.customerSafeToSend ? "safe" : "blocked"}>
+          {report.customerSafeToSend ? "Safe to send" : "Needs control"}
+        </span>
+      </div>
+      <div className="validatorReportGrid">
+        <ReportFact label="Grounding" value={report.groundingStatus} />
+        <ReportFact label="Policy" value={report.policyStatus} />
+        <ReportFact label="Approval" value={report.approvalRequired ? "required" : "not required"} />
+        <ReportFact label="Risk review" value={report.riskReviewRequired ? "required" : "not required"} />
+        <ReportFact label="Unsupported" value={String(report.unsupportedClaimCount)} />
+        <ReportFact label="Missing evidence" value={report.missingEvidence.length > 0 ? report.missingEvidence.join(", ") : "none"} />
+      </div>
+      {report.validatorCorrections.length > 0 ? (
+        <div className="validatorCorrections">
+          <small>Corrections</small>
+          <p>{report.validatorCorrections.join(", ")}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReportFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <small>{label}</small>
+      <strong>{value}</strong>
     </div>
   );
 }

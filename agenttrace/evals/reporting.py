@@ -125,7 +125,7 @@ def eval_check_category(name: str) -> str:
         return "Evidence"
     if name.startswith("escalation_"):
         return "Escalation"
-    if name == "approval_required" or name == "approval_reason":
+    if name in {"approval_required", "approval_reason", "customer_safe_to_send"}:
         return "Governance"
     if name == "grounding_status" or name.startswith("response_"):
         return "Response"
