@@ -29,6 +29,11 @@ class FailingLookupTools(SupportToolsClient):
         return {"status": "not_created"}
 
 
+class MissingChargeTools(LocalSupportToolsClient):
+    def lookup_charge(self, customer_id: str, charge_id: str | None = None) -> dict:
+        return {"found": False, "customer_id": customer_id, "missing_fields": ["duplicate_payment_signal"]}
+
+
 class RecordingLLMClient(StaticLLMClient):
     def __init__(self) -> None:
         super().__init__("We found the duplicate charge and created a refund review.")
@@ -215,6 +220,30 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(report["missing_evidence"], [])
         self.assertFalse(report["risk_review_required"])
         self.assertTrue(report["customer_safe_to_send"])
+        self.assertEqual(validator.output["validator_contract_status"], "passed")
+        self.assertIn("duplicate_payment_signal", validator.output["policy_evidence_requirements"])
+        self.assertIn("chg_dup_001", validator.output["collected_evidence"])
+        self.assertEqual(validator.output["missing_policy_evidence"], [])
+
+    def test_validator_flags_missing_policy_evidence_requirements(self) -> None:
+        runner = SupportTriageRunner(tools_client=MissingChargeTools())
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_validator_policy_evidence_gap",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        report = validator.output["validation_report"]
+        self.assertEqual(trace.status, "passed")
+        self.assertIn("duplicate_payment_signal", validator.output["missing_evidence"])
+        self.assertIn("duplicate_payment_signal", validator.output["missing_policy_evidence"])
+        self.assertEqual(validator.output["validator_contract_status"], "failed")
+        self.assertIn("policy_refund_duplicate_charge", validator.output["collected_evidence"])
+        self.assertIn("policy_evidence_gap_detected", validator.output["validator_corrections"])
+        self.assertEqual(report["policy_compliance"]["status"], "failed")
+        self.assertFalse(report["customer_safe_to_send"])
 
     def test_llm_action_resolution_plan_is_corrected_when_shape_is_invalid(self) -> None:
         llm = QueueLLMClient(
@@ -276,6 +305,42 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["decision_source"], "policy_validation")
         self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
         self.assertEqual(action.span_data["invalid_action_fields"], ["customer_outcome", "policy_boundary"])
+
+    def test_llm_action_resolution_plan_rejects_uncollected_evidence(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                (
+                    '{"action_type":"refund_review",'
+                    '"reason":"Review duplicate charge using collected evidence.",'
+                    '"customer_outcome":"refund_review_prepared",'
+                    '"requires_human_review":false,'
+                    '"customer_message_goal":"confirm refund review was prepared using verified evidence",'
+                    '"policy_boundary":"policy_refund_duplicate_charge permits the selected action with collected evidence.",'
+                    '"evidence_used":["cus_123","invented_charge_999"]}'
+                ),
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_action_evidence_corrected",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        create_action = next(span for span in trace.spans if span.name == "create_refund_review")
+        self.assertEqual(action.output["evidence_used"], ["cus_123", "chg_dup_001"])
+        self.assertEqual(create_action.output["resolution_plan"]["evidence_used"], ["cus_123", "chg_dup_001"])
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
+        self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used"])
+        self.assertEqual(action.span_data["unsupported_evidence_used"], ["invented_charge_999"])
 
     def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
         llm = QueueLLMClient(
@@ -752,6 +817,34 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("fully consumed", response.output["response"])
         self.assertNotIn("duplicate", response.output["response"].lower())
         self.assertNotIn("$20", response.output["response"])
+
+    def test_consumed_product_response_safety_preserves_fully_consumed_boundary(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"product return needs triage"}',
+                '{"issue_type":"consumed_product_return","urgency":"low","sentiment":"concerned"}',
+                '{"retrieval_query":"consumed_product_return","reason":"consumed product policy applies"}',
+                '{"action_type":"clarification_request","reason":"Need order and product issue details."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_consumed_product_return"]}',
+                (
+                    "Since the bananas have been consumed, they are not eligible for a normal return. "
+                    "However, we can review this for a quality, spoilage, safety, or delivery issue. "
+                    "Please provide your order number or receipt and the reason for the issue so we can look into this for you."
+                ),
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I'd like to return the banana I bought last week. I ate all of them already.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_consumed_boundary_phrase_guarded",
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("fully consumed", response.output["response"])
+        self.assertIn("quality", response.output["response"].lower())
+        self.assertNotIn("duplicate", response.output["response"].lower())
 
     def test_consumed_product_return_follow_up_keeps_active_issue(self) -> None:
         runner = SupportTriageRunner()
