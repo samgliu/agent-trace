@@ -22,8 +22,18 @@ def enforce_validation(
     if not isinstance(evidence, list):
         evidence = []
     enforced["evidence"] = list(dict.fromkeys([*fallback_evidence, *evidence]))
+    policy_missing_evidence = policy_evidence_gaps(policy, enforced["evidence"], action)
+    missing_evidence = enforced.get("missing_evidence")
+    if not isinstance(missing_evidence, list):
+        missing_evidence = []
+    if policy_missing_evidence:
+        enforced["missing_evidence"] = list(dict.fromkeys([*missing_evidence, *policy_missing_evidence]))
+    else:
+        enforced["missing_evidence"] = missing_evidence
 
     corrections = []
+    if policy_missing_evidence:
+        corrections.append("policy_evidence_gap_detected")
     if policy.get("requires_approval"):
         if not enforced["approval_required"]:
             enforced["approval_required"] = True
@@ -84,7 +94,7 @@ def validation_report(policy: dict[str, Any], action: dict[str, Any], validation
     if not isinstance(missing_evidence, list):
         missing_evidence = []
 
-    policy_compliance_status = "passed" if action_created and action_allowed else "failed"
+    policy_compliance_status = "passed" if action_created and action_allowed and not missing_evidence else "failed"
     approval_required = bool(validation.get("approval_required"))
     risk_review_required = bool(validation.get("risk_review_required"))
     grounding_status = str(validation.get("grounding_status") or "unknown")
@@ -95,6 +105,7 @@ def validation_report(policy: dict[str, Any], action: dict[str, Any], validation
         and action_created
         and action_allowed
         and not unsupported_claims
+        and not missing_evidence
     )
 
     return {
@@ -113,6 +124,26 @@ def validation_report(policy: dict[str, Any], action: dict[str, Any], validation
         "customer_safe_to_send": customer_safe_to_send,
         "validator_corrections": validation.get("validator_corrections", []),
     }
+
+
+def policy_evidence_gaps(policy: dict[str, Any], evidence: list[Any], action: dict[str, Any]) -> list[str]:
+    requirements = policy.get("evidence_requirements")
+    if not isinstance(requirements, list):
+        return []
+    evidence_ids = {str(item) for item in evidence if item}
+    policy_id = str(policy.get("policy_id") or "")
+    customer_id = str(action.get("customer_id") or "")
+
+    checks = {
+        "verified_customer_id": bool(customer_id) or any(item.startswith("cus_") for item in evidence_ids),
+        "verified_customer_id_or_contact": bool(customer_id) or any(item.startswith("cus_") for item in evidence_ids),
+        "policy_id": bool(policy_id and policy_id in evidence_ids),
+        "duplicate_payment_signal": any(item.startswith("chg_") for item in evidence_ids),
+        "annual_plan_amount": any(item.startswith("sub_") for item in evidence_ids),
+        "charge_age_or_billing_date": any(item.startswith(("sub_", "chg_")) for item in evidence_ids),
+        "order_number_or_receipt": any(item.startswith("ord_") for item in evidence_ids),
+    }
+    return [str(requirement) for requirement in requirements if requirement in checks and not checks[requirement]]
 
 
 def abuse_risk(customer: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:

@@ -29,6 +29,11 @@ class FailingLookupTools(SupportToolsClient):
         return {"status": "not_created"}
 
 
+class MissingChargeTools(LocalSupportToolsClient):
+    def lookup_charge(self, customer_id: str, charge_id: str | None = None) -> dict:
+        return {"found": False, "customer_id": customer_id, "missing_fields": ["duplicate_payment_signal"]}
+
+
 class RecordingLLMClient(StaticLLMClient):
     def __init__(self) -> None:
         super().__init__("We found the duplicate charge and created a refund review.")
@@ -216,6 +221,23 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertFalse(report["risk_review_required"])
         self.assertTrue(report["customer_safe_to_send"])
 
+    def test_validator_flags_missing_policy_evidence_requirements(self) -> None:
+        runner = SupportTriageRunner(tools_client=MissingChargeTools())
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_validator_policy_evidence_gap",
+        )
+
+        validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        report = validator.output["validation_report"]
+        self.assertEqual(trace.status, "passed")
+        self.assertIn("duplicate_payment_signal", validator.output["missing_evidence"])
+        self.assertIn("policy_evidence_gap_detected", validator.output["validator_corrections"])
+        self.assertEqual(report["policy_compliance"]["status"], "failed")
+        self.assertFalse(report["customer_safe_to_send"])
+
     def test_llm_action_resolution_plan_is_corrected_when_shape_is_invalid(self) -> None:
         llm = QueueLLMClient(
             [
@@ -276,6 +298,42 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["decision_source"], "policy_validation")
         self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
         self.assertEqual(action.span_data["invalid_action_fields"], ["customer_outcome", "policy_boundary"])
+
+    def test_llm_action_resolution_plan_rejects_uncollected_evidence(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"billing request needs triage"}',
+                '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                (
+                    '{"action_type":"refund_review",'
+                    '"reason":"Review duplicate charge using collected evidence.",'
+                    '"customer_outcome":"refund_review_prepared",'
+                    '"requires_human_review":false,'
+                    '"customer_message_goal":"confirm refund review was prepared using verified evidence",'
+                    '"policy_boundary":"policy_refund_duplicate_charge permits the selected action with collected evidence.",'
+                    '"evidence_used":["cus_123","invented_charge_999"]}'
+                ),
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I found the duplicate charge and created a refund review.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_action_evidence_corrected",
+        )
+
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        create_action = next(span for span in trace.spans if span.name == "create_refund_review")
+        self.assertEqual(action.output["evidence_used"], ["cus_123", "chg_dup_001"])
+        self.assertEqual(create_action.output["resolution_plan"]["evidence_used"], ["cus_123", "chg_dup_001"])
+        self.assertEqual(action.span_data["decision_source"], "policy_validation")
+        self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
+        self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used"])
+        self.assertEqual(action.span_data["unsupported_evidence_used"], ["invented_charge_999"])
 
     def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
         llm = QueueLLMClient(

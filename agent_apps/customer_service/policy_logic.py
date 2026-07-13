@@ -355,6 +355,12 @@ def validate_action_decision(
     evidence_used = corrected.get("evidence_used")
     if not isinstance(evidence_used, list):
         invalid_fields.append("evidence_used")
+        unsupported_evidence: list[str] = []
+    else:
+        allowed_evidence = {str(item) for item in expected_action.get("evidence_used", [])}
+        unsupported_evidence = [str(item) for item in evidence_used if str(item) not in allowed_evidence]
+        if unsupported_evidence:
+            invalid_fields.append("evidence_used")
     if not isinstance(corrected.get("requires_human_review"), bool):
         invalid_fields.append("requires_human_review")
     for field in ("customer_outcome", "requires_human_review", "policy_boundary"):
@@ -366,6 +372,7 @@ def validate_action_decision(
             validation_correction(
                 "action_resolution_plan_corrected",
                 invalid_action_fields=invalid_fields,
+                unsupported_evidence_used=unsupported_evidence,
             ),
         )
     corrected["evidence_used"] = [str(item) for item in evidence_used]
