@@ -220,6 +220,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(report["missing_evidence"], [])
         self.assertFalse(report["risk_review_required"])
         self.assertTrue(report["customer_safe_to_send"])
+        self.assertEqual(validator.output["validator_contract_status"], "passed")
+        self.assertIn("duplicate_payment_signal", validator.output["policy_evidence_requirements"])
+        self.assertIn("chg_dup_001", validator.output["collected_evidence"])
+        self.assertEqual(validator.output["missing_policy_evidence"], [])
 
     def test_validator_flags_missing_policy_evidence_requirements(self) -> None:
         runner = SupportTriageRunner(tools_client=MissingChargeTools())
@@ -234,6 +238,9 @@ class SupportTriageAgentsTest(unittest.TestCase):
         report = validator.output["validation_report"]
         self.assertEqual(trace.status, "passed")
         self.assertIn("duplicate_payment_signal", validator.output["missing_evidence"])
+        self.assertIn("duplicate_payment_signal", validator.output["missing_policy_evidence"])
+        self.assertEqual(validator.output["validator_contract_status"], "failed")
+        self.assertIn("policy_refund_duplicate_charge", validator.output["collected_evidence"])
         self.assertIn("policy_evidence_gap_detected", validator.output["validator_corrections"])
         self.assertEqual(report["policy_compliance"]["status"], "failed")
         self.assertFalse(report["customer_safe_to_send"])

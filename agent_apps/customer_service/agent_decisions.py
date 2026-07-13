@@ -64,6 +64,8 @@ def action_agent_instructions() -> str:
 def validator_agent_instructions() -> str:
     return (
         "You are the Validator Agent. Check grounding, policy compliance, abuse-risk signals, and approval needs. "
+        "Compare policy.evidence_requirements against the collected evidence IDs in fallback.evidence and action.resolution_plan. "
+        "If required evidence is missing, list the missing requirement names in missing_evidence and set customer_safe_to_send false. "
         "Return only JSON with grounding_status, approval_required, evidence, policy_compliance, missing_evidence, "
         "unsupported_claims, risk_review_required, customer_safe_to_send, and validator_corrections. "
         "Do not invent evidence or claims."

@@ -23,6 +23,13 @@ def enforce_validation(
         evidence = []
     enforced["evidence"] = list(dict.fromkeys([*fallback_evidence, *evidence]))
     policy_missing_evidence = policy_evidence_gaps(policy, enforced["evidence"], action)
+    policy_requirements = policy.get("evidence_requirements")
+    if not isinstance(policy_requirements, list):
+        policy_requirements = []
+    enforced["policy_evidence_requirements"] = [str(item) for item in policy_requirements]
+    enforced["collected_evidence"] = [str(item) for item in enforced["evidence"] if item]
+    enforced["missing_policy_evidence"] = policy_missing_evidence
+    enforced["validator_contract_status"] = "failed" if policy_missing_evidence else "passed"
     missing_evidence = enforced.get("missing_evidence")
     if not isinstance(missing_evidence, list):
         missing_evidence = []

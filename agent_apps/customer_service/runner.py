@@ -728,7 +728,13 @@ class SupportTriageRunner:
         validation, validation_llm = self._agent_decision(
             agent_name="Validator Agent",
             instructions=_validator_agent_instructions(),
-            input_data={"customer": customer, "policy": policy, "action": action, "fallback": validation_fallback},
+            input_data={
+                "customer": customer,
+                "policy": policy,
+                "action": action,
+                "agent_state": agent_state.to_dict(),
+                "fallback": validation_fallback,
+            },
             fallback=validation_fallback,
             allowed_keys={
                 "grounding_status",
@@ -752,7 +758,7 @@ class SupportTriageRunner:
                 parent_id=supervisor.span_id,
                 clock=clock,
                 duration_ms=300,
-                input={"customer": customer, "policy": policy, "action": action},
+                input={"customer": customer, "policy": policy, "action": action, "agent_state": agent_state.to_dict()},
                 output=validation,
                 span_data={
                     "agent_role": "validator",
