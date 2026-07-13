@@ -818,6 +818,34 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertNotIn("duplicate", response.output["response"].lower())
         self.assertNotIn("$20", response.output["response"])
 
+    def test_consumed_product_response_safety_preserves_fully_consumed_boundary(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"product return needs triage"}',
+                '{"issue_type":"consumed_product_return","urgency":"low","sentiment":"concerned"}',
+                '{"retrieval_query":"consumed_product_return","reason":"consumed product policy applies"}',
+                '{"action_type":"clarification_request","reason":"Need order and product issue details."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_consumed_product_return"]}',
+                (
+                    "Since the bananas have been consumed, they are not eligible for a normal return. "
+                    "However, we can review this for a quality, spoilage, safety, or delivery issue. "
+                    "Please provide your order number or receipt and the reason for the issue so we can look into this for you."
+                ),
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I'd like to return the banana I bought last week. I ate all of them already.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_consumed_boundary_phrase_guarded",
+        )
+
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertIn("fully consumed", response.output["response"])
+        self.assertIn("quality", response.output["response"].lower())
+        self.assertNotIn("duplicate", response.output["response"].lower())
+
     def test_consumed_product_return_follow_up_keeps_active_issue(self) -> None:
         runner = SupportTriageRunner()
 
