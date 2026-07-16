@@ -123,6 +123,9 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertTrue(any(span.span_type == "memory_write" for span in trace.spans))
         self.assertTrue(any(span.span_type == "memory_read" for span in trace.spans))
         self.assertTrue(any(span.span_type == "generation" for span in trace.spans))
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
+        self.assertEqual(response.output["response_validation"]["status"], "passed")
+        self.assertEqual(response.span_data["response_validation_status"], "passed")
         self.assertEqual(llm.calls[0]["input_text"].count("duplicate_charge_detected"), 1)
 
     def test_runner_can_use_llm_backed_specialist_agent_decisions(self) -> None:
@@ -235,8 +238,10 @@ class SupportTriageAgentsTest(unittest.TestCase):
         )
 
         validator = next(span for span in trace.spans if span.name == "Validator Agent")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
         report = validator.output["validation_report"]
         self.assertEqual(trace.status, "passed")
+        self.assertIn("permits the selected action", action.output["policy_boundary"])
         self.assertIn("duplicate_payment_signal", validator.output["missing_evidence"])
         self.assertIn("duplicate_payment_signal", validator.output["missing_policy_evidence"])
         self.assertEqual(validator.output["validator_contract_status"], "failed")
@@ -341,6 +346,35 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
         self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used"])
         self.assertEqual(action.span_data["unsupported_evidence_used"], ["invented_charge_999"])
+
+    def test_llm_triage_spurious_missing_information_does_not_poison_duplicate_charge_action(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"billing request needs triage"}',
+                (
+                    '{"issue_type":"billing_duplicate_charge","urgency":"medium","sentiment":"concerned",'
+                    '"missing_information":"documented customer request"}'
+                ),
+                '{"retrieval_query":"duplicate_charge_refund","reason":"duplicate charge policy applies"}',
+                '{"action_type":"refund_review","reason":"Review duplicate charge."}',
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_refund_duplicate_charge"]}',
+                "I started a refund review for the duplicate charge.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_duplicate_charge_missing_info_cleared",
+        )
+
+        triage = next(span for span in trace.spans if span.name == "Triage Agent")
+        action = next(span for span in trace.spans if span.name == "Action Agent")
+        state_update = next(span for span in trace.spans if span.name == "Update Agent State")
+        self.assertNotIn("missing_information", triage.output)
+        self.assertEqual(state_update.output["agent_state"]["missing_fields"], [])
+        self.assertIn("permits the selected action", action.output["policy_boundary"])
 
     def test_llm_investigation_plan_is_corrected_when_required_evidence_is_missing(self) -> None:
         llm = QueueLLMClient(
@@ -478,11 +512,15 @@ class SupportTriageAgentsTest(unittest.TestCase):
 
         action = next(span for span in trace.spans if span.name == "Action Agent")
         create_action = next(span for span in trace.spans if span.name == "create_refund_review")
+        response = next(span for span in trace.spans if span.name == "Customer Response Generator")
         self.assertEqual(trace.status, "passed")
         self.assertEqual(action.output["action_type"], "refund_review")
         self.assertEqual(action.span_data["validation_reason"], "refund_review_required_by_policy_path")
         self.assertEqual(action.span_data["rejected_action_type"], "instant_refund")
         self.assertEqual(create_action.span_data["tool_name"], "create_refund_review_tool")
+        self.assertEqual(response.output["response_validation"]["status"], "failed")
+        self.assertEqual(response.span_data["response_validation_status"], "failed")
+        self.assertIn("refund_review_claims_refund_issued", response.output["response_validation"]["failures"])
 
     def test_llm_agent_action_enforces_approval_ready_refund_review(self) -> None:
         llm = QueueLLMClient(
@@ -1117,7 +1155,13 @@ class SupportTriageAgentsTest(unittest.TestCase):
                 '{"retrieval_query":"general_support","reason":"general support policy applies"}',
                 '{"action_type":"clarification_request","reason":"Ask for account details."}',
                 '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_general_support"]}',
-                '{"escalation_type":"human_review","reason":"Customer asked for human support.","handoff_summary":"Route to human support with account context.","next_owner":"support_specialist","evidence":["cus_123","policy_general_support"]}',
+                (
+                    '{"escalation_type":"human_review",'
+                    '"reason":"Policy compliance requires a documented customer request before escalation; current input is ambiguous regarding the specific nature of the account inquiry.",'
+                    '"handoff_summary":"Route to human support with account context.",'
+                    '"next_owner":"support_specialist",'
+                    '"evidence":["cus_123","policy_general_support"]}'
+                ),
                 "I am escalating this to a human support specialist.",
             ]
         )
@@ -1136,6 +1180,45 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["validation_reason"], "escalation_required_by_customer_request")
         self.assertEqual(action.span_data["rejected_action_type"], "clarification_request")
         self.assertEqual(escalation.output["escalation_type"], "human_review")
+        self.assertIn("general_support", escalation.output["reason"])
+
+    def test_llm_human_escalation_reason_preserves_active_issue_when_action_reason_drifts(self) -> None:
+        llm = QueueLLMClient(
+            [
+                '{"route":"standard_support","handoff_reason":"customer asked for human help"}',
+                '{"issue_type":"general_support","urgency":"medium","sentiment":"concerned"}',
+                '{"retrieval_query":"general_support","reason":"general support policy applies"}',
+                (
+                    '{"action_type":"escalation",'
+                    '"reason":"Policy compliance requires a documented customer request before escalation; current input is ambiguous regarding the specific nature of the account inquiry.",'
+                    '"customer_outcome":"human_handoff_prepared",'
+                    '"requires_human_review":true,'
+                    '"customer_message_goal":"confirm human handoff and set follow-up expectation",'
+                    '"policy_boundary":"policy_general_support permits escalation.",'
+                    '"evidence_used":["cus_123","policy_general_support"]}'
+                ),
+                '{"grounding_status":"grounded","approval_required":false,"evidence":["cus_123","policy_general_support"]}',
+                (
+                    '{"escalation_type":"human_review",'
+                    '"reason":"Policy compliance requires a documented customer request before escalation; current input is ambiguous regarding the specific nature of the account inquiry.",'
+                    '"handoff_summary":"Route to human support with account context.",'
+                    '"next_owner":"support_specialist",'
+                    '"evidence":["cus_123","policy_general_support"]}'
+                ),
+                "I am escalating this to a human support specialist.",
+            ]
+        )
+        runner = SupportTriageRunner(llm_client=llm, use_llm_agents=True)
+
+        trace = runner.run(
+            message="I want to speak to a human agent about my account.",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_llm_explicit_escalation_reason_canonicalized",
+        )
+
+        escalation = next(span for span in trace.spans if span.name == "Escalation Agent")
+        self.assertEqual(escalation.output["escalation_type"], "human_review")
+        self.assertIn("general_support", escalation.output["reason"])
 
     def test_llm_triage_is_corrected_when_message_signals_stale_refund(self) -> None:
         llm = QueueLLMClient(

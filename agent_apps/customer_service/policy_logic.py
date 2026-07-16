@@ -135,6 +135,11 @@ def validate_triage_decision(
                 "missing_quality_exception_signal",
                 rejected_issue_type=triage_result.get("issue_type"),
             )
+        if triage_result.get("missing_information") and not expected.get("missing_information"):
+            return validation_correction(
+                "unsupported_missing_information",
+                rejected_missing_information=triage_result.get("missing_information"),
+            )
         return {}
     if expected["issue_type"] in {
         "account_access",
@@ -330,6 +335,8 @@ def policy_boundary(action_type_value: str, policy: dict[str, Any], agent_state_
         return f"{policy_id} allows exception review, not a normal consumed-product return."
     if agent_state_value.risk_signals:
         return f"{policy_id} requires human review for risk signals: {', '.join(agent_state_value.risk_signals)}."
+    if action_type_value == "refund_review":
+        return f"{policy_id} permits the selected action with collected evidence."
     if agent_state_value.missing_fields:
         return f"{policy_id} requires more information before irreversible action."
     return f"{policy_id} permits the selected action with collected evidence."

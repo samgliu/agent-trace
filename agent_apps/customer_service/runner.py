@@ -59,6 +59,7 @@ from agent_apps.customer_service.response_generation import (
     customer_response_instructions as _customer_response_instructions,
     customer_response_safety as _customer_response_safety,
 )
+from agent_apps.customer_service.validation import validate_customer_response as _validate_customer_response
 from agent_apps.customer_service.routing import (
     CLARIFY_REQUEST_ROUTE,
     fallback_supervisor_decision as _fallback_supervisor_decision,
@@ -219,7 +220,7 @@ class SupportTriageRunner:
         )
         triage_validation = _validate_triage_decision(message, triage, conversation_history)
         if triage_validation:
-            triage = {**triage, **_triage(message, conversation_history)}
+            triage = _triage(message, conversation_history)
         emit(
             _span(
                 trace_id=trace_id,
@@ -825,6 +826,13 @@ class SupportTriageRunner:
             action=action,
             working_memory=working_memory,
         )
+        response_validation = _validate_customer_response(
+            response_text,
+            policy=policy,
+            action=action,
+            validation=validation,
+            working_memory=working_memory,
+        )
         emit(
             _span(
                 trace_id=trace_id,
@@ -835,9 +843,12 @@ class SupportTriageRunner:
                 clock=clock,
                 duration_ms=650,
                 input={"message": message},
-                output={"response": response_text},
+                output={"response": response_text, "response_validation": response_validation},
                 span_data={
                     "model_provider": self.llm_client.provider_name,
+                    "response_validation_status": response_validation["status"],
+                    "response_validation_failures": response_validation["failures"],
+                    "response_validation_warnings": response_validation["warnings"],
                     **_model_call_span_data(llm_response.raw_response),
                     "raw_response": llm_response.raw_response,
                 },
@@ -977,7 +988,7 @@ class SupportTriageRunner:
             }
         return {
             "escalation_type": "human_review",
-            "reason": str(action.get("reason") or "The customer requested human support or the issue needs manual review."),
+            "reason": f"{agent_state.active_issue} requires human review: {action.get('reason') or 'The customer requested human support or the issue needs manual review.'}",
             "handoff_summary": "Human support should review the active issue, evidence, and proposed escalation action.",
             "next_owner": "support_specialist",
             "evidence": evidence,
@@ -1004,6 +1015,9 @@ def _canonical_escalation(escalation: dict[str, Any], fallback: dict[str, Any]) 
     elif fallback_type == "human_review":
         canonical["escalation_type"] = "human_review"
         canonical["next_owner"] = "support_specialist"
+        fallback_reason = str(fallback.get("reason") or "")
+        if fallback_reason and "general_support" in fallback_reason and "general_support" not in raw_reason:
+            canonical["reason"] = fallback_reason
 
     if not isinstance(canonical.get("evidence"), list):
         canonical["evidence"] = fallback.get("evidence", [])
