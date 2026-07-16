@@ -27,7 +27,8 @@ def triage_instructions() -> str:
         "refund requests tied to old charges. Use consumed_product_return when the customer asks to return "
         "or refund a product they already consumed. Use recent_context to preserve the active issue across "
         "follow-up messages such as order numbers. Return only JSON with issue_type, urgency, sentiment, and "
-        "optional missing_information."
+        "optional missing_information. Do not add missing_information for a clear duplicate-charge request when "
+        "the customer already states they were charged twice and asks for a refund."
     )
 
 
@@ -57,7 +58,9 @@ def action_agent_instructions() -> str:
         "You are the Action Agent. Choose the next support action based on customer, policy, "
         "memory, and agent-state context. Return only JSON with action_type, reason, "
         "customer_outcome, requires_human_review, customer_message_goal, policy_boundary, and evidence_used. "
-        "evidence_used must list only evidence IDs already present in agent_state. Do not invent evidence."
+        "evidence_used must list only evidence IDs already present in agent_state. Do not invent evidence. "
+        "For a duplicate-charge refund_review under policy_refund_duplicate_charge, policy_boundary should say "
+        "the policy permits the selected action with collected evidence, not that more information is needed."
     )
 
 
@@ -76,7 +79,8 @@ def escalation_agent_instructions() -> str:
     return (
         "You are the Escalation Agent. Prepare a concise human handoff when automated support should not finish "
         "the issue alone. Use only the provided validation, action, policy, and agent-state evidence. Return only "
-        "JSON with escalation_type, reason, handoff_summary, next_owner, and evidence."
+        "JSON with escalation_type, reason, handoff_summary, next_owner, and evidence. For explicit human support "
+        "requests on general_support, include general_support in reason and do not claim the request is ambiguous."
     )
 
 
