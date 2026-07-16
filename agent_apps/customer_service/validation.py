@@ -133,6 +133,77 @@ def validation_report(policy: dict[str, Any], action: dict[str, Any], validation
     }
 
 
+def validate_customer_response(
+    response_text: str,
+    *,
+    policy: dict[str, Any],
+    action: dict[str, Any],
+    validation: dict[str, Any],
+    working_memory: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = response_text.lower()
+    failures: list[str] = []
+    warnings: list[str] = []
+    action_type = str(action.get("action_type") or "")
+
+    if action_type == "refund_review" and any(
+        phrase in normalized
+        for phrase in (
+            "issued a refund",
+            "issued an instant refund",
+            "instant refund",
+            "refund has been issued",
+            "processed your refund",
+            "refunded your",
+        )
+    ):
+        failures.append("refund_review_claims_refund_issued")
+
+    if action_type == "clarification_request" and not any(
+        phrase in normalized for phrase in ("please", "provide", "share", "need", "order", "receipt", "detail", "?", "what was wrong")
+    ):
+        failures.append("clarification_missing_information_request")
+
+    if validation.get("approval_required") and not any(phrase in normalized for phrase in ("approval", "review", "human")):
+        failures.append("approval_requirement_not_mentioned")
+
+    if policy.get("policy_id") == "policy_consumed_product_return":
+        if action_type == "clarification_request":
+            if "fully consumed" not in normalized:
+                failures.append("consumed_product_missing_fully_consumed_boundary")
+            if "normal return" not in normalized:
+                failures.append("consumed_product_missing_normal_return_boundary")
+            if "quality" not in normalized:
+                warnings.append("consumed_product_missing_quality_exception_language")
+        if action_type == "courtesy_credit":
+            if "quality" not in normalized:
+                failures.append("quality_exception_missing_quality_language")
+            if "courtesy credit" not in normalized:
+                failures.append("quality_exception_missing_courtesy_credit_language")
+
+    if _has_account_mismatch_context(working_memory) and not ("account" in normalized and "verify" in normalized):
+        failures.append("account_mismatch_missing_verification_language")
+
+    return {
+        "status": "failed" if failures else "passed",
+        "failures": failures,
+        "warnings": warnings,
+        "checked_action_type": action_type,
+        "checked_policy_id": policy.get("policy_id"),
+    }
+
+
+def _has_account_mismatch_context(working_memory: dict[str, Any]) -> bool:
+    agent_state = working_memory.get("agent_state") if isinstance(working_memory.get("agent_state"), dict) else {}
+    evidence_ids = agent_state.get("evidence_ids") if isinstance(agent_state, dict) else []
+    risk_signals = agent_state.get("risk_signals") if isinstance(agent_state, dict) else []
+    missing_fields = agent_state.get("missing_fields") if isinstance(agent_state, dict) else []
+    has_mismatch_evidence = isinstance(evidence_ids, list) and "account_access_mismatch" in evidence_ids
+    has_mismatch_risk = isinstance(risk_signals, list) and "requested_resource_belongs_to_different_account" in risk_signals
+    has_ownership_gap = isinstance(missing_fields, list) and "verified_account_ownership" in missing_fields
+    return has_mismatch_evidence or has_mismatch_risk or has_ownership_gap
+
+
 def policy_evidence_gaps(policy: dict[str, Any], evidence: list[Any], action: dict[str, Any]) -> list[str]:
     requirements = policy.get("evidence_requirements")
     if not isinstance(requirements, list):
