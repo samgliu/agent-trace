@@ -1,0 +1,81 @@
+{
+  "trace_id": "trace_support_triage_memory_healthy",
+  "workflow_name": "support-triage",
+  "group_id": "demo-support-triage",
+  "status": "passed",
+  "metadata": {
+    "scenario": "memory-healthy"
+  },
+  "started_at": "2026-05-01T15:28:52Z",
+  "ended_at": "2026-05-01T15:28:56Z",
+  "spans": [
+    {
+      "span_id": "span_memory_healthy_supervisor",
+      "name": "Supervisor Agent",
+      "span_type": "agent",
+      "started_at": "2026-05-01T15:28:52Z",
+      "ended_at": "2026-05-01T15:28:56Z",
+      "output": {
+        "status": "completed"
+      }
+    },
+    {
+      "span_id": "span_memory_healthy_write",
+      "parent_id": "span_memory_healthy_supervisor",
+      "name": "Write Working Memory",
+      "span_type": "memory_write",
+      "started_at": "2026-05-01T15:28:52.100Z",
+      "ended_at": "2026-05-01T15:28:52.180Z",
+      "span_data": {
+        "memory_type": "short_term",
+        "memory_operation": "write",
+        "memory_store": "conversation_working_memory",
+        "memory_key": "current_customer_request"
+      },
+      "input": {
+        "message": "I was charged twice for my Pro subscription yesterday."
+      },
+      "output": {
+        "written": true
+      }
+    },
+    {
+      "span_id": "span_memory_healthy_read",
+      "parent_id": "span_memory_healthy_supervisor",
+      "name": "Read Customer Memory",
+      "span_type": "memory_read",
+      "started_at": "2026-05-01T15:28:52.200Z",
+      "ended_at": "2026-05-01T15:28:52.320Z",
+      "span_data": {
+        "memory_type": "long_term",
+        "memory_operation": "read",
+        "memory_store": "customer_profile_memory",
+        "memory_key": "customer@example.com",
+        "retrieved_memory_count": 2,
+        "memory_relevance_score": 0.91,
+        "memory_age_seconds": 86400,
+        "memory_used_in_response": true
+      },
+      "output": {
+        "facts": [
+          "Customer has an active Pro subscription.",
+          "Customer has no prior refund abuse warnings."
+        ]
+      }
+    },
+    {
+      "span_id": "span_memory_healthy_generation",
+      "parent_id": "span_memory_healthy_supervisor",
+      "name": "Customer Response Generator",
+      "span_type": "generation",
+      "started_at": "2026-05-01T15:28:55Z",
+      "ended_at": "2026-05-01T15:28:56Z",
+      "input_tokens": 320,
+      "output_tokens": 90,
+      "estimated_cost": 0.0009,
+      "output": {
+        "response": "I found your Pro subscription and created a billing review for the duplicate charge."
+      }
+    }
+  ]
+}

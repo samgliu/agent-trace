@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "./styles/base-dashboard.css";
+@import "./styles/evals.css";
+@import "./styles/live-chat.css";
+@import "./styles/trace-detail.css";
+@import "./styles/responsive.css";

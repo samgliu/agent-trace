@@ -1,35 +1,359 @@
 # AgentTrace
 
-AgentTrace is an OpenAI Agents-compatible trace analysis tool for debugging,
-evaluating, and optimizing multi-agent AI workflows.
+AgentTrace is a trace operations dashboard for debugging, monitoring, and
+evaluating multi-agent AI workflows.
 
-The first milestone focuses on the trace foundation:
+This repo includes a real customer-service multi-agent app as the reference
+workload. The dashboard observes live chat turns, Supervisor-directed handoffs,
+Escalation Agent handoffs, tool calls, MCP activity, memory, approval gates,
+grounding, latency, token/cost metadata, privacy redaction, and eval results.
 
-- import OpenAI-style trace JSON
-- normalize traces and spans
-- store runs in SQLite
-- inspect trace timelines from the CLI
-- support multi-agent spans, handoffs, tool calls, guardrails, and custom spans
+<p align="center">
+  <img src="demo/screencapture.png" alt="AgentTrace dashboard screenshot" width="680" />
+</p>
+
+## Included
+
+- FastAPI AgentTrace API with SQLite storage.
+- React/TypeScript dashboard built with Vite and pnpm.
+- Standalone customer-service agent service in `agent_apps/customer_service`.
+- Supervisor-led multi-agent support workflow with escalation handoff.
+- FastMCP tool service for customer, policy, order, charge, and action tools.
+- OpenAI-compatible model client with provider/model fallback configuration.
+- OpenAI Agents-style trace import and normalization.
+- SSE updates for runs, chat, traces, summaries, and eval progress.
+- Deterministic and LLM-backed support-triage evals with resumable degraded
+  runs and trace-linked improvement plans.
+- Optional role-based dashboard auth with audited approval decisions.
+- Default redaction for common PII in trace/span/grounding/raw responses.
+- Dockerized Playwright e2e tests.
+
+## Architecture
+
+```text
+Dashboard / Customer Service App
+        |
+AgentTrace API --------------- SQLite
+        |
+Customer-Service Agent Service
+        |
+Multi-Agent Orchestrator
+   |-- Supervisor Agent
+   |-- Triage / Investigation / Policy / Action / Validator / Escalation Agents
+   |-- Customer Response Generator
+   |-- MCP tools
+   |-- memory
+   |-- approval gates
+   `-- OpenAI-compatible model client
+            |
+      OpenAI | Gemini | gateway | local LLM
+```
+
+The agent is provider-agnostic. Real model calls use OpenAI-compatible
+`/v1/chat/completions` by default, so switching providers stays in environment
+configuration instead of specialist-agent logic.
+
+## Agent Responsibilities
+
+The reference customer-service workload is a supervisor-led multi-agent system.
+Each agent owns a distinct decision surface so traces show why the workflow
+routed, collected evidence, acted, recovered, or escalated.
+
+| Agent | Responsibility |
+| --- | --- |
+| Supervisor Agent | Chooses the top-level route. It sends actionable support requests into the standard support workflow, but routes greetings or general capability questions directly to the response generator. |
+| Triage Agent | Classifies the active customer issue, urgency, sentiment, missing information, escalation intent, and follow-up context. It keeps multi-turn conversations on the right issue unless the customer clearly switches topics. |
+| Investigation Agent | Plans required evidence before tools run. It decides whether the workflow needs customer, charge, order, order-owner, subscription, or account-access evidence. Policy validation corrects missing or unsupported evidence plans. |
+| Policy Agent | Selects the support-policy retrieval topic based on triage and customer context. It prevents policy drift such as using duplicate-charge policy for unrelated refund or return requests. |
+| Action Agent | Chooses the next support action from policy-allowed options and produces a resolution plan: customer outcome, human-review intent, customer-message goal, policy boundary, and evidence used. Policy validation rejects unsupported actions or malformed plans. |
+| Validator Agent | Checks grounding, policy compliance, approval requirements, abuse-risk controls, and supporting evidence before the customer response is generated. It emits a structured validation report covering missing evidence, unsupported claims, risk review, corrections, and whether the response is safe to send. |
+| Escalation Agent | Prepares human handoff details when automation should not finish alone, including escalation type, next owner, reason, summary, and evidence. It handles explicit human requests, technical recovery, and risk review. |
+| Customer Response Generator | Writes the final customer-facing reply using only grounded customer, policy, tool, memory, validation, and conversation context. Safety helpers prevent unrelated facts, duplicate-charge leakage, and unsupported refund claims. |
 
 ## Quick Start
 
 ```bash
-python3 -m agenttrace.cli import examples/support_triage/sample_trace.json
-python3 -m agenttrace.cli list
-python3 -m agenttrace.cli show trace_support_triage_happy_path
+docker compose up -d --build api web agent-service mcp-tools
 ```
 
-By default, AgentTrace stores local data in `.agenttrace/agenttrace.db`.
+Open:
 
-## Current Scope
+```text
+Dashboard: http://localhost:5173
+API docs:  http://localhost:8000/docs
+Agent:     http://localhost:8020/health
+MCP tools: http://localhost:8010/health
+```
 
-This repository is intentionally starting small. The first goal is a reliable
-trace model and CLI before adding the FastAPI backend, React dashboard, MCP
-server demo, and eval harness.
+Local data is stored in `.agenttrace/agenttrace.db`.
 
-## Verification
+## Demo Flow
+
+1. Open `http://localhost:5173`.
+2. Send a message in **Live customer-service agent**:
+
+   ```text
+   I was charged twice for my Pro subscription yesterday. Can I get a refund?
+   ```
+
+3. Open the generated trace and inspect the Agent Flow.
+4. Run **Support agent quality** evals.
+5. Review failed checks and the improvement plan.
+
+Useful multi-turn case:
+
+```text
+I'd like to return the banana I bought last week. I ate all of them already.
+```
+
+Then:
+
+```text
+Order number: #1234
+```
+
+The agent should preserve the active issue, avoid unrelated duplicate-charge
+leakage, and explain the consumed-product return boundary.
+
+Routing case:
+
+```text
+Hello, what can you help me with?
+```
+
+This takes the direct `clarify_request` route from Supervisor to the Customer
+Response Generator without unnecessary account or policy tools.
+
+Escalation and account-ownership cases:
+
+```text
+I want to speak to a human agent about my account.
+```
+
+```text
+The order is under my spouse's different email. Can you refund it from this account?
+```
+
+The first request creates a human-support handoff. The second verifies account
+ownership boundaries before any refund action. Escalation traces include the
+handoff type, next owner, reason, summary, and supporting evidence.
+
+## Configuration
+
+Each deployable service owns its own environment file:
+
+```text
+agenttrace/api/.env              # API auth, storage, agent-service URL
+agent_apps/customer_service/.env # LLM provider/model/API keys and agent runtime
+web/.env                         # browser-visible Vite config only
+```
+
+Use the matching `.env.example` file in each service directory as the template.
+Do not put LLM keys or admin tokens in `web/.env`.
+
+Gemini example:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+AGENTTRACE_LLM_TIMEOUT_SECONDS=180
+```
+
+OpenAI-compatible gateway example:
+
+```env
+LLM_PROVIDER=openai-compatible
+LLM_API_KEY=...
+LLM_MODEL=...
+LLM_FALLBACK_MODELS=...
+LLM_BASE_URL=http://gateway.example/v1
+```
+
+After changing `.env`:
 
 ```bash
-python3 -m unittest discover
-python3 -m compileall agenttrace tests
+docker compose up -d --force-recreate agent-service api web
 ```
+
+## Auth
+
+Auth is disabled by default for local demos. To protect the dashboard/API, set
+these in `agenttrace/api/.env`:
+
+```env
+AGENTTRACE_AUTH_ENABLED=true
+AGENTTRACE_ADMIN_TOKEN=long-random-secret
+AGENTTRACE_OPERATOR_TOKEN=long-random-secret
+AGENTTRACE_VIEWER_TOKEN=long-random-secret
+```
+
+Then recreate the API and web containers:
+
+```bash
+docker compose up -d --force-recreate api web
+```
+
+When enabled, the dashboard shows a token login screen. The backend validates
+the token once and sets an httpOnly, signed, expiring session cookie. Admin and
+operator sessions can approve, reject, and revert approval gates. Viewer
+sessions can read dashboards and traces but cannot mutate approvals.
+
+Public routes: `/health`, `/auth/status`, `/auth/login`, `/auth/logout`.
+
+## Privacy
+
+Trace, span, grounding, and raw-payload responses redact common sensitive values
+such as emails, phone numbers, and payment-like numbers by default. Redacted
+responses include privacy metadata:
+
+```text
+contains_pii
+redaction_applied
+redaction_types
+```
+
+The dashboard displays `Privacy: Redacted` when sensitive content was masked.
+
+## Evals
+
+Run from the dashboard or API:
+
+```bash
+curl -X POST http://localhost:8000/evals/support-triage/run
+curl -X POST 'http://localhost:8000/evals/support-triage/run?mode=llm'
+curl http://localhost:8000/eval-runs/support-triage/comparison
+```
+
+Run from CLI:
+
+```bash
+python3 -m agenttrace.cli eval support-triage
+python3 -m agenttrace.cli eval support-triage --mode llm
+python3 -m agenttrace.cli eval support-triage --json
+```
+
+Deterministic evals are the stable baseline. LLM-backed evals measure the
+configured provider/model. Provider/API failures are retained as unscored
+history instead of agent-quality trend points; affected runs can be retried in
+place after provider recovery without rerunning successful cases.
+
+Checks cover routing, evidence propagation, escalation ownership, governance,
+response quality, memory, and reliability. Failed checks link back to traces
+and produce an improvement plan grouped by the responsible workflow area.
+Model fallback attempts are visible on the affected agent spans.
+
+Eval improvement workflow:
+
+```text
+Run evals -> inspect failed trace -> patch prompt/policy/guardrail/tooling
+          -> add a focused regression test -> rerun deterministic and LLM evals
+```
+
+Provider failures such as quota, timeout, or high-demand responses should be
+treated separately from agent-quality failures. Resume or retry those runs after
+the provider recovers instead of tuning the agent from incomplete evidence.
+
+## CLI
+
+```bash
+docker compose run --rm agenttrace import examples/support_triage/sample_trace.json
+docker compose run --rm agenttrace list
+docker compose run --rm agenttrace show trace_support_triage_happy_path
+docker compose run --rm agenttrace show trace_support_triage_happy_path --verbose
+```
+
+Import an OpenAI Agents-style export:
+
+```bash
+docker compose run --rm agenttrace import examples/openai_agents/sample_trace_export.json --format openai-agents
+```
+
+## API
+
+API docs are available at `http://localhost:8000/docs`.
+
+Common endpoints:
+
+```text
+GET    /health
+GET    /dashboard/summary
+GET    /events
+
+POST   /chat/sessions
+POST   /chat/sessions/{session_id}/messages
+
+POST   /workflows/support-triage/runs
+GET    /workflow-runs/{run_id}
+POST   /workflow-runs/{run_id}/cancel
+POST   /workflow-runs/{run_id}/retry
+
+GET    /evals
+POST   /evals/support-triage/run
+POST   /evals/support-triage/run/async
+POST   /eval-runs/{run_id}/resume
+GET    /eval-runs
+GET    /eval-runs/{run_id}
+GET    /eval-runs/support-triage/comparison
+GET    /eval-runs/support-triage/failure-trends
+
+GET    /traces
+POST   /traces
+GET    /traces/{trace_id}
+GET    /traces/{trace_id}/raw
+POST   /ingest/openai-agents
+POST   /traces/{trace_id}/approvals/{span_id}/approve
+POST   /traces/{trace_id}/approvals/{span_id}/reject
+POST   /traces/{trace_id}/approvals/{span_id}/revert
+```
+
+## Development
+
+Python:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m unittest discover
+```
+
+Frontend:
+
+```bash
+cd web
+corepack pnpm install
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+corepack pnpm dev
+```
+
+E2E:
+
+```bash
+docker compose run --rm --build e2e
+```
+
+The Playwright report is written to `e2e/playwright-report/index.html`.
+
+CI runs backend tests, deterministic evals, frontend tests/build, and Dockerized
+Playwright e2e on pushes to `development`.
+
+## Code Map
+
+- `agenttrace/api/`: FastAPI app, routes, auth, eval runs, chat, approvals,
+  workflow operations, SSE.
+- `agenttrace/core/`: trace/span models, metrics, summary, provenance,
+  redaction.
+- `agenttrace/adapters/`: OpenAI Agents-style trace normalization.
+- `agenttrace/storage/`: SQLite schema, row mapping, persistence.
+- `agenttrace/evals/`: support-triage eval cases, reporting, assertions.
+- `agent_apps/customer_service/`: multi-agent customer-service workload,
+  model client, MCP/local tools, policy logic, validation, memory, trace
+  construction.
+- `web/src/`: React dashboard components, hooks, utilities, styles.
+- `e2e/`: Dockerized Playwright product tests.

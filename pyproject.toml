@@ -1,0 +1,22 @@
+[project]
+name = "agenttrace"
+version = "0.1.0"
+description = "OpenAI Agents-compatible trace analysis for multi-agent AI workflows."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "fastmcp>=2.14,<3.0",
+  "httpx>=0.28,<1.0",
+  "uvicorn[standard]>=0.34,<1.0",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agenttrace*", "agent_apps*"]
+
+[project.scripts]
+agenttrace = "agenttrace.cli:main"
