@@ -115,7 +115,7 @@ def account_mismatch_response_safety(response_text: str, *, working_memory: dict
 
     normalized = response_text.lower()
     additions: list[str] = []
-    if "account" not in normalized:
+    if "account" not in normalized or "verify" not in normalized:
         additions.append("I need to verify the account before reviewing any refund.")
     if "detail" not in normalized:
         additions.append("Please provide the matching account details or order owner details so I can confirm access.")

@@ -13,7 +13,7 @@ from agenttrace.evals.support_triage import (
     list_support_triage_eval_suites,
     run_support_triage_eval_suite,
 )
-from agenttrace.core.models import Trace
+from agenttrace.core.models import Span, Trace
 
 
 class SupportTriageEvalsTest(unittest.TestCase):
@@ -50,8 +50,11 @@ class SupportTriageEvalsTest(unittest.TestCase):
         risk_checks = {check.name: check.actual for check in by_case["repeated-refund-abuse-review"].checks}
         recovery_checks = {check.name: check.actual for check in by_case["lookup-timeout-failure"].checks}
         duplicate_checks = {check.name: check.actual for check in by_case["duplicate-charge-refund"].checks}
+        duplicate_check_names = {check.name for check in by_case["duplicate-charge-refund"].checks}
         annual_checks = {check.name: check.actual for check in by_case["annual-refund-approval"].checks}
         self.assertTrue(duplicate_checks["customer_safe_to_send"])
+        self.assertIn("response_validation_status", duplicate_check_names)
+        self.assertIn("response_validation_failures", duplicate_check_names)
         self.assertFalse(annual_checks["customer_safe_to_send"])
         self.assertEqual(human_checks["escalation_type"], "human_review")
         self.assertEqual(human_checks["escalation_owner"], "support_specialist")
@@ -93,6 +96,47 @@ class SupportTriageEvalsTest(unittest.TestCase):
             self.assertIn("escalation_owner", check_names)
             self.assertIn("escalation_reason", check_names)
             self.assertTrue(by_case[case_id].passed)
+
+    def test_eval_fails_when_response_validation_reports_failures(self) -> None:
+        result = EvalCaseResult(
+            case=EvalCase(
+                case_id="unsafe-response",
+                name="Unsafe response",
+                message="refund me",
+                customer_email="customer@example.com",
+                expected_trace_status="passed",
+            ),
+            trace=Trace(
+                trace_id="trace_eval_unsafe_response",
+                workflow_name="support-triage",
+                status="passed",
+                spans=[
+                    Span(
+                        span_id="span_response",
+                        trace_id="trace_eval_unsafe_response",
+                        name="Customer Response Generator",
+                        span_type="generation",
+                        output={
+                            "response": "I issued an instant refund.",
+                            "response_validation": {
+                                "status": "failed",
+                                "failures": ["refund_review_claims_refund_issued"],
+                                "warnings": [],
+                            },
+                        },
+                    )
+                ],
+            ),
+            checks=[],
+        )
+
+        from agenttrace.evals.trace_assertions import evaluate_trace
+
+        evaluated = evaluate_trace(result.case, result.trace)
+        checks = {check.name: check for check in evaluated.checks}
+        self.assertFalse(evaluated.passed)
+        self.assertFalse(checks["response_validation_status"].passed)
+        self.assertFalse(checks["response_validation_failures"].passed)
 
     def test_builds_ci_friendly_eval_report(self) -> None:
         result = run_support_triage_eval_suite()
