@@ -60,6 +60,9 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
         checks.append(contains_check(f"response_contains:{expected_text}", actual["response"], expected_text))
     for rejected_text in case.expected_response_excludes:
         checks.append(excludes_check(f"response_excludes:{rejected_text}", actual["response"], rejected_text))
+    if actual["response_validation_status"] is not None:
+        checks.append(check("response_validation_status", "passed", actual["response_validation_status"]))
+        checks.append(check("response_validation_failures", [], actual["response_validation_failures"]))
     for tool_name in case.expected_tool_names:
         checks.append(includes_check(f"tool_used:{tool_name}", actual["tool_names"], tool_name))
     for evidence_name in case.expected_investigation_evidence:
@@ -146,6 +149,8 @@ def actual_values(trace: Trace) -> dict[str, Any]:
         "memory_warning_count": summary["memory_warning_count"],
         "error_count": summary["error_count"],
         "response": dict_value(response_span.output if response_span else None, "response") or "",
+        "response_validation_status": response_validation_value(response_span, "status"),
+        "response_validation_failures": response_validation_value(response_span, "failures"),
         "approval_reason": dict_value(approval_span.output if approval_span else None, "reason") or "",
         "escalation": escalation_from_span(escalation_span),
         "investigation_evidence": investigation_evidence_from_span(investigation_span),
@@ -170,6 +175,13 @@ def validation_report_value(span: Any, key: str) -> Any:
     if isinstance(output, dict) and isinstance(output.get("validation_report"), dict):
         return output["validation_report"].get(key)
     return dict_value(output, key)
+
+
+def response_validation_value(span: Any, key: str) -> Any:
+    output = span.output if span else None
+    if isinstance(output, dict) and isinstance(output.get("response_validation"), dict):
+        return output["response_validation"].get(key)
+    return None
 
 
 def agent_state_from_span(span: Any) -> dict[str, Any]:
