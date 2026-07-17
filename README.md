@@ -1,32 +1,34 @@
 # AgentTrace
 
-AgentTrace is a trace operations dashboard for debugging, monitoring, and
-evaluating multi-agent AI workflows.
+AgentTrace is a multi-agent AI reliability project: a Supervisor-led customer
+service agent system paired with the trace and eval tooling needed to debug,
+govern, and improve it.
 
-This repo includes a real customer-service multi-agent app as the reference
-workload. The dashboard observes live chat turns, Supervisor-directed handoffs,
-Escalation Agent handoffs, tool calls, MCP activity, memory, approval gates,
-grounding, latency, token/cost metadata, privacy redaction, and eval results.
+The reference workflow routes each customer request through specialist agents
+for triage, evidence planning, policy retrieval, action selection, validation,
+human escalation, and grounded response generation. AgentTrace turns that
+execution into inspectable traces, live run monitoring, response validation,
+approval governance, grounding checks, latency/token/cost analysis, and
+deterministic plus LLM-backed evals with trace-linked improvement plans.
 
 <p align="center">
   <img src="demo/screencapture.png" alt="AgentTrace dashboard screenshot" width="680" />
 </p>
 
-## Included
+## What This Demonstrates
 
-- FastAPI AgentTrace API with SQLite storage.
-- React/TypeScript dashboard built with Vite and pnpm.
-- Standalone customer-service agent service in `agent_apps/customer_service`.
-- Supervisor-led multi-agent support workflow with escalation handoff.
-- FastMCP tool service for customer, policy, order, charge, and action tools.
-- OpenAI-compatible model client with provider/model fallback configuration.
-- OpenAI Agents-style trace import and normalization.
-- SSE updates for runs, chat, traces, summaries, and eval progress.
-- Deterministic and LLM-backed support-triage evals with resumable degraded
-  runs and trace-linked improvement plans.
-- Optional role-based dashboard auth with audited approval decisions.
-- Default redaction for common PII in trace/span/grounding/raw responses.
-- Dockerized Playwright e2e tests.
+- A Supervisor-led multi-agent support workflow with specialist handoffs,
+  evidence planning, policy routing, action planning, validation, escalation,
+  and grounded response generation.
+- Trace operations for agent workflows: live runs, span timelines, raw payloads,
+  grounding, approval gates, memory behavior, cost/latency metrics, and
+  response validation.
+- Deterministic and LLM-backed support-triage evals with provider-degraded run
+  handling, model fallback visibility, trace-linked failures, and improvement
+  plans.
+- A deployable app stack: FastAPI, SQLite, React/TypeScript, Vite, FastMCP,
+  Docker Compose, SSE updates, optional role-based auth, redaction, and
+  Dockerized Playwright e2e tests.
 
 ## Architecture
 
@@ -53,6 +55,35 @@ The agent is provider-agnostic. Real model calls use OpenAI-compatible
 `/v1/chat/completions` by default, so switching providers stays in environment
 configuration instead of specialist-agent logic.
 
+## Multi-Agent Reliability
+
+The reference workload is intentionally more than a single prompt wrapped in a
+UI. A Supervisor Agent routes each request through a set of specialist agents
+that own separate decisions:
+
+```text
+Supervisor
+  -> Triage
+  -> Investigation
+  -> Policy
+  -> Action
+  -> Validator
+  -> Escalation, when automation should stop
+  -> Customer Response Generator
+```
+
+AgentTrace records each handoff and decision as trace spans, then layers
+deterministic guardrails around LLM outputs. The guardrails correct common
+provider drift without hiding it: unsupported actions, invented evidence,
+missing policy evidence, incorrect approval decisions, unsafe escalation
+ownership, and customer responses that claim more than the workflow actually
+did.
+
+The demo workflow includes domain-specific cases for duplicate charges, annual
+refund approvals, stale subscription refunds, consumed-product return
+boundaries, explicit human handoff, account ownership mismatch, tool failures,
+and abuse-risk review.
+
 ## Agent Responsibilities
 
 The reference customer-service workload is a supervisor-led multi-agent system.
@@ -66,9 +97,9 @@ routed, collected evidence, acted, recovered, or escalated.
 | Investigation Agent | Plans required evidence before tools run. It decides whether the workflow needs customer, charge, order, order-owner, subscription, or account-access evidence. Policy validation corrects missing or unsupported evidence plans. |
 | Policy Agent | Selects the support-policy retrieval topic based on triage and customer context. It prevents policy drift such as using duplicate-charge policy for unrelated refund or return requests. |
 | Action Agent | Chooses the next support action from policy-allowed options and produces a resolution plan: customer outcome, human-review intent, customer-message goal, policy boundary, and evidence used. Policy validation rejects unsupported actions or malformed plans. |
-| Validator Agent | Checks grounding, policy compliance, approval requirements, abuse-risk controls, and supporting evidence before the customer response is generated. It emits a structured validation report covering missing evidence, unsupported claims, risk review, corrections, and whether the response is safe to send. |
+| Validator Agent | Checks grounding, policy compliance, approval requirements, abuse-risk controls, supporting evidence, and response-safety contracts. It emits a structured validation report covering missing evidence, unsupported claims, risk review, corrections, and whether the response is safe to send. |
 | Escalation Agent | Prepares human handoff details when automation should not finish alone, including escalation type, next owner, reason, summary, and evidence. It handles explicit human requests, technical recovery, and risk review. |
-| Customer Response Generator | Writes the final customer-facing reply using only grounded customer, policy, tool, memory, validation, and conversation context. Safety helpers prevent unrelated facts, duplicate-charge leakage, and unsupported refund claims. |
+| Customer Response Generator | Writes the final customer-facing reply using only grounded customer, policy, tool, memory, validation, and conversation context. Response validation and safety helpers prevent unrelated facts, duplicate-charge leakage, missing policy language, and unsupported refund claims. |
 
 ## Quick Start
 
@@ -87,7 +118,7 @@ MCP tools: http://localhost:8010/health
 
 Local data is stored in `.agenttrace/agenttrace.db`.
 
-## Demo Flow
+## Demo Workflow
 
 1. Open `http://localhost:5173`.
 2. Send a message in **Live customer-service agent**:
@@ -96,11 +127,11 @@ Local data is stored in `.agenttrace/agenttrace.db`.
    I was charged twice for my Pro subscription yesterday. Can I get a refund?
    ```
 
-3. Open the generated trace and inspect the Agent Flow.
+3. Open the generated trace and inspect the multi-agent flow.
 4. Run **Support agent quality** evals.
 5. Review failed checks and the improvement plan.
 
-Useful multi-turn case:
+Multi-turn continuity:
 
 ```text
 I'd like to return the banana I bought last week. I ate all of them already.
@@ -112,10 +143,10 @@ Then:
 Order number: #1234
 ```
 
-The agent should preserve the active issue, avoid unrelated duplicate-charge
-leakage, and explain the consumed-product return boundary.
+The agent preserves the active issue, avoids unrelated duplicate-charge leakage,
+and explains the consumed-product return boundary.
 
-Routing case:
+Supervisor routing:
 
 ```text
 Hello, what can you help me with?
@@ -124,7 +155,7 @@ Hello, what can you help me with?
 This takes the direct `clarify_request` route from Supervisor to the Customer
 Response Generator without unnecessary account or policy tools.
 
-Escalation and account-ownership cases:
+Escalation and account ownership:
 
 ```text
 I want to speak to a human agent about my account.
@@ -241,9 +272,10 @@ history instead of agent-quality trend points; affected runs can be retried in
 place after provider recovery without rerunning successful cases.
 
 Checks cover routing, evidence propagation, escalation ownership, governance,
-response quality, memory, and reliability. Failed checks link back to traces
-and produce an improvement plan grouped by the responsible workflow area.
-Model fallback attempts are visible on the affected agent spans.
+response validation, memory, and reliability. Failed checks link back to traces
+and produce an improvement plan grouped by responsible workflow area. Model
+fallback attempts and raw specialist-agent outputs are visible on the affected
+agent spans.
 
 Eval improvement workflow:
 
@@ -252,9 +284,9 @@ Run evals -> inspect failed trace -> patch prompt/policy/guardrail/tooling
           -> add a focused regression test -> rerun deterministic and LLM evals
 ```
 
-Provider failures such as quota, timeout, or high-demand responses should be
-treated separately from agent-quality failures. Resume or retry those runs after
-the provider recovers instead of tuning the agent from incomplete evidence.
+Provider failures such as quota, timeout, or high-demand responses are treated
+separately from agent-quality failures. Resume or retry those runs after the
+provider recovers instead of tuning the agent from incomplete evidence.
 
 ## CLI
 
@@ -338,9 +370,8 @@ E2E:
 docker compose run --rm --build e2e
 ```
 
-The Playwright report is written to `e2e/playwright-report/index.html`.
-
-CI runs backend tests, deterministic evals, frontend tests/build, and Dockerized
+The Playwright report is written to `e2e/playwright-report/index.html`. CI runs
+backend tests, deterministic evals, frontend tests/build, and Dockerized
 Playwright e2e on pushes to `development`.
 
 ## Code Map
