@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultTraceId,
   latestTraceFromMessages,
   parseServerEvent,
   replacePendingChatMessage,
@@ -56,6 +57,17 @@ describe("app state helpers", () => {
     const session = { session_id: "chat_1", customer_email: "a@example.com" } as ChatSession;
     const updated = upsertChatSession([{ ...session, customer_email: "old@example.com" }], session);
     expect(updated).toEqual([session]);
+  });
+
+  it("prefers agent-runner traces for default dashboard selection", () => {
+    expect(
+      defaultTraceId([
+        { trace_id: "trace_e2e", source_kind: "live_api" } as TraceSummary,
+        { trace_id: "trace_agent", source_kind: "agent_runner" } as TraceSummary,
+      ]),
+    ).toBe("trace_agent");
+    expect(defaultTraceId([{ trace_id: "trace_only", source_kind: "live_api" } as TraceSummary])).toBe("trace_only");
+    expect(defaultTraceId([])).toBeNull();
   });
 
   it("parses server events defensively", () => {

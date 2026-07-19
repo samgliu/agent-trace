@@ -126,7 +126,46 @@ class SupportTriageAgentsTest(unittest.TestCase):
         response = next(span for span in trace.spans if span.name == "Customer Response Generator")
         self.assertEqual(response.output["response_validation"]["status"], "passed")
         self.assertEqual(response.span_data["response_validation_status"], "passed")
+        self.assertEqual(response.span_data["agent_contract_status"], "passed")
         self.assertEqual(llm.calls[0]["input_text"].count("duplicate_charge_detected"), 1)
+
+    def test_agent_spans_emit_contract_metadata(self) -> None:
+        runner = SupportTriageRunner()
+
+        trace = runner.run(
+            message="I was charged twice for my Pro subscription yesterday. Can I get a refund?",
+            customer_email="customer@example.com",
+            trace_id="trace_runner_agent_contracts",
+        )
+
+        contracts = {
+            span.name: span.span_data["agent_contract"]
+            for span in trace.spans
+            if span.name
+            in {
+                "Supervisor Agent",
+                "Triage Agent",
+                "Investigation Agent",
+                "Policy Agent",
+                "Action Agent",
+                "Validator Agent",
+                "Customer Response Generator",
+            }
+        }
+        self.assertEqual(contracts["Supervisor Agent"]["status"], "passed")
+        self.assertIn("route", contracts["Supervisor Agent"]["produced_outputs"])
+        self.assertIn("message", contracts["Triage Agent"]["required_inputs"])
+        self.assertIn("required_evidence", contracts["Investigation Agent"]["produced_outputs"])
+        self.assertIn("policy", contracts["Action Agent"]["required_inputs"])
+        self.assertIn("validation_report", contracts["Validator Agent"]["produced_outputs"])
+        self.assertIn("response_validation", contracts["Customer Response Generator"]["produced_outputs"])
+        self.assertTrue(
+            all(
+                span.span_data["agent_contract_status"] == span.span_data["agent_contract"]["status"]
+                for span in trace.spans
+                if "agent_contract" in span.span_data
+            )
+        )
 
     def test_runner_can_use_llm_backed_specialist_agent_decisions(self) -> None:
         llm = QueueLLMClient(
@@ -249,6 +288,8 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertIn("policy_evidence_gap_detected", validator.output["validator_corrections"])
         self.assertEqual(report["policy_compliance"]["status"], "failed")
         self.assertFalse(report["customer_safe_to_send"])
+        self.assertEqual(validator.span_data["agent_contract_status"], "failed")
+        self.assertEqual(validator.span_data["agent_contract"]["status"], "failed")
 
     def test_llm_action_resolution_plan_is_corrected_when_shape_is_invalid(self) -> None:
         llm = QueueLLMClient(
@@ -276,6 +317,8 @@ class SupportTriageAgentsTest(unittest.TestCase):
         self.assertEqual(action.span_data["decision_source"], "policy_validation")
         self.assertEqual(action.span_data["validation_reason"], "action_resolution_plan_corrected")
         self.assertEqual(action.span_data["invalid_action_fields"], ["evidence_used", "requires_human_review"])
+        self.assertEqual(action.span_data["agent_contract_status"], "corrected")
+        self.assertEqual(action.span_data["agent_contract"]["validation_reason"], "action_resolution_plan_corrected")
 
     def test_llm_action_resolution_plan_is_corrected_when_canonical_fields_drift(self) -> None:
         llm = QueueLLMClient(
