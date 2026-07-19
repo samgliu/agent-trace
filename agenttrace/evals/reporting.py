@@ -125,6 +125,8 @@ def eval_check_category(name: str) -> str:
         return "Evidence"
     if name.startswith("escalation_"):
         return "Escalation"
+    if name == "agent_contract_failures":
+        return "Agent Contract"
     if name in {"approval_required", "approval_reason", "customer_safe_to_send"}:
         return "Governance"
     if name == "grounding_status" or name.startswith("response_"):
@@ -143,6 +145,7 @@ def _improvement_owner_area(category: str) -> str:
         "Response": "customer-facing response generation and grounding",
         "Memory": "short-term continuity and long-term customer memory",
         "Reliability": "tool failure handling and workflow recovery",
+        "Agent Contract": "multi-agent contract metadata and validation status",
     }.get(category, "support-triage workflow")
 
 
@@ -155,6 +158,7 @@ def _improvement_recommended_action(category: str) -> str:
         "Response": "adjust response instructions so the answer contains required facts and avoids prohibited claims.",
         "Memory": "preserve active issue state across turns and avoid topic drift unless the customer clearly switches topic.",
         "Reliability": "make failure paths explicit and ensure tool errors become recovered or failed traces as expected.",
+        "Agent Contract": "inspect the failing agent span and align required inputs, produced outputs, and validation status.",
     }.get(category, "inspect the failed trace and add the smallest targeted regression check.")
 
 
@@ -168,5 +172,6 @@ def _improvement_suggested_files(category: str) -> list[str]:
         "Response": [],
         "Memory": ["agent_apps/customer_service/domain.py"],
         "Reliability": ["agent_apps/customer_service/domain.py", "agenttrace/mcp_tools/tools.py"],
+        "Agent Contract": ["agent_apps/customer_service/runner.py", "agenttrace/evals/trace_assertions.py"],
     }.get(category, [])
-    return [*common, *extra]
+    return list(dict.fromkeys([*common, *extra]))

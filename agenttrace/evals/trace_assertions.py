@@ -63,6 +63,8 @@ def evaluate_trace(case: EvalCase, trace: Trace) -> EvalCaseResult:
     if actual["response_validation_status"] is not None:
         checks.append(check("response_validation_status", "passed", actual["response_validation_status"]))
         checks.append(check("response_validation_failures", [], actual["response_validation_failures"]))
+    if actual["agent_contract_failures"] and actual["customer_safe_to_send"] is not False:
+        checks.append(check("agent_contract_failures", [], actual["agent_contract_failures"]))
     for tool_name in case.expected_tool_names:
         checks.append(includes_check(f"tool_used:{tool_name}", actual["tool_names"], tool_name))
     for evidence_name in case.expected_investigation_evidence:
@@ -157,6 +159,7 @@ def actual_values(trace: Trace) -> dict[str, Any]:
         "agent_state": agent_state_from_span(state_span),
         "tool_names": tool_names(trace),
         "evidence_ids": evidence_ids(trace),
+        "agent_contract_failures": agent_contract_failures(trace),
     }
 
 
@@ -232,6 +235,18 @@ def evidence_ids(trace: Trace) -> list[str]:
                     if isinstance(item, dict) and item.get("id") is not None
                 )
     return list(dict.fromkeys(ids))
+
+
+def agent_contract_failures(trace: Trace) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    for span in trace.spans:
+        contract = span.span_data.get("agent_contract")
+        if not isinstance(contract, dict):
+            continue
+        status = contract.get("status")
+        if status == "failed":
+            failures.append({"span_name": span.name, "status": "failed"})
+    return failures
 
 
 def check(name: str, expected: Any, actual: Any) -> EvalCheck:

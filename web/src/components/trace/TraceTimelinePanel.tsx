@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Activity, ArrowRight, Bot, Braces, MessageSquare, Network, ShieldCheck, UserCheck, Wrench } from "lucide-react";
 import type { Span } from "../../types";
+import { extractAgentContract, formatAgentContractStatus } from "../../utils/agentContract";
 import { getApprovalStatus } from "../../utils/approval";
 import { buildAgentFlow, type AgentFlowStep } from "../../utils/agentFlow";
 import { formatCost, formatDuration, formatTokens } from "../../utils/format";
@@ -91,6 +92,7 @@ function AgentFlowCard({
   onSelectSpan: (spanId: string) => void;
 }) {
   const decisionSource = formatDecisionSource(step.decisionSource);
+  const contractStatus = step.agentContractStatus ? formatAgentContractStatus(step.agentContractStatus) : null;
   return (
     <button
       className={["agentFlowCard", selected ? "selected" : "", step.approvalPending ? "approvalPending" : "", step.errorCount > 0 ? "errored" : ""]
@@ -115,6 +117,7 @@ function AgentFlowCard({
         {step.handoffCount > 0 ? <em>{step.handoffCount} handoff</em> : null}
         {step.toolCount > 0 ? <em>{step.toolCount} tool</em> : null}
         {step.modelFallbackUsed ? <strong>Model fallback</strong> : null}
+        {contractStatus ? <strong className={`contractBadge ${step.agentContractStatus}`}>Contract: {contractStatus}</strong> : null}
         {step.approvalPending ? <strong>Approval needed</strong> : null}
         {step.errorCount > 0 ? <strong>{step.errorCount} error</strong> : null}
       </div>
@@ -135,6 +138,7 @@ function SpanRow({
 }) {
   const span = node.span;
   const approvalStatus = getApprovalStatus(span.span_type, span.span_data);
+  const agentContract = extractAgentContract(span.span_data);
   const isEscalation = span.name === "Escalation Agent" || span.span_data.agent_role === "escalation";
   const decisionSource = formatDecisionSource(span.span_data.decision_source);
   const rowClassName = [
@@ -162,6 +166,11 @@ function SpanRow({
           {approvalStatus?.isPending ? <span className="approvalBadge">Needs approval</span> : null}
           {isEscalation ? <span className="approvalBadge">Escalation</span> : null}
           {span.error ? <span className="errorBadge">Error</span> : null}
+          {agentContract ? (
+            <span className={`agentContractBadge ${agentContract.status}`}>
+              Contract {formatAgentContractStatus(agentContract.status)}
+            </span>
+          ) : null}
           {decisionSource ? <span className={`decisionBadge ${decisionSource.className}`}>{decisionSource.label}</span> : null}
           <span>{formatDuration(span.duration_ms)}</span>
           {span.input_tokens || span.output_tokens ? <span>{formatTokens(span.input_tokens ?? 0, span.output_tokens ?? 0)}</span> : null}

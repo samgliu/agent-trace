@@ -137,6 +137,12 @@ class SupportTriageRunner:
             span_data={
                 "agent_role": "supervisor",
                 "model_provider": self.llm_client.provider_name,
+                **_agent_contract_span_data(
+                    required_inputs=["message", "customer_email", "conversation_history"],
+                    consumed_context=["customer_request"],
+                    produced_outputs=supervisor_decision.keys(),
+                    validation_metadata=supervisor_validation,
+                ),
                 **_agent_decision_span_data(supervisor_llm),
                 **supervisor_validation,
                 "supervisor_route": supervisor_route,
@@ -180,6 +186,11 @@ class SupportTriageRunner:
                     input={"message": message},
                     output={"response": response_text},
                     span_data={
+                        **_agent_contract_span_data(
+                            required_inputs=["message", "conversation_history"],
+                            consumed_context=["customer_request"],
+                            produced_outputs=["response"],
+                        ),
                         "agent_role": "response",
                         "supervisor_route": supervisor_route,
                         "model_provider": self.llm_client.provider_name,
@@ -235,6 +246,12 @@ class SupportTriageRunner:
                 span_data={
                     "agent_role": "triage",
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=["message", "recent_context"],
+                        consumed_context=["customer_request", "conversation_context"],
+                        produced_outputs=triage.keys(),
+                        validation_metadata=triage_validation,
+                    ),
                     **_agent_decision_span_data(triage_llm),
                     **triage_validation,
                 },
@@ -315,6 +332,12 @@ class SupportTriageRunner:
                 span_data={
                     "agent_role": "investigation",
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=["message", "triage", "recent_context"],
+                        consumed_context=["customer_request", "triage_result", "conversation_context"],
+                        produced_outputs=investigation.keys(),
+                        validation_metadata=investigation_validation,
+                    ),
                     **_agent_decision_span_data(investigation_llm),
                     **investigation_validation,
                 },
@@ -537,6 +560,12 @@ class SupportTriageRunner:
                 span_data={
                     "agent_role": "policy",
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=["triage", "customer"],
+                        consumed_context=["triage_result", "customer_profile"],
+                        produced_outputs=policy_plan.keys(),
+                        validation_metadata=policy_validation,
+                    ),
                     **_agent_decision_span_data(policy_llm),
                     **policy_validation,
                 },
@@ -635,6 +664,12 @@ class SupportTriageRunner:
                 span_data={
                     "agent_role": "action",
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=["triage", "customer", "policy", "memory", "agent_state"],
+                        consumed_context=["triage_result", "customer_profile", "policy", "customer_memory", "agent_state"],
+                        produced_outputs=action_decision.keys(),
+                        validation_metadata=action_validation,
+                    ),
                     **_agent_decision_span_data(action_llm),
                     **action_validation,
                 },
@@ -764,6 +799,12 @@ class SupportTriageRunner:
                 span_data={
                     "agent_role": "validator",
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=["customer", "policy", "action", "agent_state"],
+                        consumed_context=["customer_profile", "policy", "proposed_action", "agent_state"],
+                        produced_outputs=validation.keys(),
+                        status=str(validation.get("validator_contract_status") or "passed"),
+                    ),
                     **validation,
                     **_agent_decision_span_data(validation_llm),
                 },
@@ -846,6 +887,12 @@ class SupportTriageRunner:
                 output={"response": response_text, "response_validation": response_validation},
                 span_data={
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=["message", "customer", "policy", "action", "validation", "working_memory"],
+                        consumed_context=["customer_request", "policy", "action", "validation_report", "working_memory"],
+                        produced_outputs=["response", "response_validation"],
+                        status=response_validation["status"],
+                    ),
                     "response_validation_status": response_validation["status"],
                     "response_validation_failures": response_validation["failures"],
                     "response_validation_warnings": response_validation["warnings"],
@@ -956,6 +1003,11 @@ class SupportTriageRunner:
                 span_data={
                     "agent_role": "escalation",
                     "model_provider": self.llm_client.provider_name,
+                    **_agent_contract_span_data(
+                        required_inputs=escalation_input.keys(),
+                        consumed_context=escalation_input.keys(),
+                        produced_outputs=escalation.keys(),
+                    ),
                     "escalation_type": escalation.get("escalation_type"),
                     "next_owner": escalation.get("next_owner"),
                     **_agent_decision_span_data(escalation_llm),
@@ -1024,6 +1076,33 @@ def _canonical_escalation(escalation: dict[str, Any], fallback: dict[str, Any]) 
     if not canonical.get("handoff_summary"):
         canonical["handoff_summary"] = fallback.get("handoff_summary", "")
     return canonical
+
+
+def _agent_contract_span_data(
+    *,
+    required_inputs: Any,
+    consumed_context: Any,
+    produced_outputs: Any,
+    status: str | None = None,
+    validation_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    contract_status = status or ("corrected" if validation_metadata else "passed")
+    contract = {
+        "required_inputs": _string_list(required_inputs),
+        "consumed_context": _string_list(consumed_context),
+        "produced_outputs": _string_list(produced_outputs),
+        "status": contract_status,
+    }
+    if validation_metadata:
+        contract["validation_reason"] = validation_metadata.get("validation_reason")
+        contract["corrections"] = _string_list(validation_metadata.keys())
+    return {"agent_contract": contract, "agent_contract_status": contract_status}
+
+
+def _string_list(values: Any) -> list[str]:
+    if values is None:
+        return []
+    return [str(value) for value in values]
 
 
 def build_default_runner(*, use_openai: bool = False, openai_api: str = "chat_completions") -> SupportTriageRunner:

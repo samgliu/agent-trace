@@ -124,4 +124,26 @@ describe("buildSpanFacts", () => {
       { label: "Next owner", value: "trust and safety" },
     ]);
   });
+
+  it("summarizes agent contract status", () => {
+    expect(
+      buildSpanFacts({
+        duration_ms: 300,
+        input_tokens: null,
+        output_tokens: null,
+        estimated_cost: null,
+        span_data: {
+          agent_contract: {
+            status: "corrected",
+            required_inputs: ["policy"],
+            consumed_context: ["agent_state"],
+            produced_outputs: ["action_type"],
+          },
+        },
+      }),
+    ).toEqual([
+      { label: "Duration", value: "300ms" },
+      { label: "Contract", value: "corrected" },
+    ]);
+  });
 });
