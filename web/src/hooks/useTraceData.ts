@@ -63,7 +63,9 @@ export function useTraceData({ refreshKey }: UseTraceDataOptions) {
           fetchJson<GroundingSummary>(`/traces/${traceId}/grounding`),
         ]);
         if (!cancelled) {
-          setSelectedTraceId(traceId);
+          if (selectedTraceId !== null) {
+            setSelectedTraceId(traceId);
+          }
           setSelectedSpanId((currentSpanId) =>
             selectedTrace.spans.some((span) => span.span_id === currentSpanId)
               ? currentSpanId
