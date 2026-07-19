@@ -1,3 +1,5 @@
+import { extractAgentContract } from "./agentContract";
+
 export type AgentFlowSpan = {
   span_id: string;
   parent_id: string | null;
@@ -27,6 +29,7 @@ export type AgentFlowStep = {
   handoffCount: number;
   approvalPending: boolean;
   errorCount: number;
+  agentContractStatus: string | null;
 };
 
 export function buildAgentFlow(spans: AgentFlowSpan[]): AgentFlowStep[] {
@@ -58,6 +61,7 @@ export function buildAgentFlow(spans: AgentFlowSpan[]): AgentFlowStep[] {
         handoffCount,
         approvalPending,
         errorCount,
+        agentContractStatus: extractAgentContract(span.span_data)?.status ?? null,
       };
     });
 }

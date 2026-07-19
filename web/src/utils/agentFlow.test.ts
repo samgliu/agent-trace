@@ -49,7 +49,15 @@ describe("buildAgentFlow", () => {
         span_id: "validator",
         name: "Validator Agent",
         span_type: "guardrail",
-        span_data: { agent_role: "validator" },
+        span_data: {
+          agent_role: "validator",
+          agent_contract: {
+            status: "failed",
+            required_inputs: ["customer", "policy"],
+            consumed_context: ["agent_state"],
+            produced_outputs: ["validation_report"],
+          },
+        },
       },
       {
         ...baseSpan,
@@ -83,6 +91,7 @@ describe("buildAgentFlow", () => {
         role: "validator",
         label: "Validator",
         approvalPending: true,
+        agentContractStatus: "failed",
       }),
     ]);
   });

@@ -138,6 +138,40 @@ class SupportTriageEvalsTest(unittest.TestCase):
         self.assertFalse(checks["response_validation_status"].passed)
         self.assertFalse(checks["response_validation_failures"].passed)
 
+    def test_eval_fails_when_agent_contract_reports_failure(self) -> None:
+        result = EvalCaseResult(
+            case=EvalCase(
+                case_id="contract-regression",
+                name="Contract regression",
+                message="refund me",
+                customer_email="customer@example.com",
+                expected_trace_status="passed",
+            ),
+            trace=Trace(
+                trace_id="trace_eval_contract_regression",
+                workflow_name="support-triage",
+                status="passed",
+                spans=[
+                    Span(
+                        span_id="span_validator",
+                        trace_id="trace_eval_contract_regression",
+                        name="Validator Agent",
+                        span_type="guardrail",
+                        span_data={"agent_contract": {"status": "failed"}},
+                    )
+                ],
+            ),
+            checks=[],
+        )
+
+        from agenttrace.evals.trace_assertions import evaluate_trace
+
+        evaluated = evaluate_trace(result.case, result.trace)
+        checks = {check.name: check for check in evaluated.checks}
+        self.assertFalse(evaluated.passed)
+        self.assertFalse(checks["agent_contract_failures"].passed)
+        self.assertEqual(checks["agent_contract_failures"].actual, [{"span_name": "Validator Agent", "status": "failed"}])
+
     def test_builds_ci_friendly_eval_report(self) -> None:
         result = run_support_triage_eval_suite()
         report = build_eval_report(result)

@@ -1,4 +1,5 @@
 import { formatCost, formatDuration, formatTokens } from "./format";
+import { extractAgentContract, formatAgentContractStatus } from "./agentContract";
 
 export type SpanFactInput = {
   duration_ms: number | null;
@@ -62,6 +63,11 @@ export function buildSpanFacts(span: SpanFactInput): SpanFact[] {
   const modelFallbackUsed = booleanValue(span.span_data.model_fallback_used);
   if (modelFallbackUsed) {
     facts.push({ label: "Model fallback", value: "used" });
+  }
+
+  const agentContract = extractAgentContract(span.span_data);
+  if (agentContract) {
+    facts.push({ label: "Contract", value: formatAgentContractStatus(agentContract.status) });
   }
 
   const escalationType = stringValue(span.span_data.escalation_type);

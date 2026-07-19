@@ -42,6 +42,10 @@ export function summaryMap(summaries: TraceSummary[]): Record<string, TraceSumma
   return Object.fromEntries(summaries.map((summary) => [summary.trace_id, summary]));
 }
 
+export function defaultTraceId(summaries: TraceSummary[]): string | null {
+  return summaries.find((summary) => summary.source_kind === "agent_runner")?.trace_id ?? summaries[0]?.trace_id ?? null;
+}
+
 export function parseServerEvent(event: Event): ServerEvent | null {
   if (!("data" in event) || typeof event.data !== "string") return null;
   try {

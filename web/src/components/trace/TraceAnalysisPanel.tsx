@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { AlertCircle, ArrowRight, Braces, CircleDollarSign, GitPullRequestArrow, RotateCcw, ShieldCheck, UserCheck, Wrench } from "lucide-react";
 import type { ApprovalAction, GroundingSummary, Metrics, Span } from "../../types";
+import { extractAgentContract, formatAgentContractStatus, type AgentContract } from "../../utils/agentContract";
 import { getApprovalStatus, type ApprovalStatus } from "../../utils/approval";
 import { canManageApprovals, type AuthRole } from "../../utils/authz";
 import { extractUnsupportedClaims } from "../../utils/claims";
@@ -312,6 +313,7 @@ function SpanDetail({
   const facts = buildSpanFacts(span);
   const modelOutputText = typeof span.span_data.model_output_text === "string" ? span.span_data.model_output_text : null;
   const validatorReport = extractValidatorReport(span.output);
+  const agentContract = extractAgentContract(span.span_data);
 
   return (
     <div className="spanDetail">
@@ -368,6 +370,7 @@ function SpanDetail({
           ) : null}
 
           {validatorReport ? <ValidatorReportCard report={validatorReport} /> : null}
+          {agentContract ? <AgentContractCard contract={agentContract} /> : null}
           {modelOutputText ? <JsonBlock label="Model output" value={modelOutputText} /> : null}
           <JsonBlock label="Input" value={span.input} />
           <JsonBlock label="Output" value={span.output} />
@@ -378,6 +381,55 @@ function SpanDetail({
 
       {activeTab === "span" ? <JsonBlock label="Normalized span" value={span} /> : null}
       {activeTab === "trace" ? <JsonBlock label="Original trace payload" value={rawTrace} /> : null}
+    </div>
+  );
+}
+
+function AgentContractCard({ contract }: { contract: AgentContract }) {
+  return (
+    <div className={`agentContractCard ${contract.status}`}>
+      <div className="agentContractHeader">
+        <strong>Agent contract</strong>
+        <span>{formatAgentContractStatus(contract.status)}</span>
+      </div>
+      <div className="agentContractGrid">
+        <ContractList label="Required inputs" values={contract.requiredInputs} />
+        <ContractList label="Consumed context" values={contract.consumedContext} />
+        <ContractList label="Produced outputs" values={contract.producedOutputs} />
+      </div>
+      {contract.validationReason || contract.corrections.length > 0 ? (
+        <div className="agentContractCorrections">
+          {contract.validationReason ? (
+            <>
+              <small>Validation reason</small>
+              <p>{contract.validationReason.replaceAll("_", " ")}</p>
+            </>
+          ) : null}
+          {contract.corrections.length > 0 ? (
+            <>
+              <small>Corrections</small>
+              <p>{contract.corrections.join(", ").replaceAll("_", " ")}</p>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ContractList({ label, values }: { label: string; values: string[] }) {
+  return (
+    <div>
+      <small>{label}</small>
+      {values.length > 0 ? (
+        <ul>
+          {values.map((value) => (
+            <li key={value}>{value.replaceAll("_", " ")}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>none</p>
+      )}
     </div>
   );
 }

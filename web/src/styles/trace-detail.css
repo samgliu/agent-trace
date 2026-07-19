@@ -257,6 +257,27 @@ h3 {
   border-color: #e9a7a0;
 }
 
+.agentFlowBadges .contractBadge,
+.agentContractBadge {
+  color: #17604e;
+  background: #e7f5ef;
+  border-color: #b9ddcf;
+}
+
+.agentFlowBadges .contractBadge.corrected,
+.agentContractBadge.corrected {
+  color: #7b4d12;
+  background: #fff5dc;
+  border-color: #ead28d;
+}
+
+.agentFlowBadges .contractBadge.failed,
+.agentContractBadge.failed {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
 .agentFlowArrow {
   display: grid;
   place-items: center;
@@ -504,6 +525,111 @@ h3 {
   padding: 12px;
   background: #f7fbf9;
   border-bottom: 1px solid #d5e7de;
+}
+
+.agentContractCard {
+  padding: 12px;
+  background: #f7fbf9;
+  border-bottom: 1px solid #d5e7de;
+}
+
+.agentContractCard.corrected {
+  background: #fff8e8;
+  border-bottom-color: #efd79c;
+}
+
+.agentContractCard.failed {
+  background: #fff0ed;
+  border-bottom-color: #f0c4ba;
+}
+
+.agentContractHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.agentContractHeader span {
+  padding: 4px 8px;
+  color: #17604e;
+  background: #e7f5ef;
+  border: 1px solid #b9ddcf;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agentContractCard.corrected .agentContractHeader span {
+  color: #7b4d12;
+  background: #fff5dc;
+  border-color: #ead28d;
+}
+
+.agentContractCard.failed .agentContractHeader span {
+  color: #7b1d1d;
+  background: #fff0ed;
+  border-color: #e9a7a0;
+}
+
+.agentContractGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.agentContractGrid > div,
+.agentContractCorrections {
+  min-width: 0;
+  padding: 9px 10px;
+  background: #ffffff;
+  border: 1px solid #dce4e8;
+  border-radius: 6px;
+}
+
+.agentContractGrid small,
+.agentContractCorrections small {
+  display: block;
+  margin-bottom: 5px;
+  color: #637179;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agentContractGrid ul {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agentContractGrid li {
+  padding: 4px 6px;
+  color: #314148;
+  background: #f5f7f8;
+  border: 1px solid #dce4e8;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agentContractGrid p,
+.agentContractCorrections p {
+  margin: 0;
+  color: #3e4a50;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.agentContractCorrections {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
 }
 
 .validatorReportHeader {

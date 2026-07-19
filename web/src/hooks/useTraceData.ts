@@ -9,6 +9,7 @@ import type {
   TraceListResponse,
 } from "../types";
 import { fetchJson } from "../utils/apiClient";
+import { defaultTraceId } from "../utils/appState";
 import { clampedOffset, TRACE_PAGE_SIZE } from "../utils/pagination";
 import { emptyFilters, filterQuery } from "../utils/traceFilters";
 
@@ -46,7 +47,7 @@ export function useTraceData({ refreshKey }: UseTraceDataOptions) {
           }
           return;
         }
-        const traceId = selectedTraceId ?? traces[0]?.trace_id;
+        const traceId = selectedTraceId ?? defaultTraceId(traces);
         if (!traceId) {
           if (!cancelled) {
             setSelectedTraceId(null);
